@@ -10,6 +10,7 @@ import {
   CHAT_COMPLETIONS_PATH,
   chatBody,
   saConfig,
+  stubDelay,
   stubReset,
   uniqueModelName,
 } from '../fixtures/gateway';
@@ -227,6 +228,47 @@ test.describe('response review form', () => {
     } finally {
       await deleteAgent(request, agent.id);
       await deleteAgent(request, guard.id);
+    }
+  });
+});
+
+test.describe('live updates', () => {
+  test('shows a request as running while the provider answers, without a reload', async ({
+    page,
+    request,
+  }) => {
+    // The row is written when the request arrives and announced over the
+    // event stream, so an open logs page draws it before the provider has
+    // answered. The stub holds its answer long enough to look.
+    const name = uniqueAgentName('running-ui');
+    const agent = await createAgent(request, name);
+    const model = uniqueModelName('running-ui');
+
+    try {
+      await createSkill(request, agent.id, 'gateway_skill');
+      await stubDelay(request, model, 4000);
+      await page.goto(`/agents/${name}/logs`);
+      await expect(
+        page.getByRole('heading', { name: 'Logs', exact: true }),
+      ).toBeVisible();
+
+      const pending = request.post(CHAT_COMPLETIONS_PATH, {
+        headers: { 'sa-config': saConfig(name, 'gateway_skill', { model }) },
+        data: chatBody('are you still there'),
+      });
+
+      await expect(page.getByText('running', { exact: true })).toBeVisible({
+        timeout: 3500,
+      });
+
+      expect((await pending).status()).toBe(200);
+      await expect(page.getByText('running', { exact: true })).toHaveCount(0);
+      await expect(
+        page.getByText('200', { exact: true }).first(),
+      ).toBeVisible();
+    } finally {
+      await stubReset(request, model);
+      await deleteAgent(request, agent.id);
     }
   });
 });

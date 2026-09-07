@@ -4,6 +4,7 @@ import {
   CHAT_COMPLETIONS_PATH,
   chatBody,
   saConfig,
+  stubDelay,
   stubReset,
   uniqueModelName,
 } from '../fixtures/gateway';
@@ -85,6 +86,54 @@ test.describe('the log row a request opens', () => {
       expect(provider.start_time).toBeGreaterThanOrEqual(logs[0].start_time);
       expect(provider.end_time).toBeGreaterThanOrEqual(provider.start_time);
       expect(provider.end_time).toBeLessThanOrEqual(logs[0].end_time);
+    } finally {
+      await stubReset(request, model);
+    }
+  });
+
+  test('shows the request as running while the provider answers', async ({
+    request,
+  }) => {
+    const agent = await createAgent(request, uniqueAgentName('running'));
+    await createSkill(request, agent.id, 'running_skill');
+    const model = uniqueModelName('running');
+    // Long enough to be seen, short enough not to hold up the run.
+    await stubDelay(request, model, 3000);
+
+    const rows = async () =>
+      (await request
+        .get(`${LOGS_PATH}?agent_id=${agent.id}`)
+        .then((r) => r.json())) as {
+        status: number | null;
+        end_time: number | null;
+      }[];
+
+    try {
+      const pending = request.post(CHAT_COMPLETIONS_PATH, {
+        headers: {
+          'sa-config': saConfig(agent.name, 'running_skill', { model }),
+        },
+        data: chatBody('are you still there'),
+      });
+
+      // The row is open before the provider has answered: no status, no
+      // end. This is what the dashboard draws as a running request.
+      await expect
+        .poll(async () => (await rows()).map((row) => row.end_time), {
+          timeout: 2500,
+          message: 'the request was never shown as running',
+        })
+        .toEqual([null]);
+      expect((await rows())[0].status).toBeNull();
+
+      const response = await pending;
+      expect(response.status()).toBe(200);
+      await expect
+        .poll(async () => (await rows()).map((row) => row.end_time), {
+          timeout: 15_000,
+          message: 'the request never completed its row',
+        })
+        .toEqual([expect.any(Number)]);
     } finally {
       await stubReset(request, model);
     }
