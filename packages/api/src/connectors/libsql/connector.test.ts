@@ -54,6 +54,8 @@ const seedAgent = (c: AppContext) =>
     auto_create_skills: true,
     skill_match_threshold: 0.8,
     max_auto_created_skills: 10,
+    review_fail_closed: false,
+    review_expose_reason: false,
   });
 
 const seedSkill = (c: AppContext, agentId: string) =>
@@ -130,6 +132,8 @@ describe('agents, skills and JSON columns', () => {
       auto_create_skills: true,
       skill_match_threshold: 0.8,
       max_auto_created_skills: 10,
+      review_fail_closed: false,
+      review_expose_reason: false,
     });
 
     expect(created.id).toMatch(/^[0-9a-f-]{36}$/);
@@ -149,6 +153,8 @@ describe('agents, skills and JSON columns', () => {
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
+        review_fail_closed: false,
+        review_expose_reason: false,
       });
     }
 
@@ -543,6 +549,8 @@ describe('agent models and routing settings', () => {
       auto_create_skills: false,
       skill_match_threshold: 0.65,
       max_auto_created_skills: 3,
+      review_fail_closed: false,
+      review_expose_reason: false,
     });
     expect(agent.auto_create_skills).toBe(false);
     expect(agent.skill_match_threshold).toBe(0.65);
@@ -554,6 +562,8 @@ describe('agent models and routing settings', () => {
     const updated = await store.updateAgent(c, agent.id, {
       auto_create_skills: true,
       max_auto_created_skills: 5,
+      review_fail_closed: false,
+      review_expose_reason: false,
       skill_arbiter_timeout_ms: 30_000,
     });
     expect(updated.auto_create_skills).toBe(true);
@@ -565,6 +575,49 @@ describe('agent models and routing settings', () => {
       skill_arbiter_timeout_ms: null,
     });
     expect(cleared.skill_arbiter_timeout_ms).toBeNull();
+  });
+
+  it('keeps an agent reviewer, refuses the agent itself, and forgets a deleted one', async () => {
+    const { c } = await freshDatabase();
+    const reviewed = await store.createAgent(c, {
+      name: 'reviewed',
+      description: 'x'.repeat(30),
+      metadata: {},
+      auto_create_skills: true,
+      skill_match_threshold: 0.8,
+      max_auto_created_skills: 10,
+      review_fail_closed: false,
+      review_expose_reason: false,
+    });
+    const guard = await store.createAgent(c, {
+      name: 'guard',
+      description: 'x'.repeat(30),
+      metadata: {},
+      auto_create_skills: true,
+      skill_match_threshold: 0.8,
+      max_auto_created_skills: 10,
+      review_fail_closed: false,
+      review_expose_reason: false,
+    });
+    expect(reviewed.reviewer_agent_id).toBeNull();
+    expect(reviewed.review_fail_closed).toBe(false);
+
+    const updated = await store.updateAgent(c, reviewed.id, {
+      reviewer_agent_id: guard.id,
+      review_fail_closed: true,
+    });
+    expect(updated.reviewer_agent_id).toBe(guard.id);
+    // Stored as 0/1, read back as a boolean.
+    expect(updated.review_fail_closed).toBe(true);
+
+    await expect(
+      store.updateAgent(c, reviewed.id, { reviewer_agent_id: reviewed.id }),
+    ).rejects.toThrow(/CHECK constraint failed/);
+
+    // ON DELETE SET NULL: the reviews stop; the agent stays.
+    await store.deleteAgent(c, guard.id);
+    const [after] = await store.getAgents(c, { id: reviewed.id });
+    expect(after.reviewer_agent_id).toBeNull();
   });
 
   it('keeps the seed prompt and the auto-created flag on a skill', async () => {

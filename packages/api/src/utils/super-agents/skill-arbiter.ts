@@ -1,4 +1,8 @@
-import { getApiUrl, SA_SKILL_REQUEST_PARAMS } from '@api/constants';
+import {
+  getApiUrl,
+  getInternalApiKey,
+  SA_SKILL_REQUEST_PARAMS,
+} from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import {
@@ -163,7 +167,7 @@ export async function arbitrateSkillForRequest(
     }
 
     const client = new OpenAI({
-      apiKey: '',
+      apiKey: getInternalApiKey(c),
       baseURL: `${getApiUrl(c)}/v1`,
       timeout: skillArbiterTimeoutMs(agent, settings),
       maxRetries: 1,

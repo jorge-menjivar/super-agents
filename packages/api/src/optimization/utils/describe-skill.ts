@@ -1,4 +1,8 @@
-import { getApiUrl, SA_SKILL_REQUEST_PARAMS } from '@api/constants';
+import {
+  getApiUrl,
+  getInternalApiKey,
+  SA_SKILL_REQUEST_PARAMS,
+} from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
@@ -147,7 +151,7 @@ export async function describeSkillForRequest(
     // (`SKILL_CREATION_LEASE_MS`); a model that takes longer than this to
     // name a skill is not worth holding a request for.
     const client = new OpenAI({
-      apiKey: '',
+      apiKey: getInternalApiKey(c),
       baseURL: `${getApiUrl(c)}/v1`,
       timeout: modelConfig.timeoutMs,
       maxRetries: 1,

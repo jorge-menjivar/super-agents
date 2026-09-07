@@ -27,19 +27,19 @@ export const TextViewer = ({
     editable: !readOnly,
   });
 
+  // `useEditor` destroys the editor a tick after this component is hidden
+  // and keeps handing out the dead instance until it re-renders, so an
+  // effect re-run on a restored Suspense tree -- back, then forward, to a
+  // log -- sees it first. A destroyed editor has no commands to call.
   useEffect(() => {
-    if (defaultContent) {
-      if (editor) {
-        editor.commands.setContent(defaultContent);
-      }
+    if (defaultContent && editor && !editor.isDestroyed) {
+      editor.commands.setContent(defaultContent);
     }
   }, [defaultContent, editor]);
 
   useEffect(() => {
-    if (content) {
-      if (editor) {
-        editor.commands.setContent(content);
-      }
+    if (content && editor && !editor.isDestroyed) {
+      editor.commands.setContent(content);
     }
   }, [content, editor]);
 

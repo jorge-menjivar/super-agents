@@ -8,6 +8,7 @@ import {
   getInitialClusterCentroids,
   sampleBeta,
 } from '@api/utils/math';
+import { reviewerHookFor } from '@api/utils/super-agents/reviewer';
 import { renderTemplate } from '@api/utils/templates';
 import { error } from '@shared/console-logging';
 import {
@@ -524,12 +525,24 @@ export const saConfigurationInjectorMiddleware = createMiddleware(
           (target) => !(target instanceof Response),
         ) as SuperAgentsTarget[];
 
+        // The agent's reviewer, when it has one, reviews every response;
+        // it is added here so that no client header can leave it out.
+        const reviewerHook = await reviewerHookFor(
+          c,
+          c.get('user_data_storage_connector'),
+          c.get('agent'),
+          saConfigPreProcessed,
+        );
+
         const saConfig: SuperAgentsConfig = {
           ...saConfigPreProcessed,
           // Filled in by `agentAndSkillMiddleware` when the caller named only
           // the agent; the skill on the context is the one it resolved.
           skill_name: saConfigPreProcessed.skill_name ?? c.get('skill').name,
           targets: saTargets,
+          hooks: reviewerHook
+            ? [...saConfigPreProcessed.hooks, reviewerHook]
+            : saConfigPreProcessed.hooks,
         };
 
         c.set('sa_config', saConfig);

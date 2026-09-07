@@ -19,6 +19,12 @@ export const completionsRouter = new Hono<AppEnv>()
       let statusCode = 500;
       let errorMessage = 'Something went wrong';
 
+      if (!(err instanceof RouterError)) {
+        // The client hears only that something went wrong; this is the
+        // only record of what.
+        console.error('[CHAT_COMPLETIONS] Request failed:', err);
+      }
+
       if (err instanceof RouterError) {
         statusCode = 400;
         errorMessage = err.message;

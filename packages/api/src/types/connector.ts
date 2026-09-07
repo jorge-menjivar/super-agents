@@ -84,7 +84,12 @@ import type {
   ToolQueryParams,
 } from '@shared/types/data/tool';
 import type { EvaluationMethodDetails } from '@shared/types/evaluations';
-import type { Hook, HookResult } from '@shared/types/middleware/hooks';
+import type {
+  Hook,
+  HookInput,
+  HookProvider,
+  HookResult,
+} from '@shared/types/middleware/hooks';
 import type { z } from 'zod';
 
 export interface UserDataStorageConnector {
@@ -424,8 +429,12 @@ export interface CacheStorageConnector {
 }
 
 export interface HooksConnector {
-  name: string;
-  executeHook(hook: Hook): Promise<HookResult> | HookResult;
+  name: HookProvider;
+  executeHook(
+    c: AppContext,
+    hook: Hook,
+    input: HookInput,
+  ): Promise<HookResult> | HookResult;
 }
 
 /**

@@ -434,3 +434,83 @@ describe('Agents API Status Codes', () => {
     });
   });
 });
+
+describe('Agents API reviewer_agent_id', () => {
+  const client = testClient(app);
+  const agentId = 'c13d1678-150a-466b-804f-ecc82de3680e';
+  const reviewerId = '6f1c2d3e-4b5a-4c6d-8e9f-0a1b2c3d4e5f';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('refuses a reviewer that does not exist', async () => {
+    mockUserDataStorageConnector.getAgents.mockResolvedValue([]);
+
+    const res = await client.index.$post({
+      json: {
+        name: 'reviewed',
+        description: 'An agent whose answers another agent reviews first.',
+        reviewer_agent_id: reviewerId,
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'The reviewer agent does not exist.',
+    });
+    expect(mockUserDataStorageConnector.createAgent).not.toHaveBeenCalled();
+  });
+
+  it('refuses an agent as its own reviewer', async () => {
+    const res = await client[':agentId'].$patch({
+      param: { agentId },
+      json: { reviewer_agent_id: agentId },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'An agent cannot be its own reviewer.',
+    });
+    expect(mockUserDataStorageConnector.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('sets a reviewer that exists', async () => {
+    mockUserDataStorageConnector.getAgents.mockResolvedValue([
+      { id: reviewerId, name: 'guard' },
+    ]);
+    mockUserDataStorageConnector.updateAgent.mockResolvedValue({
+      id: agentId,
+      reviewer_agent_id: reviewerId,
+    });
+
+    const res = await client[':agentId'].$patch({
+      param: { agentId },
+      json: { reviewer_agent_id: reviewerId },
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockUserDataStorageConnector.updateAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      agentId,
+      { reviewer_agent_id: reviewerId },
+    );
+  });
+
+  it('clears a reviewer without looking one up', async () => {
+    mockUserDataStorageConnector.updateAgent.mockResolvedValue({
+      id: agentId,
+      reviewer_agent_id: null,
+      review_fail_closed: false,
+      review_expose_reason: false,
+    });
+
+    const res = await client[':agentId'].$patch({
+      param: { agentId },
+      json: { reviewer_agent_id: null },
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockUserDataStorageConnector.getAgents).not.toHaveBeenCalled();
+  });
+});

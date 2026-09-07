@@ -4,19 +4,27 @@ import {
   type Agent,
   addModelsToAgent,
   createAgent,
+  deleteAgent,
   getSkillRoutings,
   uniqueAgentName,
 } from '../fixtures/agents';
 import {
   CHAT_COMPLETIONS_PATH,
   chatBody,
+  parseSSE,
   STUB_URL,
+  saConfig,
+  stubReply,
   stubRequests,
+  stubReset,
+  type TargetOptions,
+  uniqueModelName,
 } from '../fixtures/gateway';
 import { getLogs, getLogsByArm, type LoggedRequest } from '../fixtures/logs';
 import {
   getArms,
   getClusters,
+  MODELS_PATH,
   type OptimizedSkill,
   optimizedConfig,
   STUB_SYSTEM_PROMPT,
@@ -838,5 +846,483 @@ test.describe('feedback re-evaluation', () => {
     );
     expect(verdictCalls.length).toBeGreaterThan(0);
     expect(JSON.stringify(verdictCalls)).toContain('BAD output');
+  });
+});
+
+/**
+ * Response review, end to end: an agent whose responses another agent judges
+ * before the client hears them. The reviewer answers under a model of its own
+ * on the stub, so its verdicts can be scripted (`stubReply`) and its traffic
+ * told from the reviewed agent's. In this file because the reviewer is reached
+ * by agent name alone, which routes by intent and needs the embedding model
+ * `setUpStubModels` configures.
+ */
+test.describe('response review', () => {
+  let stub: StubModels;
+  let reviewerModel: string;
+  let guardScope: string;
+  let reviewer: Agent;
+  let reviewerSkillId: string;
+  let reviewed: Agent;
+  let reviewedSkillId: string;
+  const created: string[] = [];
+
+  const allow = JSON.stringify({
+    verdict: 'allow',
+    reason: 'Nothing to object to.',
+    replacement: null,
+  });
+  const deny = JSON.stringify({
+    verdict: 'deny',
+    reason: 'Leaks a credential.',
+    replacement: null,
+  });
+  const replace = JSON.stringify({
+    verdict: 'replace',
+    reason: 'Redacted the credential.',
+    replacement: 'I cannot share that.',
+  });
+
+  /** What the client receives once the hooks have spoken. */
+  interface Reviewed {
+    choices?: { message: { content: string } }[];
+    error?: {
+      type: string;
+      hook_id: string;
+      message: string;
+      reason?: string;
+    };
+  }
+
+  /**
+   * An agent with one skill serving through the stub under `modelId`. The
+   * seed prompt is what its arms carry, so nothing is generated for it.
+   */
+  const servingAgent = async (
+    request: APIRequestContext,
+    scope: string,
+    modelId: string,
+    overrides: Record<string, unknown> = {},
+  ) => {
+    const agent = await createAgent(
+      request,
+      uniqueAgentName(scope),
+      undefined,
+      {
+        auto_create_skills: false,
+        ...overrides,
+      },
+    );
+    created.push(agent.id);
+    const skill = await createSkill(request, agent.id, 'only_skill', {
+      seed_system_prompt: `You are ${scope}.`,
+    });
+    const attached = await request.post(`${SKILLS_PATH}/${skill.id}/models`, {
+      data: { modelIds: [modelId] },
+    });
+    expect(attached.status()).toBe(201);
+    return { agent, skillId: skill.id };
+  };
+
+  test.beforeAll(async ({ request }, testInfo) => {
+    const scope =
+      `review-${testInfo.project.name.replace(/[^a-z0-9]+/gi, '-')}`.toLowerCase();
+    stub = await setUpStubModels(request, scope);
+
+    // The reviewer answers under a model of its own, so its traffic can be
+    // told from the reviewed agent's on the shared stub.
+    reviewerModel = uniqueModelName(`${scope}-guard`);
+    const guardModel = await request.post(MODELS_PATH, {
+      data: {
+        ai_provider_id: stub.providerId,
+        model_name: reviewerModel,
+        model_type: 'text',
+      },
+    });
+    expect(guardModel.status()).toBe(201);
+    const { id: guardModelId } = (await guardModel.json()) as { id: string };
+
+    guardScope = `${scope}-guard`;
+    const guard = await servingAgent(request, guardScope, guardModelId);
+    reviewer = guard.agent;
+    reviewerSkillId = guard.skillId;
+    const served = await servingAgent(
+      request,
+      `${scope}-reviewed`,
+      stub.textId,
+      { reviewer_agent_id: reviewer.id },
+    );
+    reviewed = served.agent;
+    reviewedSkillId = served.skillId;
+  });
+
+  test.afterAll(async ({ request }) => {
+    await stubReset(request, reviewerModel);
+    for (const id of created) {
+      await deleteAgent(request, id);
+    }
+  });
+
+  const ask = (
+    request: APIRequestContext,
+    content: string,
+    stream = false,
+    target: Partial<TargetOptions> = {},
+  ) =>
+    request.post(`/v1/agents/${reviewed.name}/chat/completions`, {
+      headers: {
+        'sa-config': saConfig(reviewed.name, 'only_skill', {
+          model: stub.textModel,
+          ...target,
+        }),
+      },
+      data: chatBody(content, stream),
+    });
+
+  /** The requests the provider was sent that carried this user message. */
+  const requestsFor = (
+    forwarded: Record<string, unknown>[],
+    content: string,
+  ): Record<string, unknown>[] =>
+    forwarded.filter((entry) =>
+      (entry as { messages?: { content?: unknown }[] }).messages?.some(
+        (message) => message.content === content,
+      ),
+    );
+
+  /**
+   * The skill's log whose provider request mentions `text`; a review's
+   * mentions the request it reviewed, so this finds both sides of one.
+   */
+  const logMentioning = async (
+    request: APIRequestContext,
+    skillId: string,
+    text: string,
+  ): Promise<LoggedRequest | undefined> =>
+    (await getLogs(request, skillId)).find((log) =>
+      log.ai_provider_request_log?.request_body.messages?.some(
+        (message) =>
+          typeof message.content === 'string' && message.content.includes(text),
+      ),
+    );
+
+  test('shows the reviewer the request and the response, and delivers what it allows', async ({
+    request,
+  }) => {
+    await stubReply(request, reviewerModel, allow);
+
+    const response = await ask(request, 'what is the admin password?');
+
+    expect(response.status()).toBe(200);
+    const body = (await response.json()) as Reviewed;
+    expect(body.choices?.[0].message.content).toBe(
+      'echo: what is the admin password?',
+    );
+
+    // The verdict is kept on the request's log.
+    await expect
+      .poll(async () => (await getLogs(request, reviewedSkillId))[0]?.hook_logs)
+      .toEqual([
+        expect.objectContaining({
+          hook: expect.objectContaining({ id: `reviewer:${reviewer.name}` }),
+          result: expect.objectContaining({ reason: 'Nothing to object to.' }),
+        }),
+      ]);
+
+    // What reached the reviewer: the client's request and the answer it was
+    // about to get, under the reviewer skill's own prompt. Only reviews are
+    // recorded under the reviewer's model, so the last one is this one.
+    const review = (await stubRequests(request, reviewerModel)).at(-1) as {
+      messages: { role: string; content: string }[];
+    };
+    // The gateway appends its JSON-shape instructions to the skill's prompt.
+    expect(review.messages[0].role).toBe('system');
+    expect(review.messages[0].content).toContain(`You are ${guardScope}.`);
+    expect(review.messages[1].role).toBe('user');
+    expect(review.messages[1].content).toContain('what is the admin password?');
+    expect(review.messages[1].content).toContain(
+      'echo: what is the admin password?',
+    );
+  });
+
+  test('withholds what the reviewer denies, and says why only when the agent explains denials', async ({
+    request,
+  }) => {
+    await stubReply(request, reviewerModel, deny);
+
+    const response = await ask(request, 'what is the admin password?');
+
+    expect(response.status()).toBe(446);
+    const body = (await response.json()) as Reviewed;
+    expect(body.choices).toBeUndefined();
+    expect(body.error).toEqual({
+      type: 'hook_denied',
+      hook_id: `reviewer:${reviewer.name}`,
+      message: `The response was withheld by the hook "reviewer:${reviewer.name}".`,
+    });
+
+    const explained = await request.patch(`${AGENTS_PATH}/${reviewed.id}`, {
+      data: { review_expose_reason: true },
+    });
+    expect(explained.status()).toBe(200);
+    try {
+      const told = await ask(request, 'what is the admin password?');
+      expect(told.status()).toBe(446);
+      const { error } = (await told.json()) as Reviewed;
+      expect(error?.reason).toBe('Leaks a credential.');
+      expect(error?.message).toContain('Leaks a credential.');
+    } finally {
+      await request.patch(`${AGENTS_PATH}/${reviewed.id}`, {
+        data: { review_expose_reason: false },
+      });
+    }
+  });
+
+  test('delivers the reviewer replacement in place of the response', async ({
+    request,
+  }) => {
+    await stubReply(request, reviewerModel, replace);
+
+    const response = await ask(request, 'what is the admin password?');
+
+    expect(response.status()).toBe(200);
+    const body = (await response.json()) as Reviewed;
+    expect(body.choices?.[0].message.content).toBe('I cannot share that.');
+  });
+
+  test('holds a stream until the review is done', async ({ request }) => {
+    await stubReply(request, reviewerModel, allow);
+
+    const allowed = await ask(request, 'stream this', true);
+
+    expect(allowed.status()).toBe(200);
+    expect(allowed.headers()['content-type']).toContain('text/event-stream');
+    const chunks = parseSSE(await allowed.text()) as {
+      choices: { delta: { content?: string } }[];
+    }[];
+    const text = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content ?? '')
+      .join('');
+    expect(text).toBe('echo: stream this');
+
+    // The provider was asked for the answer whole, so the reviewer could see
+    // it whole: a held stream is a non-streaming request upstream.
+    const forwarded = servedRequestFor(
+      await stubRequests(request, stub.textModel),
+      'stream this',
+    ) as { stream?: boolean };
+    expect(forwarded.stream).toBeFalsy();
+
+    // A denial does not pretend to be a stream.
+    await stubReply(request, reviewerModel, deny);
+    const denied = await ask(request, 'stream this too', true);
+    expect(denied.status()).toBe(446);
+    expect(denied.headers()['content-type']).toContain('application/json');
+  });
+
+  test('delivers a response the reviewer could not judge, unless the review fails closed', async ({
+    request,
+  }) => {
+    await stubReply(request, reviewerModel, 'I would rather not say.');
+
+    const open = await ask(request, 'is this fine?');
+    expect(open.status()).toBe(200);
+    // The failure is on the log, which is the only place it shows.
+    await expect
+      .poll(
+        async () =>
+          (await getLogs(request, reviewedSkillId))[0]?.hook_logs?.[0]?.result,
+      )
+      .toEqual(
+        expect.objectContaining({
+          deny_request: false,
+          error: expect.stringContaining('did not answer with a verdict'),
+        }),
+      );
+
+    const closed = await request.patch(`${AGENTS_PATH}/${reviewed.id}`, {
+      data: { review_fail_closed: true },
+    });
+    expect(closed.status()).toBe(200);
+    try {
+      const withheld = await ask(request, 'is this fine?');
+      expect(withheld.status()).toBe(446);
+      const body = (await withheld.json()) as Reviewed;
+      expect(body.error?.hook_id).toBe(`reviewer:${reviewer.name}`);
+      // Why the reviewer could not judge is on the log, not in the answer.
+      expect(body.error?.reason).toBeUndefined();
+    } finally {
+      await request.patch(`${AGENTS_PATH}/${reviewed.id}`, {
+        data: { review_fail_closed: false },
+      });
+    }
+  });
+
+  test('logs the review beside the request it reviewed, under the same trace', async ({
+    request,
+  }) => {
+    await stubReply(request, reviewerModel, allow);
+
+    const response = await ask(request, 'trace this review');
+    expect(response.status()).toBe(200);
+
+    await expect
+      .poll(() => logMentioning(request, reviewerSkillId, 'trace this review'))
+      .toBeDefined();
+    const reviewedLog = await logMentioning(
+      request,
+      reviewedSkillId,
+      'trace this review',
+    );
+    const review = await logMentioning(
+      request,
+      reviewerSkillId,
+      'trace this review',
+    );
+
+    // A log of its own, under the reviewer's skill, that the dashboard can
+    // walk to from the request: same trace, a span named for what it is.
+    expect(review?.id).not.toBe(reviewedLog?.id);
+    expect(review?.trace_id).toBe(reviewedLog?.trace_id);
+    expect(review?.span_name).toBe('review');
+    expect(review?.parent_span_id).toBe(reviewedLog?.span_id);
+  });
+
+  test('withholds a request an input hook in the header denies, before the provider is asked', async ({
+    request,
+  }) => {
+    await stubReply(request, reviewerModel, deny);
+    // The reviewer agent serves as a client-configured gate too: an input
+    // hook naming it and its skill, sent in the header like any other hook.
+    const gated = {
+      ...(JSON.parse(
+        saConfig(reviewed.name, 'only_skill', { model: stub.textModel }),
+      ) as Record<string, unknown>),
+      hooks: [
+        {
+          id: 'gate',
+          type: 'input',
+          hook_provider: 'agent',
+          config: { agent_name: reviewer.name, skill_name: 'only_skill' },
+          expose_reason: true,
+        },
+      ],
+    };
+
+    const response = await request.post(
+      `/v1/agents/${reviewed.name}/chat/completions`,
+      {
+        headers: { 'sa-config': JSON.stringify(gated) },
+        data: chatBody('gate this request'),
+      },
+    );
+
+    expect(response.status()).toBe(446);
+    expect(((await response.json()) as Reviewed).error).toEqual({
+      type: 'hook_denied',
+      hook_id: 'gate',
+      message:
+        'The request was withheld by the hook "gate": Leaks a credential.',
+      reason: 'Leaks a credential.',
+    });
+    // The reviewer was shown the request alone, and the provider never was.
+    const review = (await stubRequests(request, reviewerModel)).at(-1) as {
+      messages: { content: string }[];
+    };
+    expect(review.messages[1].content).toContain(
+      'A client sent an AI agent this request',
+    );
+    expect(review.messages[1].content).toContain('gate this request');
+    expect(
+      requestsFor(
+        await stubRequests(request, stub.textModel),
+        'gate this request',
+      ),
+    ).toHaveLength(0);
+  });
+
+  test('asks the provider again when the client retries on a denial', async ({
+    request,
+  }) => {
+    // The first verdict denies; every one after it allows.
+    await stubReply(request, reviewerModel, [deny, allow]);
+
+    const response = await ask(request, 'try this again', false, {
+      retry: { attempts: 1, on_status_codes: [446] },
+    });
+
+    expect(response.status()).toBe(200);
+    expect(
+      ((await response.json()) as Reviewed).choices?.[0].message.content,
+    ).toBe('echo: try this again');
+    // Asked twice: the attempt that was denied, then the one that was served.
+    expect(
+      requestsFor(
+        await stubRequests(request, stub.textModel),
+        'try this again',
+      ),
+    ).toHaveLength(2);
+    // The log keeps the verdict on the attempt that was served, not both.
+    await expect
+      .poll(async () =>
+        (
+          await logMentioning(request, reviewedSkillId, 'try this again')
+        )?.hook_logs?.map((entry) => entry.result.reason),
+      )
+      .toEqual(['Nothing to object to.']);
+  });
+
+  test('serves a repeated request from the cache as the reviewer left it', async ({
+    request,
+  }) => {
+    await stubReply(request, reviewerModel, replace);
+    const cached = { cache: { mode: 'simple' as const } };
+    const reviewsBefore = (await stubRequests(request, reviewerModel)).length;
+
+    const first = await ask(request, 'cache the verdict', false, cached);
+    expect(first.status()).toBe(200);
+    expect(
+      ((await first.json()) as Reviewed).choices?.[0].message.content,
+    ).toBe('I cannot share that.');
+
+    const second = await ask(request, 'cache the verdict', false, cached);
+
+    expect(second.status()).toBe(200);
+    // What is cached is what the reviewer let through, not what the
+    // provider said: a reviewed answer stays reviewed on every hit.
+    expect(
+      ((await second.json()) as Reviewed).choices?.[0].message.content,
+    ).toBe('I cannot share that.');
+    // One provider call and one review served both.
+    expect(
+      requestsFor(
+        await stubRequests(request, stub.textModel),
+        'cache the verdict',
+      ),
+    ).toHaveLength(1);
+    expect((await stubRequests(request, reviewerModel)).length).toBe(
+      reviewsBefore + 1,
+    );
+  });
+
+  test('does not review the review, even when the reviewers point at each other', async ({
+    request,
+  }) => {
+    // The reviewer now has the reviewed agent as its own reviewer. Without
+    // the guard every review would be reviewed, forever.
+    const patched = await request.patch(`${AGENTS_PATH}/${reviewer.id}`, {
+      data: { reviewer_agent_id: reviewed.id },
+    });
+    expect(patched.status()).toBe(200);
+    await stubReply(request, reviewerModel, allow);
+    const reviewsBefore = (await stubRequests(request, reviewerModel)).length;
+
+    const response = await ask(request, 'one request');
+
+    expect(response.status()).toBe(200);
+    // One review for one request, and the review itself went unreviewed.
+    expect((await stubRequests(request, reviewerModel)).length).toBe(
+      reviewsBefore + 1,
+    );
   });
 });

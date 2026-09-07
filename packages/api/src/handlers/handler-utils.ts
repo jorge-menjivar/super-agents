@@ -9,6 +9,7 @@ import transformToProviderRequest from '@api/services/transform-to-provider-requ
 import type { AppContext } from '@api/types/hono';
 import { HttpMethod } from '@api/types/http';
 import { getCachedResponse } from '@api/utils/cache';
+import { heldStreamFunction, releaseHeldStream } from '@api/utils/held-stream';
 import { inputHookHandler, outputHookHandler } from '@api/utils/hooks';
 import {
   validateAndTransformParameter,
@@ -461,7 +462,22 @@ export async function tryPost(
         : false;
     }
 
-    const overriddenSuperAgentsRequestData = cloneDeep(saRequestData);
+    // A stream a blocking output hook has to review is served whole and
+    // streamed to the client once judged; see `utils/held-stream.ts`.
+    const heldStreamAs = isStreamingMode
+      ? heldStreamFunction(saConfig, saRequestData.functionName)
+      : null;
+    if (heldStreamAs) {
+      isStreamingMode = false;
+      (overriddenSuperAgentsRequestBody as Record<string, unknown>).stream =
+        false;
+    }
+
+    const overriddenSuperAgentsRequestData = (
+      heldStreamAs
+        ? { ...cloneDeep(saRequestData), functionName: heldStreamAs }
+        : cloneDeep(saRequestData)
+    ) as SuperAgentsRequestData;
     overriddenSuperAgentsRequestData.requestBody =
       overriddenSuperAgentsRequestBody;
 
@@ -546,7 +562,10 @@ export async function tryPost(
         ...commonRequestOptions,
       };
 
-      return createResponse(c, createResponseOptions);
+      // Awaited so the 446 `createResponse` raises for it is caught below
+      // and answered as one; returned as a promise it escapes this handler
+      // as a bare 500.
+      return await createResponse(c, createResponseOptions);
     }
 
     if (transformedSuperAgentsBody) {
@@ -645,7 +664,13 @@ export async function tryPost(
     );
 
     if (cachedResponse) {
-      return cachedResponse;
+      return heldStreamAs
+        ? releaseHeldStream(
+            cachedResponse,
+            saTarget.configuration.ai_provider,
+            heldStreamAs,
+          )
+        : cachedResponse;
     }
 
     // Request handler (Including retries, recursion and hooks)
@@ -671,7 +696,14 @@ export async function tryPost(
       ...commonRequestOptions,
     };
 
-    return createResponse(c, createResponseOptions);
+    const response = await createResponse(c, createResponseOptions);
+    return heldStreamAs
+      ? releaseHeldStream(
+          response,
+          saTarget.configuration.ai_provider,
+          heldStreamAs,
+        )
+      : response;
   } catch (error) {
     if (error instanceof HttpError) {
       return error.toResponse();

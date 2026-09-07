@@ -181,6 +181,9 @@ describe('AgentsView', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       },
     ]);
     vi.mocked(getSkills).mockResolvedValue([
@@ -254,6 +257,9 @@ describe('AgentsView', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       },
     ]);
     vi.mocked(getSkills).mockResolvedValue([
@@ -310,6 +316,9 @@ describe('AgentsView', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       },
     ]);
     vi.mocked(getSkills).mockResolvedValue([
@@ -367,6 +376,9 @@ describe('AgentsView', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       },
     ]);
     vi.mocked(getSkills).mockResolvedValue([

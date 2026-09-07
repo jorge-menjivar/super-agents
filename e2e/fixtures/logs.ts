@@ -6,6 +6,16 @@ const LOGS_PATH = '/v1/super-agents/observability/logs';
 export interface LoggedRequest {
   id: string;
   skill_id: string;
+  /** How a review finds the request it reviewed: the same trace, as a span. */
+  trace_id: string | null;
+  span_id: string | null;
+  parent_span_id: string | null;
+  span_name: string | null;
+  /** What each hook made of the request; a reviewer's verdict lands here. */
+  hook_logs?: {
+    hook: { id: string };
+    result: { deny_request: boolean; reason?: string; error?: string };
+  }[];
   end_time: number | null;
   metadata: Record<string, unknown>;
   original_system_prompt: string | null;

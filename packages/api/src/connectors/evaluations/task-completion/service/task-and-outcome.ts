@@ -1,5 +1,9 @@
 import type { TaskCompletionEvaluationParameters } from '@api/connectors/evaluations/task-completion/types';
-import { getApiUrl, SA_SKILL_REQUEST_PARAMS } from '@api/constants';
+import {
+  getApiUrl,
+  getInternalApiKey,
+  SA_SKILL_REQUEST_PARAMS,
+} from '@api/constants';
 import { parseJudgeJson } from '@api/evaluations/llm-judge';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
@@ -62,7 +66,7 @@ export async function extractTaskAndOutcome(
   }
 
   const client = new OpenAI({
-    apiKey: '',
+    apiKey: getInternalApiKey(c),
     baseURL: `${getApiUrl(c)}/v1`,
     timeout: modelConfig.timeoutMs,
     maxRetries: 1,

@@ -1,4 +1,8 @@
-import { getApiUrl, SA_SKILL_REQUEST_PARAMS } from '@api/constants';
+import {
+  getApiUrl,
+  getInternalApiKey,
+  SA_SKILL_REQUEST_PARAMS,
+} from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
@@ -95,7 +99,7 @@ async function createSystemPromptClient(
   }
 
   const client = new OpenAI({
-    apiKey: '',
+    apiKey: getInternalApiKey(c),
     baseURL: `${getApiUrl(c)}/v1`,
     // Without this the client waits ten minutes and retries twice, which
     // outlives the reflection lock this runs under.

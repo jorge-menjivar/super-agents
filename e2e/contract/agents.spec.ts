@@ -57,6 +57,44 @@ test.describe('agents API', () => {
     }
   });
 
+  test('names another agent as reviewer, refuses itself, and forgets a deleted one', async ({
+    request,
+  }) => {
+    const guard = await createAgent(request, uniqueAgentName('guard'));
+    const reviewed = await createAgent(
+      request,
+      uniqueAgentName('reviewed'),
+      undefined,
+      { reviewer_agent_id: guard.id, review_expose_reason: true },
+    );
+
+    try {
+      expect(reviewed.reviewer_agent_id).toBe(guard.id);
+      expect(reviewed.review_expose_reason).toBe(true);
+
+      const self = await request.patch(`${AGENTS_PATH}/${reviewed.id}`, {
+        data: { reviewer_agent_id: reviewed.id },
+      });
+      expect(self.status()).toBe(400);
+
+      const missing = await request.patch(`${AGENTS_PATH}/${reviewed.id}`, {
+        data: { reviewer_agent_id: '00000000-0000-4000-8000-000000000000' },
+      });
+      expect(missing.status()).toBe(400);
+
+      // ON DELETE SET NULL on both backends: the reviews stop, the agent stays.
+      await deleteAgent(request, guard.id);
+      const after = await request.get(`${AGENTS_PATH}?id=${reviewed.id}`);
+      const [row] = (await after.json()) as {
+        reviewer_agent_id: string | null;
+      }[];
+      expect(row.reviewer_agent_id).toBeNull();
+    } finally {
+      await deleteAgent(request, reviewed.id);
+      await deleteAgent(request, guard.id);
+    }
+  });
+
   test('rejects a description below the minimum length', async ({
     request,
   }) => {

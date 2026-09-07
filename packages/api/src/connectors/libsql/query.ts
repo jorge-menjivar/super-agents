@@ -41,7 +41,7 @@ JSON_COLUMNS.logs_with_eval_scores = JSON_COLUMNS.logs;
 
 /** Columns stored as INTEGER 0/1 that the schemas expect as booleans. */
 const BOOL_COLUMNS: Record<string, string[]> = {
-  agents: ['auto_create_skills'],
+  agents: ['auto_create_skills', 'review_fail_closed', 'review_expose_reason'],
   skills: ['optimize', 'auto_created'],
 };
 

@@ -6,22 +6,16 @@ import type {
 import type { SuperAgentsResponseBody } from '@shared/types/api/response/body';
 import type { HookLog } from '@shared/types/data';
 
-import { HookType } from '@shared/types/middleware/hooks';
+import {
+  type HookDenialResponseBody,
+  HookType,
+} from '@shared/types/middleware/hooks';
 
+/** The allowed response, with the verdicts beside it for the handler. */
 function createHookResponse(
   baseResponse: Response,
-  baseResponseBody:
-    | SuperAgentsResponseBody
-    | ReadableStream
-    | FormData
-    | ArrayBuffer
-    | null,
+  baseResponseBody: SuperAgentsResponseBody,
   hookLogs: HookLog[],
-  failedHook?: HookLog,
-  override: {
-    status?: number;
-    headers?: Record<string, string>;
-  } = {},
 ): Response {
   const responseBody = {
     hook_results: {
@@ -30,17 +24,44 @@ function createHookResponse(
         (h) => h.hook.type === HookType.OUTPUT_HOOK,
       ),
     },
-    ...(failedHook ? { error: failedHook } : baseResponseBody),
+    ...baseResponseBody,
   };
 
-  const response = new Response(JSON.stringify(responseBody), {
-    status: override.status || baseResponse.status,
+  return new Response(JSON.stringify(responseBody), {
+    status: baseResponse.status,
     statusText: baseResponse.statusText,
-    headers: override.headers || baseResponse.headers,
+    headers: baseResponse.headers,
   });
-
-  return response;
 }
+
+/**
+ * What a denial tells the client. The hook log stays on the log row -- it
+ * names the reviewer and carries the reasons of every hook -- and the client
+ * hears the denying hook's own only where that hook is set to
+ * `expose_reason`: its reason, or the error that closed it.
+ */
+export function hookDenialBody(denial: HookLog): HookDenialResponseBody {
+  const { hook, result } = denial;
+  const subject = hook.type === HookType.INPUT_HOOK ? 'request' : 'response';
+  const withheld = `The ${subject} was withheld by the hook "${hook.id}"`;
+  const reason = hook.expose_reason
+    ? (result.reason ?? result.error)
+    : undefined;
+  return {
+    error: {
+      message: reason ? `${withheld}: ${reason}` : `${withheld}.`,
+      type: 'hook_denied',
+      hook_id: hook.id,
+      ...(reason ? { reason } : {}),
+    },
+  };
+}
+
+const denialResponse = (denial: HookLog): Response =>
+  new Response(JSON.stringify(hookDenialBody(denial)), {
+    status: 446,
+    headers: { 'content-type': 'application/json' },
+  });
 
 function handleFailedOutputHook(
   response: Response,
@@ -49,8 +70,7 @@ function handleFailedOutputHook(
     | ReadableStream
     | FormData
     | ArrayBuffer,
-  hookLogs: HookLog[],
-  failedHook?: HookLog,
+  denial: HookLog,
 ): Response {
   if (!saResponseBody) {
     return new Response(saResponseBody, {
@@ -61,10 +81,7 @@ function handleFailedOutputHook(
     });
   }
 
-  return createHookResponse(response, null, hookLogs, failedHook, {
-    status: 446,
-    headers: { 'content-type': 'application/json' },
-  });
+  return denialResponse(denial);
 }
 
 export async function outputHookHandler(
@@ -98,32 +115,23 @@ export async function outputHookHandler(
       saResponseBody,
     );
 
+    // The hooks ran side by side on the provider's answer; a denial from any
+    // of them wins, and otherwise the last rewrite does.
+    let reviewedResponseBody = saResponseBody;
     for (const hookLog of hookLogs) {
       if (hookLog.result.deny_request) {
-        return handleFailedOutputHook(
-          response,
-          saResponseBody,
-          hookLogs,
-          hookLog,
-        );
+        return handleFailedOutputHook(response, saResponseBody, hookLog);
+      }
+      if (hookLog.result.response_body_override) {
+        reviewedResponseBody = hookLog.result.response_body_override;
       }
     }
 
-    return createHookResponse(response, saResponseBody, hookLogs);
+    return createHookResponse(response, reviewedResponseBody, hookLogs);
   } catch (err) {
     console.error(err);
     return response;
   }
-}
-
-function handleFailedInputHook(
-  hookLogs: HookLog[],
-  failedHook?: HookLog,
-): Response {
-  return createHookResponse(new Response(), null, hookLogs, failedHook, {
-    status: 446,
-    headers: { 'content-type': 'application/json' },
-  });
 }
 
 export async function inputHookHandler(
@@ -154,7 +162,7 @@ export async function inputHookHandler(
     for (const hookLog of hookLogs) {
       if (hookLog.result.deny_request) {
         return {
-          errorResponse: handleFailedInputHook(hookLogs, hookLog),
+          errorResponse: denialResponse(hookLog),
           transformedSuperAgentsBody: saRequestData.requestBody,
         };
       }

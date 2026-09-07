@@ -8,7 +8,7 @@ import {
   LogStatusBadge,
   LogTagBadge,
 } from '@web/components/agents/log-cells';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The cells every log surface is read through.
@@ -35,6 +35,10 @@ const running = (overrides: Partial<Log> = {}): Log =>
   aLog({ status: null, end_time: null, duration: null, ...overrides });
 
 describe('log cells', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('reads a finished request by its status', () => {
     render(<LogStatusBadge log={aLog()} />);
     expect(screen.getByText('200')).toBeInTheDocument();
@@ -56,6 +60,9 @@ describe('log cells', () => {
   });
 
   it('counts up from the start time while a request runs', () => {
+    // Frozen, so the elapsed time is exactly what the fixture set however
+    // slow the render.
+    vi.useFakeTimers({ toFake: ['Date'] });
     render(<LogDuration log={running({ start_time: Date.now() - 3000 })} />);
     expect(screen.getByText('3.0s')).toBeInTheDocument();
   });

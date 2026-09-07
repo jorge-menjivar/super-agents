@@ -23,6 +23,8 @@ export async function getAgent(
         auto_create_skills: false,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 0,
+        review_fail_closed: false,
+        review_expose_reason: false,
       });
       return newAgent;
     }

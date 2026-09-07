@@ -58,12 +58,16 @@ export const JinjaSystemPromptEditor = forwardRef<
       return editor?.getText() ?? '';
     },
     setContent: (content: string) => {
-      editor?.commands.setContent(content);
+      if (editor && !editor.isDestroyed) {
+        editor.commands.setContent(content);
+      }
     },
   }));
 
+  // The editor `useEditor` hands out can already be destroyed; see
+  // `TextViewer`. A destroyed editor has no commands to call.
   useEffect(() => {
-    if (editor && value !== editor.getText()) {
+    if (editor && !editor.isDestroyed && value !== editor.getText()) {
       editor.commands.setContent(value);
     }
   }, [value, editor]);

@@ -52,6 +52,27 @@ const MAX_ARBITER_TIMEOUT_SECONDS = MAX_SKILL_ARBITER_TIMEOUT_MS / 1000;
 
 /** The select's value for "no override": a Radix item cannot be the empty string. */
 const SYSTEM_DEFAULT = '__system_default__';
+/** The reviewer select's value for "no review", for the same reason. */
+const NO_REVIEWER = '__no_reviewer__';
+
+/**
+ * A select's change, with `none` standing for null.
+ *
+ * Radix mirrors the chosen value into a hidden native select and reports
+ * back what that select ended up holding. When the form is reset to a value
+ * whose item has not registered yet -- the first paint of an agent that
+ * already has one -- the native select holds nothing and Radix reports the
+ * empty string, which would silently clear the setting. No item here is the
+ * empty string, so it can only mean that, and is ignored.
+ */
+const selectChange =
+  (none: string, onChange: (value: string | null) => void) =>
+  (value: string) => {
+    if (value === '') {
+      return;
+    }
+    onChange(value === none ? null : value);
+  };
 
 const EditAgentFormSchema = z
   .object({
@@ -82,13 +103,17 @@ const EditAgentFormSchema = z
         `Must be at most ${MAX_ARBITER_TIMEOUT_SECONDS}`,
       )
       .nullable(),
+    // Null means responses go unreviewed.
+    reviewer_agent_id: z.string().nullable(),
+    review_fail_closed: z.boolean(),
+    review_expose_reason: z.boolean(),
   })
   .strict();
 
 type EditAgentFormData = z.infer<typeof EditAgentFormSchema>;
 
 export function EditAgentView(): React.ReactElement {
-  const { selectedAgent, updateAgent, isUpdating } = useAgents();
+  const { agents, selectedAgent, updateAgent, isUpdating } = useAgents();
   const { models, setQueryParams } = useModels();
   const { aiProviderConfigs } = useAIProviders();
   const navigate = usePermissiveNavigate();
@@ -121,6 +146,17 @@ export function EditAgentView(): React.ReactElement {
     [models, aiProviderConfigs],
   );
 
+  // Any other agent can review this one; the internal agent serves the
+  // gateway's own calls and is not for clients to configure.
+  const reviewerOptions = React.useMemo(
+    () =>
+      agents.filter(
+        (agent) =>
+          agent.id !== selectedAgent?.id && agent.name !== 'super-agents',
+      ),
+    [agents, selectedAgent],
+  );
+
   const form = useForm<EditAgentFormData>({
     resolver: zodResolver(EditAgentFormSchema),
     defaultValues: {
@@ -130,6 +166,9 @@ export function EditAgentView(): React.ReactElement {
       max_auto_created_skills: 10,
       skill_arbiter_model_id: null,
       skill_arbiter_timeout_seconds: null,
+      reviewer_agent_id: null,
+      review_fail_closed: false,
+      review_expose_reason: false,
     },
   });
 
@@ -146,6 +185,9 @@ export function EditAgentView(): React.ReactElement {
           selectedAgent.skill_arbiter_timeout_ms === null
             ? null
             : selectedAgent.skill_arbiter_timeout_ms / 1000,
+        reviewer_agent_id: selectedAgent.reviewer_agent_id,
+        review_fail_closed: selectedAgent.review_fail_closed,
+        review_expose_reason: selectedAgent.review_expose_reason,
       });
     }
   }, [selectedAgent, form]);
@@ -167,6 +209,9 @@ export function EditAgentView(): React.ReactElement {
           data.skill_arbiter_timeout_seconds === null
             ? null
             : data.skill_arbiter_timeout_seconds * 1000,
+        reviewer_agent_id: data.reviewer_agent_id,
+        review_fail_closed: data.review_fail_closed,
+        review_expose_reason: data.review_expose_reason,
       };
 
       await updateAgent(selectedAgent.id, updateParams);
@@ -398,11 +443,10 @@ export function EditAgentView(): React.ReactElement {
                           </FormDescription>
                           <Select
                             value={field.value ?? SYSTEM_DEFAULT}
-                            onValueChange={(value) =>
-                              field.onChange(
-                                value === SYSTEM_DEFAULT ? null : value,
-                              )
-                            }
+                            onValueChange={selectChange(
+                              SYSTEM_DEFAULT,
+                              field.onChange,
+                            )}
                             disabled={isUpdating}
                           >
                             <FormControl>
@@ -463,6 +507,108 @@ export function EditAgentView(): React.ReactElement {
                       )}
                     />
                   </div>
+                </div>
+
+                {/* Review: another agent sees every response before the client */}
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div>
+                    <h3 className="text-base font-medium">Response review</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Another agent can review every response before the client
+                      receives it, and withhold or rewrite it. Its skill's
+                      system prompt is the policy. Streamed responses are held
+                      until the review is done.
+                    </p>
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="reviewer_agent_id"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Reviewer agent</FormLabel>
+                        <FormDescription>
+                          Empty leaves responses unreviewed.
+                        </FormDescription>
+                        <Select
+                          value={field.value ?? NO_REVIEWER}
+                          onValueChange={selectChange(
+                            NO_REVIEWER,
+                            field.onChange,
+                          )}
+                          disabled={isUpdating}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value={NO_REVIEWER}>
+                              No review
+                            </SelectItem>
+                            {reviewerOptions.map((agent) => (
+                              <SelectItem key={agent.id} value={agent.id}>
+                                {agent.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="review_fail_closed"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between gap-4">
+                        <div className="space-y-0.5">
+                          <FormLabel>Fail closed</FormLabel>
+                          <FormDescription>
+                            Withhold a response the reviewer could not judge,
+                            because it was unreachable or gave no verdict,
+                            instead of delivering it.
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            disabled={
+                              isUpdating ||
+                              form.watch('reviewer_agent_id') === null
+                            }
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="review_expose_reason"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between gap-4">
+                        <div className="space-y-0.5">
+                          <FormLabel>Explain denials</FormLabel>
+                          <FormDescription>
+                            Tell the client why a response was withheld, in the
+                            reviewer's words. Otherwise it learns only that it
+                            was. The reason is on the log either way.
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            disabled={
+                              isUpdating ||
+                              form.watch('reviewer_agent_id') === null
+                            }
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
                 </div>
 
                 {/* Form Actions */}

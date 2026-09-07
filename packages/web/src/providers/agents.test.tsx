@@ -80,6 +80,9 @@ const mockAgents: Agent[] = [
     max_auto_created_skills: 10,
     skill_arbiter_model_id: null,
     skill_arbiter_timeout_ms: null,
+    reviewer_agent_id: null,
+    review_fail_closed: false,
+    review_expose_reason: false,
   },
   {
     id: '2',
@@ -93,6 +96,9 @@ const mockAgents: Agent[] = [
     max_auto_created_skills: 10,
     skill_arbiter_model_id: null,
     skill_arbiter_timeout_ms: null,
+    reviewer_agent_id: null,
+    review_fail_closed: false,
+    review_expose_reason: false,
   },
 ];
 
@@ -164,6 +170,9 @@ function TestComponent(): React.ReactElement {
               max_auto_created_skills: 10,
               skill_arbiter_model_id: null,
               skill_arbiter_timeout_ms: null,
+              reviewer_agent_id: null,
+              review_fail_closed: false,
+              review_expose_reason: false,
             });
           } catch (error) {
             console.error('Create failed:', error);
@@ -251,6 +260,9 @@ describe('AgentsProvider', () => {
       max_auto_created_skills: 10,
       skill_arbiter_model_id: null,
       skill_arbiter_timeout_ms: null,
+      reviewer_agent_id: null,
+      review_fail_closed: false,
+      review_expose_reason: false,
     });
     vi.mocked(getAgents).mockResolvedValue(mockAgents);
     vi.mocked(updateAgent).mockResolvedValue({

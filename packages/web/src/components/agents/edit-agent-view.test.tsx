@@ -37,6 +37,9 @@ const mockAgent = {
   max_auto_created_skills: 10,
   skill_arbiter_model_id: null,
   skill_arbiter_timeout_ms: null,
+  reviewer_agent_id: null,
+  review_fail_closed: false,
+  review_expose_reason: false,
   created_at: '2023-01-01T10:30:00Z',
   updated_at: '2023-01-01T10:30:00Z',
 };
@@ -511,7 +514,9 @@ describe('EditAgentView', () => {
       renderEditAgentView();
 
       expect(screen.getByText('Automatic skills')).toBeInTheDocument();
-      expect(screen.getByRole('switch')).toBeChecked();
+      expect(
+        screen.getByRole('switch', { name: 'Create skills automatically' }),
+      ).toBeChecked();
       expect(screen.getByLabelText('Match threshold')).toHaveValue(0.8);
       expect(screen.getByLabelText('Maximum automatic skills')).toHaveValue(10);
     });
@@ -519,7 +524,9 @@ describe('EditAgentView', () => {
     it('saves the routing settings alongside the description', async () => {
       renderEditAgentView();
 
-      fireEvent.click(screen.getByRole('switch'));
+      fireEvent.click(
+        screen.getByRole('switch', { name: 'Create skills automatically' }),
+      );
       fireEvent.change(screen.getByLabelText('Maximum automatic skills'), {
         target: { value: '3' },
       });
@@ -533,6 +540,9 @@ describe('EditAgentView', () => {
           max_auto_created_skills: 3,
           skill_arbiter_model_id: null,
           skill_arbiter_timeout_ms: null,
+          reviewer_agent_id: null,
+          review_fail_closed: false,
+          review_expose_reason: false,
         });
       });
     });
@@ -577,6 +587,122 @@ describe('EditAgentView', () => {
         await screen.findByText('Must be between 0 and 1'),
       ).toBeInTheDocument();
       expect(mockUpdateAgent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Response review', () => {
+    const guard = {
+      ...mockAgent,
+      id: 'agent-2',
+      name: 'guard',
+      reviewer_agent_id: null,
+      review_fail_closed: false,
+      review_expose_reason: false,
+    };
+    const internal = {
+      ...mockAgent,
+      id: 'agent-sa',
+      name: 'super-agents',
+      reviewer_agent_id: null,
+      review_fail_closed: false,
+      review_expose_reason: false,
+    };
+
+    it('offers the review setting', () => {
+      renderEditAgentView();
+
+      expect(screen.getByText('Response review')).toBeInTheDocument();
+      expect(screen.getByText('Reviewer agent')).toBeInTheDocument();
+      // Radix shows the chosen item in the trigger as well as in the list.
+      expect(screen.getAllByText('No review').length).toBeGreaterThan(0);
+    });
+
+    it('shows the current reviewer and keeps it when saving', async () => {
+      vi.mocked(useAgents).mockReturnValue({
+        ...vi.mocked(useAgents)(),
+        agents: [mockAgent, guard, internal],
+        selectedAgent: { ...mockAgent, reviewer_agent_id: 'agent-2' },
+      });
+      renderEditAgentView();
+
+      // The other agent is offered by name; the agent itself and the
+      // internal one are not.
+      expect(screen.getAllByText('guard').length).toBeGreaterThan(0);
+      expect(screen.queryByText('super-agents')).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText('Maximum automatic skills'), {
+        target: { value: '4' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          'agent-1',
+          expect.objectContaining({ reviewer_agent_id: 'agent-2' }),
+        );
+      });
+    });
+
+    it('cannot fail closed or explain denials without a reviewer', () => {
+      renderEditAgentView();
+      expect(
+        screen.getByRole('switch', { name: 'Fail closed' }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole('switch', { name: 'Explain denials' }),
+      ).toBeDisabled();
+    });
+
+    it('saves the choice to fail closed', async () => {
+      vi.mocked(useAgents).mockReturnValue({
+        ...vi.mocked(useAgents)(),
+        agents: [mockAgent, guard],
+        selectedAgent: { ...mockAgent, reviewer_agent_id: 'agent-2' },
+      });
+      renderEditAgentView();
+
+      const failClosed = screen.getByRole('switch', { name: 'Fail closed' });
+      expect(failClosed).toBeEnabled();
+      expect(failClosed).not.toBeChecked();
+
+      fireEvent.click(failClosed);
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          'agent-1',
+          expect.objectContaining({
+            reviewer_agent_id: 'agent-2',
+            review_fail_closed: true,
+          }),
+        );
+      });
+    });
+
+    it('saves the choice to explain denials', async () => {
+      vi.mocked(useAgents).mockReturnValue({
+        ...vi.mocked(useAgents)(),
+        agents: [mockAgent, guard],
+        selectedAgent: { ...mockAgent, reviewer_agent_id: 'agent-2' },
+      });
+      renderEditAgentView();
+
+      const explain = screen.getByRole('switch', { name: 'Explain denials' });
+      expect(explain).toBeEnabled();
+      expect(explain).not.toBeChecked();
+
+      fireEvent.click(explain);
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          'agent-1',
+          expect.objectContaining({
+            reviewer_agent_id: 'agent-2',
+            review_expose_reason: true,
+          }),
+        );
+      });
     });
   });
 });

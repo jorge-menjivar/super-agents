@@ -12,6 +12,7 @@ import { latencyEvaluationConnector } from '@api/connectors/evaluations/latency/
 import { taskCompletionEvaluationConnector } from '@api/connectors/evaluations/task-completion';
 import { toolCorrectnessEvaluationConnector } from '@api/connectors/evaluations/tool-correctness';
 import { turnRelevancyEvaluationConnector } from '@api/connectors/evaluations/turn-relevancy';
+import { agentHooksConnector } from '@api/connectors/hooks/agent';
 import { getAllowedOrigins } from '@api/constants';
 import { agentAndSkillMiddleware } from '@api/middlewares/agent-and-skill';
 import { authenticatedMiddleware } from '@api/middlewares/auth';
@@ -90,7 +91,7 @@ app.use('*', userDataMiddleware(factory, resolveUserDataConnector));
 app.use('*', logsMiddleware(factory, resolveLogsConnector));
 
 // Use hooks middleware for all routes
-app.use('*', hooksMiddleware(factory, []));
+app.use('*', hooksMiddleware(factory, [agentHooksConnector]));
 
 // Use evaluation middleware for all routes
 app.use(

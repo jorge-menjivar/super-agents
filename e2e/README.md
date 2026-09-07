@@ -119,6 +119,8 @@ names, and never see each other's traffic.
 ```
 GET  /__control/requests?model=NAME   what the gateway sent
 POST /__control/fail                  {model, times, status}
+POST /__control/fence                 {model} -- structured output inside a markdown fence
+POST /__control/reply                 {model, content} -- answer with this; a list, in order
 POST /__control/reset                 {model}
 ```
 

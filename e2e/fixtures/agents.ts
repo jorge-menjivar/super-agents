@@ -25,6 +25,9 @@ export interface Agent {
   auto_create_skills: boolean;
   skill_match_threshold: number;
   max_auto_created_skills: number;
+  reviewer_agent_id: string | null;
+  review_fail_closed: boolean;
+  review_expose_reason: boolean;
   created_at: string;
   updated_at: string;
 }

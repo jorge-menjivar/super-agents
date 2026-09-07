@@ -99,6 +99,9 @@ describe('url-utils', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       },
       {
         id: 'agent-2',
@@ -112,6 +115,9 @@ describe('url-utils', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       },
       {
         id: 'agent-3',
@@ -125,6 +131,9 @@ describe('url-utils', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       },
     ];
 
@@ -174,6 +183,9 @@ describe('url-utils', () => {
           max_auto_created_skills: 10,
           skill_arbiter_model_id: null,
           skill_arbiter_timeout_ms: null,
+          reviewer_agent_id: null,
+          review_fail_closed: false,
+          review_expose_reason: false,
         },
       ];
       const result = getAgentByName(agentsWithSpecialChars, 'Agent & Helper');
@@ -419,6 +431,9 @@ describe('url-utils', () => {
           max_auto_created_skills: 10,
           skill_arbiter_model_id: null,
           skill_arbiter_timeout_ms: null,
+          reviewer_agent_id: null,
+          review_fail_closed: false,
+          review_expose_reason: false,
         },
       ];
       const result = getAgentByName(mockAgents, '');
@@ -439,6 +454,9 @@ describe('url-utils', () => {
           max_auto_created_skills: 10,
           skill_arbiter_model_id: null,
           skill_arbiter_timeout_ms: null,
+          reviewer_agent_id: null,
+          review_fail_closed: false,
+          review_expose_reason: false,
         },
       ];
       const result = getAgentByName(mockAgents, 'Agente Español 日本語');
@@ -459,6 +477,9 @@ describe('url-utils', () => {
           max_auto_created_skills: 10,
           skill_arbiter_model_id: null,
           skill_arbiter_timeout_ms: null,
+          reviewer_agent_id: null,
+          review_fail_closed: false,
+          review_expose_reason: false,
         },
       ];
       // URL-encoded 'Test Agent'
@@ -480,6 +501,9 @@ describe('url-utils', () => {
           max_auto_created_skills: 10,
           skill_arbiter_model_id: null,
           skill_arbiter_timeout_ms: null,
+          reviewer_agent_id: null,
+          review_fail_closed: false,
+          review_expose_reason: false,
         },
       ];
       const result = getAgentByName(mockAgents, 'test agent');

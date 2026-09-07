@@ -74,6 +74,8 @@ export function CreateAgentView(): React.ReactElement {
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
+        review_fail_closed: false,
+        review_expose_reason: false,
       };
 
       const newAgent = await createAgent(agentParams);

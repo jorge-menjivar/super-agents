@@ -1,5 +1,9 @@
 import { isAPIKeyRequiredForProvider } from '@api/ai-providers';
-import { getApiUrl, SA_SKILL_REQUEST_PARAMS } from '@api/constants';
+import {
+  getApiUrl,
+  getInternalApiKey,
+  SA_SKILL_REQUEST_PARAMS,
+} from '@api/constants';
 import {
   evaluationCriteria,
   scoringGuidelinesText,
@@ -186,7 +190,7 @@ export function createLLMJudge(
   const client =
     openaiClient ||
     new OpenAI({
-      apiKey: '',
+      apiKey: getInternalApiKey(c),
       baseURL: `${getApiUrl(c)}/v1`,
       dangerouslyAllowBrowser: true, // Safe in server-side Node.js context
       // This was computed into `judgeConfig` and never passed on, so every

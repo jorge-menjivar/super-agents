@@ -37,6 +37,19 @@ export const Agent = z.object({
    * system setting. */
   skill_arbiter_timeout_ms: SkillArbiterTimeoutOverride,
 
+  /** Another agent that reviews every response before the client receives
+   * it, and may withhold or rewrite it; null means responses go unreviewed.
+   * Never the agent itself. */
+  reviewer_agent_id: z.uuid().nullable(),
+
+  /** Whether a response the reviewer could not judge -- unreachable, or no
+   * verdict -- is withheld rather than delivered. */
+  review_fail_closed: z.boolean(),
+
+  /** Whether a client whose response the reviewer withheld is told the
+   * reviewer's reason, or only that it was withheld. */
+  review_expose_reason: z.boolean(),
+
   created_at: z.iso.datetime({ offset: true }),
   updated_at: z.iso.datetime({ offset: true }),
 });
@@ -82,6 +95,9 @@ export const AgentCreateParams = z
     max_auto_created_skills: z.int().min(0).default(10),
     skill_arbiter_model_id: z.uuid().nullable().optional(),
     skill_arbiter_timeout_ms: SkillArbiterTimeoutOverride.optional(),
+    reviewer_agent_id: z.uuid().nullable().optional(),
+    review_fail_closed: z.boolean().default(false),
+    review_expose_reason: z.boolean().default(false),
   })
   .strict();
 
@@ -96,6 +112,9 @@ export const AgentUpdateParams = z
     max_auto_created_skills: z.int().min(0).optional(),
     skill_arbiter_model_id: z.uuid().nullable().optional(),
     skill_arbiter_timeout_ms: SkillArbiterTimeoutOverride.optional(),
+    reviewer_agent_id: z.uuid().nullable().optional(),
+    review_fail_closed: z.boolean().optional(),
+    review_expose_reason: z.boolean().optional(),
   })
   .strict()
   .refine(
@@ -108,6 +127,9 @@ export const AgentUpdateParams = z
         'max_auto_created_skills',
         'skill_arbiter_model_id',
         'skill_arbiter_timeout_ms',
+        'reviewer_agent_id',
+        'review_fail_closed',
+        'review_expose_reason',
       ];
       return updateFields.some(
         (field) => data[field as keyof typeof data] !== undefined,

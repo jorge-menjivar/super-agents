@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The agent dashboard's recent-logs preview: agent-wide scope, a labeled
@@ -62,6 +62,10 @@ vi.mock('@web/providers/logs', () => ({
 import { AgentRecentLogsCard } from '@web/components/agents/agent-recent-logs-card';
 
 describe('AgentRecentLogsCard', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   const completedLog = {
     id: 'log-1',
     skill_id: 'skill-2',
@@ -100,6 +104,9 @@ describe('AgentRecentLogsCard', () => {
   });
 
   it('shows a request that is still running, counting up', () => {
+    // Frozen: the elapsed time is read from `Date.now()` when the cell first
+    // renders, and a slow render (under coverage) would turn 2.0s into 2.1s.
+    vi.useFakeTimers({ toFake: ['Date'] });
     logs.value = [
       {
         id: 'log-running',

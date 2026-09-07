@@ -18,6 +18,13 @@
  * SQLite cannot relax NOT NULL with ALTER, so the table is rebuilt: a new
  * table, the rows copied across, then swapped.
  *
+ * Also the response review columns on `agents`: `reviewer_agent_id`, the
+ * agent whose responses another agent reviews before the client sees them,
+ * `review_fail_closed`, whether a response it could not judge is withheld,
+ * and `review_expose_reason`, whether a client is told why one was.
+ * Additive, so an ALTER each suffices -- SQLite allows a REFERENCES clause
+ * on an added column when its default is NULL, which it is.
+ *
  * The danger in that is `DROP TABLE logs`, because three tables reference
  * `logs(id)` ON DELETE CASCADE -- evaluation runs, feedbacks and improved
  * responses. Foreign keys have to be off for the drop, and `PRAGMA
@@ -94,8 +101,14 @@ const main = async () => {
   const stillNotNull = columns.filter(
     (column) => NULLABLE_NOW.includes(column.name) && column.notNull,
   );
+  const needsLogsRebuild = !hasError || stillNotNull.length > 0;
 
-  if (hasError && stillNotNull.length === 0) {
+  const agentColumns = await columnsOf('agents');
+  const missingReviewColumns = REVIEW_COLUMNS.filter(
+    ({ name }) => !agentColumns.some((column) => column.name === name),
+  );
+
+  if (!needsLogsRebuild && missingReviewColumns.length === 0) {
     console.log('Already up to date; nothing to do.');
     await refreshFingerprints();
     return;
@@ -108,6 +121,51 @@ const main = async () => {
     console.log(`Backed up ${size} MB to ${backup}`);
   }
 
+  for (const column of missingReviewColumns) {
+    await addReviewColumn(column);
+  }
+  if (needsLogsRebuild) {
+    await rebuildLogs(columns);
+  }
+
+  await refreshFingerprints();
+};
+
+/** The columns the response review is configured in, as `schema.ts` spells them. */
+const REVIEW_COLUMNS = [
+  {
+    name: 'reviewer_agent_id',
+    definition: `TEXT REFERENCES agents(id) ON DELETE SET NULL
+       CHECK (reviewer_agent_id IS NULL OR reviewer_agent_id <> id)`,
+    after: [
+      'CREATE INDEX IF NOT EXISTS idx_agents_reviewer_agent_id ON agents(reviewer_agent_id)',
+    ],
+  },
+  {
+    name: 'review_fail_closed',
+    definition:
+      'INTEGER NOT NULL DEFAULT 0 CHECK (review_fail_closed IN (0, 1))',
+    after: [],
+  },
+  {
+    name: 'review_expose_reason',
+    definition:
+      'INTEGER NOT NULL DEFAULT 0 CHECK (review_expose_reason IN (0, 1))',
+    after: [],
+  },
+];
+
+const addReviewColumn = async ({ name, definition, after }) => {
+  console.log(`Adding \`agents.${name}\`...`);
+  await client.execute(`ALTER TABLE agents ADD COLUMN ${name} ${definition}`);
+  for (const sql of after) {
+    await client.execute(sql);
+  }
+  console.log(`Added \`agents.${name}\`.`);
+};
+
+/** `columns` are the current `logs` columns, from `columnsOf`. */
+const rebuildLogs = async (columns) => {
   const { rows } = await client.execute('SELECT COUNT(*) AS n FROM logs');
   console.log(`Rebuilding \`logs\` (${rows[0].n} rows)...`);
 
@@ -247,8 +305,6 @@ const main = async () => {
   }
 
   console.log('Rebuilt `logs`.');
-
-  await refreshFingerprints();
 };
 
 /**

@@ -107,6 +107,9 @@ describe('LogsTableView', () => {
   });
 
   it('counts the duration up while the request runs', () => {
+    // The clock only moves when the test moves it: with time advancing on
+    // its own, a slow render reads 1.1s where 1.0s is expected.
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     logsState.value = {
       ...logsState.value,
       logs: [aRunningLog({ start_time: Date.now() - 1000 })],

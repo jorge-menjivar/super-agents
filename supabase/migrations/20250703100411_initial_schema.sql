@@ -11,9 +11,25 @@ CREATE TABLE if not exists agents (
   auto_create_skills BOOLEAN NOT NULL DEFAULT TRUE,
   skill_match_threshold FLOAT NOT NULL DEFAULT 0.8,
   max_auto_created_skills INTEGER NOT NULL DEFAULT 10,
+  -- Another agent that reviews every response before the client receives it;
+  -- NULL means responses go unreviewed. Deleting the reviewer stops the
+  -- reviews rather than blocking the delete.
+  reviewer_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+  -- Whether a response the reviewer could not judge is withheld rather than
+  -- delivered.
+  review_fail_closed BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Whether a client whose response the reviewer withheld is told the
+  -- reviewer's reason, or only that it was withheld.
+  review_expose_reason BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT agents_reviewer_not_self CHECK (reviewer_agent_id IS NULL OR reviewer_agent_id <> id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_agents_reviewer_agent_id ON agents(reviewer_agent_id);
+COMMENT ON COLUMN agents.reviewer_agent_id IS 'Another agent that reviews every response before the client receives it; NULL means unreviewed';
+COMMENT ON COLUMN agents.review_fail_closed IS 'Whether a response the reviewer could not judge is withheld rather than delivered';
+COMMENT ON COLUMN agents.review_expose_reason IS 'Whether a client whose response was withheld is told the reviewer reason, or only that it was withheld';
 
 CREATE TRIGGER update_agents_updated_at BEFORE UPDATE ON agents
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

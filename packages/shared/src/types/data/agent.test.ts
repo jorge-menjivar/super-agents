@@ -516,6 +516,9 @@ describe('Agent Data Transforms and Validation', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       };
 
       const result = Agent.parse(validAgent);
@@ -533,6 +536,9 @@ describe('Agent Data Transforms and Validation', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
         created_at: '2023-01-01T00:00:00.000+00:00',
         updated_at: '2023-01-02T12:30:45.123-05:00',
       };
@@ -590,6 +596,9 @@ describe('Agent Data Transforms and Validation', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
         created_at: '2023-01-01T00:00:00.000Z',
         updated_at: '2023-01-01T00:00:00.000Z',
       };
@@ -621,6 +630,9 @@ describe('Agent Data Transforms and Validation', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
         created_at: '2023-01-01T00:00:00.000Z',
         updated_at: '2023-01-01T00:00:00.000Z',
       };
@@ -690,5 +702,64 @@ describe('automatic skill settings', () => {
         updated_at: '2026-01-01T00:00:00.000Z',
       }),
     ).toThrow();
+  });
+});
+
+describe('reviewer_agent_id', () => {
+  const minimal = {
+    name: 'reviewed',
+    description: 'An agent whose answers another agent reviews first.',
+  };
+  const reviewer = '6f1c2d3e-4b5a-4c6d-8e9f-0a1b2c3d4e5f';
+
+  it('is optional on creation and may name an agent or nothing', () => {
+    expect(AgentCreateParams.parse(minimal).reviewer_agent_id).toBeUndefined();
+    expect(
+      AgentCreateParams.parse({ ...minimal, reviewer_agent_id: reviewer })
+        .reviewer_agent_id,
+    ).toBe(reviewer);
+    expect(
+      AgentCreateParams.parse({ ...minimal, reviewer_agent_id: null })
+        .reviewer_agent_id,
+    ).toBeNull();
+  });
+
+  it('has to be an agent id', () => {
+    expect(() =>
+      AgentCreateParams.parse({ ...minimal, reviewer_agent_id: 'guard' }),
+    ).toThrow();
+  });
+
+  it('fails open unless told otherwise', () => {
+    expect(AgentCreateParams.parse(minimal).review_fail_closed).toBe(false);
+    expect(
+      AgentCreateParams.parse({ ...minimal, review_fail_closed: true })
+        .review_fail_closed,
+    ).toBe(true);
+    expect(
+      AgentUpdateParams.parse({ review_fail_closed: true }).review_fail_closed,
+    ).toBe(true);
+  });
+
+  it('keeps the reason to the log unless told otherwise', () => {
+    expect(AgentCreateParams.parse(minimal).review_expose_reason).toBe(false);
+    expect(
+      AgentCreateParams.parse({ ...minimal, review_expose_reason: true })
+        .review_expose_reason,
+    ).toBe(true);
+    expect(
+      AgentUpdateParams.parse({ review_expose_reason: true })
+        .review_expose_reason,
+    ).toBe(true);
+  });
+
+  it('is enough on its own to make an update', () => {
+    expect(
+      AgentUpdateParams.parse({ reviewer_agent_id: null }).reviewer_agent_id,
+    ).toBeNull();
+    expect(
+      AgentUpdateParams.parse({ reviewer_agent_id: reviewer })
+        .reviewer_agent_id,
+    ).toBe(reviewer);
   });
 });

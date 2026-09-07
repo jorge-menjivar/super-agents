@@ -24,6 +24,8 @@
  *   GET  /__control/requests?model=NAME   what the gateway sent for that model
  *   POST /__control/fail        {model, times, status} -- inject failures
  *   POST /__control/fence       {model} -- wrap structured output in a fence
+ *   POST /__control/reply       {model, content} -- answer with this text instead;
+ *                               an array is answered in order, the last one kept
  *   POST /__control/reset       {model} -- forget everything for that model
  *
  * Configured with E2E_STUB_PORT (default 3103).
@@ -34,6 +36,17 @@ const port = Number(process.env.E2E_STUB_PORT ?? 3103);
 
 /** model name -> request bodies the gateway sent, oldest first. */
 const received = new Map();
+/**
+ * model name -> the texts replies carry in place of the echo or schema, in
+ * order; the last one is kept for every reply after it.
+ */
+const canned = new Map();
+
+/** The scripted reply for this request; the queue advances until one is left. */
+const nextCanned = (model) => {
+  const queue = canned.get(model);
+  return queue.length > 1 ? queue.shift() : queue[0];
+};
 /** model name -> queued failures, shifted one per request. */
 const failures = new Map();
 /**
@@ -253,11 +266,22 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (url.pathname === '/__control/reply') {
+    const { model, content } = JSON.parse((await readBody(request)) || '{}');
+    canned.set(
+      model,
+      (Array.isArray(content) ? content : [content]).map(String),
+    );
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+
   if (url.pathname === '/__control/reset') {
     const { model } = JSON.parse((await readBody(request)) || '{}');
     received.delete(model);
     failures.delete(model);
     fenced.delete(model);
+    canned.delete(model);
     sendJson(response, 200, { ok: true });
     return;
   }
@@ -292,11 +316,15 @@ const server = createServer(async (request, response) => {
   if (url.pathname === '/v1/chat/completions') {
     const schema = requestedSchema(body);
     const structured = schema ? JSON.stringify(instanceOf(schema, schema)) : '';
-    const text = schema
-      ? fenced.has(model)
-        ? `Here is the JSON you asked for:\n\n\`\`\`json\n${structured}\n\`\`\``
-        : structured
-      : replyText(body);
+    // A canned reply wins over both: a test that scripted the model's answer
+    // wants exactly that answer, whatever shape the request asked for.
+    const text = canned.has(model)
+      ? nextCanned(model)
+      : schema
+        ? fenced.has(model)
+          ? `Here is the JSON you asked for:\n\n\`\`\`json\n${structured}\n\`\`\``
+          : structured
+        : replyText(body);
     if (body?.stream) {
       streamCompletion(response, body, text);
     } else {

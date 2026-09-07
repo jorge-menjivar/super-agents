@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import { SkillDashboardView } from '@web/components/agents/skills/skill-dashboard-view';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock TanStack Router and params before importing component
 const mockNavigate = vi.fn();
@@ -157,6 +157,10 @@ const renderWithProviders = (component: React.ReactElement) => {
 };
 
 describe('SkillDashboardView', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
 
@@ -336,6 +340,10 @@ describe('SkillDashboardView', () => {
   });
 
   it('reads its recent requests the way the logs page does', async () => {
+    // The clock is frozen: a running request's elapsed time is read from
+    // `Date.now()` when its cell first renders, and under coverage
+    // instrumentation the render is slow enough for "4.0s" to drift to "4.1s".
+    vi.useFakeTimers({ toFake: ['Date'] });
     // The card and the logs table render through the same cells, so a
     // request that failed, or one still running, reads the same on both.
     vi.mocked(useLogs).mockReturnValue({

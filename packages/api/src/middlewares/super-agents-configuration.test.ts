@@ -241,3 +241,75 @@ describe('saConfigurationInjectorMiddleware', () => {
     expect(body.error).toContain('agent helper had no default models');
   });
 });
+
+describe('saConfigurationInjectorMiddleware reviewer', () => {
+  const setAgent = (c: AppContext, agent: Record<string, unknown>) =>
+    (c.set as unknown as (k: string, v: unknown) => void)('agent', agent);
+
+  it('adds the agent reviewer as a blocking output hook the header cannot leave out', async () => {
+    const preProcessed = SuperAgentsConfigPreProcessed.parse({
+      agent_name: 'helper',
+      skill_name: 'routed-skill',
+      targets: [{ provider: 'openai', model: 'gpt-4o' }],
+    });
+    const getAgents = vi
+      .fn()
+      .mockResolvedValue([{ id: 'agent-2', name: 'guard' }]);
+    const c = context(preProcessed, { getAgents });
+    setAgent(c, {
+      id: 'agent-1',
+      name: 'helper',
+      reviewer_agent_id: 'agent-2',
+      review_fail_closed: true,
+      review_expose_reason: false,
+    });
+
+    await saConfigurationInjectorMiddleware(c, vi.fn());
+
+    expect(getAgents).toHaveBeenCalledWith(c, { id: 'agent-2' });
+    const saConfig = setValue(c, 'sa_config') as SuperAgentsConfig;
+    expect(saConfig.hooks).toEqual([
+      expect.objectContaining({
+        id: 'reviewer:guard',
+        type: 'output',
+        hook_provider: 'agent',
+        config: { agent_name: 'guard' },
+        await: true,
+        fail_closed: true,
+      }),
+    ]);
+  });
+
+  it('adds no hook to the review itself', async () => {
+    const preProcessed = SuperAgentsConfigPreProcessed.parse({
+      agent_name: 'guard',
+      skill_name: 'routed-skill',
+      targets: [{ provider: 'openai', model: 'gpt-4o' }],
+      reviewing_trace_id: 'trace-1',
+    });
+    const getAgents = vi.fn();
+    const c = context(preProcessed, { getAgents });
+    setAgent(c, { id: 'agent-2', name: 'guard', reviewer_agent_id: 'agent-1' });
+
+    await saConfigurationInjectorMiddleware(c, vi.fn());
+
+    expect(getAgents).not.toHaveBeenCalled();
+    const saConfig = setValue(c, 'sa_config') as SuperAgentsConfig;
+    expect(saConfig.hooks).toEqual([]);
+  });
+
+  it('leaves the hooks alone for an agent without a reviewer', async () => {
+    const preProcessed = SuperAgentsConfigPreProcessed.parse({
+      agent_name: 'helper',
+      skill_name: 'routed-skill',
+      targets: [{ provider: 'openai', model: 'gpt-4o' }],
+    });
+    const c = context(preProcessed, {});
+    setAgent(c, { id: 'agent-1', name: 'helper', reviewer_agent_id: null });
+
+    await saConfigurationInjectorMiddleware(c, vi.fn());
+
+    const saConfig = setValue(c, 'sa_config') as SuperAgentsConfig;
+    expect(saConfig.hooks).toEqual([]);
+  });
+});

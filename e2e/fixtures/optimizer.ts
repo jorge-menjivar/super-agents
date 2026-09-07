@@ -4,7 +4,7 @@ import { STUB_URL, uniqueModelName } from './gateway';
 import { createSkill, SKILLS_PATH } from './skills';
 
 const PROVIDERS_PATH = '/v1/super-agents/ai-providers';
-const MODELS_PATH = '/v1/super-agents/models';
+export const MODELS_PATH = '/v1/super-agents/models';
 const SETTINGS_PATH = '/v1/super-agents/system-settings';
 
 /** What the stub answers with for a `string` field named `system_prompt`. */

@@ -9,7 +9,8 @@ import { LazyTextViewer } from '@web/components/agents/skills/logs/components/te
 import { MonacoEditor } from '@web/components/monaco-editor';
 import { Button } from '@web/components/ui/button';
 import { cn } from '@web/utils/ui/utils';
-import Ajv, { type ValidateFunction } from 'ajv';
+import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020';
+import draft7MetaSchema from 'ajv/dist/refs/json-schema-draft-07.json';
 import addFormats from 'ajv-formats';
 import { AlertTriangleIcon, SaveIcon } from 'lucide-react';
 import { useTheme } from 'next-themes';
@@ -63,7 +64,11 @@ export function GenericViewer({
   // biome-ignore lint/correctness/useExhaustiveDependencies: ✖ formatValue changes on every re-render and should not be used as a hook dependency.
   useEffect(() => {
     if (rawSchema) {
-      const ajv = new Ajv({ allErrors: true });
+      // Draft 2020-12 is what Zod emits for `response_format` and what MCP
+      // tools declare; the draft-07 meta-schema goes in beside it for the
+      // tools written against that one, so a schema naming either compiles.
+      const ajv = new Ajv2020({ allErrors: true });
+      ajv.addMetaSchema(draft7MetaSchema);
       addFormats(ajv);
       try {
         const validateFunction_ = ajv.compile(rawSchema);

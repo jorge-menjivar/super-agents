@@ -146,6 +146,9 @@ describe('getAgent', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       };
 
       vi.mocked(mockConnector.getAgents).mockResolvedValue([existingAgent]);
@@ -177,6 +180,9 @@ describe('getAgent', () => {
           max_auto_created_skills: 10,
           skill_arbiter_model_id: null,
           skill_arbiter_timeout_ms: null,
+          reviewer_agent_id: null,
+          review_fail_closed: false,
+          review_expose_reason: false,
         },
         {
           id: '223e4567-e89b-12d3-a456-426614174000',
@@ -190,6 +196,9 @@ describe('getAgent', () => {
           max_auto_created_skills: 10,
           skill_arbiter_model_id: null,
           skill_arbiter_timeout_ms: null,
+          reviewer_agent_id: null,
+          review_fail_closed: false,
+          review_expose_reason: false,
         },
       ];
 
@@ -220,6 +229,9 @@ describe('getAgent', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       };
 
       vi.mocked(mockConnector.getAgents).mockResolvedValue([]);
@@ -238,6 +250,8 @@ describe('getAgent', () => {
         auto_create_skills: false,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 0,
+        review_fail_closed: false,
+        review_expose_reason: false,
       });
     });
 
@@ -275,6 +289,9 @@ describe('getAgent', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       };
 
       vi.mocked(mockConnector.getAgents).mockResolvedValue([agent]);
@@ -321,6 +338,9 @@ describe('getAgent', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       };
 
       vi.mocked(mockConnector.getAgents).mockResolvedValue([agent]);
@@ -349,6 +369,9 @@ describe('getAgent', () => {
         max_auto_created_skills: 10,
         skill_arbiter_model_id: null,
         skill_arbiter_timeout_ms: null,
+        reviewer_agent_id: null,
+        review_fail_closed: false,
+        review_expose_reason: false,
       };
 
       vi.mocked(mockConnector.getAgents).mockResolvedValue([existingAgent]);

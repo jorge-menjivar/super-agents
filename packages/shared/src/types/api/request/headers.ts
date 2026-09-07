@@ -305,6 +305,12 @@ export const BaseSuperAgentsConfig = NonPrivateSuperAgentsConfig.extend({
     mode: StrategyModes.SINGLE,
   }),
   hooks: z.array(Hook).default([]),
+  /**
+   * Set by the gateway on the request it sends a reviewer agent: the trace
+   * of the request under review. A review is never itself reviewed, which is
+   * what keeps two agents that review each other from looping.
+   */
+  reviewing_trace_id: z.string().optional(),
 
   // Observability
   app_id: z.string().optional(),

@@ -1,42 +1,76 @@
 import type { HooksConnector } from '@api/types/connector';
 import type { AppContext, AppEnv } from '@api/types/hono';
+import { warn } from '@shared/console-logging';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import { FunctionName } from '@shared/types/api/request/function-name';
 import type { SuperAgentsConfig } from '@shared/types/api/request/headers';
 import type { SuperAgentsResponseBody } from '@shared/types/api/response/body';
 import type { HookLog } from '@shared/types/data';
-
 import { CacheStatus } from '@shared/types/middleware/cache';
 import {
   type Hook,
+  type HookInput,
   HookResult,
   HookType,
 } from '@shared/types/middleware/hooks';
 import type { MiddlewareHandler } from 'hono';
 import type { Factory } from 'hono/factory';
 
+/**
+ * The result of a hook that could not run. Unless the hook fails closed it
+ * denies nothing: the request is served as if the hook were absent, and the
+ * failure travels with the hook log, which is the only place it can be seen
+ * afterwards.
+ */
+const failedHookResult = (hook: Hook, error: string): HookResult => ({
+  deny_request: hook.fail_closed,
+  request_body_override: undefined,
+  response_body_override: undefined,
+  skipped: false,
+  error,
+});
+
+/**
+ * A provider can report a failure of its own -- a reviewer that answered with
+ * no verdict -- without throwing; a hook that fails closed denies on that
+ * too, so that the two kinds of failure read the same way.
+ */
+const closedOnFailure = (hook: Hook, result: HookResult): HookResult =>
+  hook.fail_closed && result.error !== undefined
+    ? { ...result, deny_request: true }
+    : result;
+
 async function executeHookByProvider(
   c: AppContext,
   hook: Hook,
+  input: HookInput,
 ): Promise<HookResult> {
+  const connector = c.get('hooks_connectors_map')[hook.hook_provider];
+  if (!connector) {
+    warn(
+      `[HOOKS] Hook "${hook.id}" names the provider "${hook.hook_provider}", which this server does not implement`,
+    );
+    return failedHookResult(
+      hook,
+      `No hook provider named "${hook.hook_provider}" is available`,
+    );
+  }
   try {
-    const hookConnectorsMap = c.get('hooks_connectors_map');
-    const result: HookResult =
-      await hookConnectorsMap[hook.hook_provider].executeHook(hook);
-    return {
+    const result = await connector.executeHook(c, hook, input);
+    return closedOnFailure(hook, {
       deny_request: result.deny_request,
       request_body_override: result.request_body_override,
       response_body_override: result.response_body_override,
       skipped: result.skipped,
-    };
+      reason: result.reason,
+      error: result.error,
+    });
   } catch (err: unknown) {
     console.error(`Error executing hook "${hook.id}":`, err);
-    return {
-      deny_request: false,
-      request_body_override: undefined,
-      response_body_override: undefined,
-      skipped: false,
-    };
+    return failedHookResult(
+      hook,
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
@@ -122,7 +156,11 @@ async function executeHook(
     cacheStatus = CacheStatus.REFRESH;
   }
 
-  const result = await executeHookByProvider(c, hook);
+  const result = await executeHookByProvider(c, hook, {
+    requestData: saRequestData,
+    responseBody: saResponseBody,
+    statusCode,
+  });
 
   return {
     hookResult: result,

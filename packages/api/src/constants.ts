@@ -137,6 +137,16 @@ export const getAuthJwtSecret = (c: AppContext): string => {
  * If not set, API requests without JWT authentication will be allowed through.
  * Set this to require Bearer token authentication for API access.
  */
+/**
+ * The key the server sends when it calls its own `/v1` -- the internal
+ * skills, and an agent reviewing another's responses. The bearer token when
+ * one is configured, since those calls are authenticated like any client's.
+ * Without one, authentication is skipped and the value only has to exist:
+ * the OpenAI SDK refuses to construct a client with no key at all.
+ */
+export const getInternalApiKey = (c: AppContext): string =>
+  getBearerToken(c) ?? 'none';
+
 export const getBearerToken = (c: AppContext): string | undefined =>
   c.env.BEARER_TOKEN;
 

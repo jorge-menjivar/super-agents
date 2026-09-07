@@ -524,6 +524,68 @@ read, since each call's prompt is its own. The gateway drops the parameter for
 the models that reject it (`dropUnsupportedParameters`, from the capability
 table) and forwards it only where a provider's config lists it.
 
+## Hooks and Response Review
+
+A hook is a check the gateway runs beside a request: an *input* hook before the
+provider is asked, an *output* hook once it has answered and before the client
+hears. Hooks arrive in `sa_config.hooks` (`@shared/types/middleware/hooks`),
+run in `middlewares/hooks.ts`, and their results are kept on the log row
+(`hook_logs`). A hook's provider implements `HooksConnector`
+(`types/connector.ts`) and is handed the request, the response and the status
+(`HookInput`); the connectors are registered in `v1/index.ts`. Only the
+`agent` provider is implemented -- `http` and `llm` are declared types with
+no connector, and a hook naming one is recorded as failed. So is a hook whose
+provider throws, or one that reports it could not judge. **Hooks fail open
+by default:** a failed hook denies nothing, and its `result.error` on the
+hook log is the only record that the request went unreviewed. A hook with
+`fail_closed: true` denies instead, with the same error on the log -- for a
+check that matters more than availability. On an agent,
+`review_fail_closed` sets it for the reviewer hook.
+
+A hook that denies turns the answer into a 446 (`HookDenialResponseBody`):
+an `error` shaped like any other gateway error, whose `message` says which
+hook withheld the request or the response and, only when that hook has
+`expose_reason: true`, why -- the hook's `reason`, or the error that closed
+it, repeated in `error.reason`. **Denials are unexplained by default**,
+because a reviewer's reason tends to quote what it objected to, and a
+client told exactly why is a client shown how to rephrase; on an agent,
+`review_expose_reason` turns it on for the reviewer hook. The hook log
+itself never reaches the client: it names the reviewer and carries every
+hook's reason, and is read from the log row. A hook that sets
+`response_body_override` has the client receive that body instead
+(`utils/hooks.ts`). Retrying on a 446 (`retry.on_status_codes`) asks the
+provider again. The `hook_results` block the handler merges into an allowed
+response does not reach the client either: the body is re-parsed against
+its response schema on the way out, which strips it.
+
+**The `agent` provider** (`connectors/hooks/agent.ts`) makes another agent on
+the deployment the reviewer. The review is an ordinary gateway request to
+`/v1/agents/<reviewer>` (or `.../skills/<skill>`), so the reviewer's policy
+is its skill's system prompt, evolved and evaluated like any other skill's,
+and every review is a log of its own under the reviewed request's trace. The
+reviewer is shown the client's request and the response as material and
+answers with a verdict -- `allow`, `deny`, or `replace` with text of its own,
+which rewrites every choice and drops any tool call. An answer that is not a
+verdict fails open, with the error on the hook log.
+
+**Configured on the agent, not in the header.** `agents.reviewer_agent_id`
+names the reviewer of every response the agent gives; `reviewerHookFor`
+(`utils/super-agents/reviewer.ts`) turns it into a blocking output hook in
+`saConfigurationInjectorMiddleware`, server-side, so no client header can
+leave it out. Both schemas refuse an agent as its own reviewer and forget a
+deleted one (`ON DELETE SET NULL`). The request the gateway sends a reviewer
+carries `reviewing_trace_id`, and a request carrying it gets no reviewer hook
+of its own: a review is never reviewed, which is what keeps two agents that
+review each other from looping.
+
+**Streams are held.** A blocking output hook has to see the whole response
+before the client does, so a stream it would review is served whole -- the
+provider is asked without `stream`, the hooks judge the JSON -- and what they
+allow is streamed to the client at the end, all at once
+(`utils/held-stream.ts`). A denial reaches a streaming client as the same
+446 JSON error. Only chat and text completions are held; a streaming
+Responses API request is not reviewed today.
+
 ## Skill Optimization System
 
 ### System Prompt Evolution

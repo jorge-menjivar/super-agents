@@ -1,4 +1,8 @@
-import { getApiUrl, SA_SKILL_REQUEST_PARAMS } from '@api/constants';
+import {
+  getApiUrl,
+  getInternalApiKey,
+  SA_SKILL_REQUEST_PARAMS,
+} from '@api/constants';
 import type {
   EvaluationMethodConnector,
   UserDataStorageConnector,
@@ -159,7 +163,7 @@ export async function generateEvaluationCreateParams(
 
   // Create OpenAI client pointing to local Super Agents API
   const client = new OpenAI({
-    apiKey: '',
+    apiKey: getInternalApiKey(c),
     baseURL: `${getApiUrl(c)}/v1`,
     // Without this the client waits ten minutes and retries twice, which
     // outlives the evaluation lock this runs under.

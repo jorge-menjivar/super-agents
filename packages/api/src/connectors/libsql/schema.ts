@@ -62,9 +62,14 @@ const initialSchema: LibsqlMigration = {
       max_auto_created_skills INTEGER NOT NULL DEFAULT 10,
       skill_arbiter_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
       skill_arbiter_timeout_ms INTEGER CHECK (skill_arbiter_timeout_ms IS NULL OR skill_arbiter_timeout_ms > 0),
+      reviewer_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+      review_fail_closed INTEGER NOT NULL DEFAULT 0 CHECK (review_fail_closed IN (0, 1)),
+      review_expose_reason INTEGER NOT NULL DEFAULT 0 CHECK (review_expose_reason IN (0, 1)),
       created_at TEXT NOT NULL DEFAULT (${NOW_ISO}),
-      updated_at TEXT NOT NULL DEFAULT (${NOW_ISO})
+      updated_at TEXT NOT NULL DEFAULT (${NOW_ISO}),
+      CHECK (reviewer_agent_id IS NULL OR reviewer_agent_id <> id)
     )`,
+    `CREATE INDEX IF NOT EXISTS idx_agents_reviewer_agent_id ON agents(reviewer_agent_id)`,
     updatedAtTrigger('agents'),
     // Postgres enforces this through `validate_agent_model_types`.
     `CREATE TRIGGER IF NOT EXISTS agents_validate_model_types_insert

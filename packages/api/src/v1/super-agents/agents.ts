@@ -1,4 +1,5 @@
-import type { AppEnv } from '@api/types/hono';
+import type { UserDataStorageConnector } from '@api/types/connector';
+import type { AppContext, AppEnv } from '@api/types/hono';
 import { parseDatabaseError } from '@api/utils/database-error';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import { adoptDefaultModels } from '@api/utils/super-agents/skill-creation';
@@ -11,11 +12,40 @@ import {
 import { Hono } from 'hono';
 import { z } from 'zod';
 
+/**
+ * Why `reviewer_agent_id` cannot be set as asked, or null when it can. Both
+ * schemas refuse the two cases as well; this is the readable answer.
+ */
+async function reviewerProblem(
+  c: AppContext,
+  connector: UserDataStorageConnector,
+  reviewerId: string | null | undefined,
+  agentId?: string,
+): Promise<string | null> {
+  if (!reviewerId) {
+    return null;
+  }
+  if (reviewerId === agentId) {
+    return 'An agent cannot be its own reviewer.';
+  }
+  const reviewers = await connector.getAgents(c, { id: reviewerId });
+  return reviewers.length > 0 ? null : 'The reviewer agent does not exist.';
+}
+
 export const agentsRouter = new Hono<AppEnv>()
   .post('/', zValidator('json', AgentCreateParams), async (c) => {
     try {
       const data = c.req.valid('json');
       const connector = c.get('user_data_storage_connector');
+
+      const problem = await reviewerProblem(
+        c,
+        connector,
+        data.reviewer_agent_id,
+      );
+      if (problem) {
+        return c.json({ error: problem }, 400);
+      }
 
       const newAgent = await connector.createAgent(c, data);
 
@@ -49,6 +79,16 @@ export const agentsRouter = new Hono<AppEnv>()
         const { agentId } = c.req.valid('param');
         const data = c.req.valid('json');
         const connector = c.get('user_data_storage_connector');
+
+        const problem = await reviewerProblem(
+          c,
+          connector,
+          data.reviewer_agent_id,
+          agentId,
+        );
+        if (problem) {
+          return c.json({ error: problem }, 400);
+        }
 
         const updatedAgent = await connector.updateAgent(c, agentId, data);
 

@@ -56,6 +56,28 @@ describe('GenericViewer', () => {
     expect(screen.queryByTestId('text-viewer')).not.toBeInTheDocument();
   });
 
+  it.each([
+    'https://json-schema.org/draft/2020-12/schema',
+    'http://json-schema.org/draft-07/schema#',
+  ])('validates against a schema written for %s', ($schema) => {
+    render(
+      viewer({
+        language: 'json',
+        defaultValue: '{"score":0.9}',
+        rawSchema: {
+          $schema,
+          type: 'object',
+          properties: { score: { type: 'number' } },
+          required: ['score'],
+        } as never,
+      }),
+    );
+
+    expect(screen.queryByText(/^schema is invalid: /)).not.toBeInTheDocument();
+    // A schema that compiled formats the answer it validated.
+    expect(screen.getByTestId('monaco')).toHaveTextContent('"score": 0.9');
+  });
+
   it('collapses to a preview of the prompt', () => {
     render(viewer());
 

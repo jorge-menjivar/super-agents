@@ -99,6 +99,21 @@ export const stubFence = async (
   await request.post(`${STUB_URL}/__control/fence`, { data: { model } });
 };
 
+/**
+ * Make every reply for this model carry `content`, whatever the request asked
+ * for -- how a test scripts a reviewer's verdict. A list is answered in
+ * order, and its last entry is what every reply after it carries.
+ */
+export const stubReply = async (
+  request: APIRequestContext,
+  model: string,
+  content: string | string[],
+): Promise<void> => {
+  await request.post(`${STUB_URL}/__control/reply`, {
+    data: { model, content },
+  });
+};
+
 export const stubReset = async (
   request: APIRequestContext,
   model: string,

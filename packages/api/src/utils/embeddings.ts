@@ -1,5 +1,5 @@
 import { isAPIKeyRequiredForProvider } from '@api/ai-providers';
-import { getApiUrl, getBearerToken } from '@api/constants';
+import { getApiUrl, getInternalApiKey } from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { resolveEmbeddingModelConfig } from '@api/utils/evaluation-model-resolver';
@@ -296,7 +296,7 @@ export async function embedText(
       signal: AbortSignal.timeout(embeddingConfig.timeoutMs),
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${getBearerToken(c)}`,
+        Authorization: `Bearer ${getInternalApiKey(c)}`,
         'sa-config': JSON.stringify(saConfig),
       },
       body: JSON.stringify({
