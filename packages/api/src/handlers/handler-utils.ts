@@ -878,7 +878,8 @@ export async function recursiveOutputHookHandler(
   let response: Response,
     retryCount: number | undefined,
     createdAt: Date,
-    retrySkipped: boolean;
+    retrySkipped: boolean,
+    sentAt: number;
   const requestTimeout = saTarget.request_timeout || null;
 
   const { retry } = saTarget;
@@ -908,6 +909,7 @@ export async function recursiveOutputHookHandler(
     attempt: retryCount,
     createdAt,
     skip: retrySkipped,
+    sentAt,
   } = await retryRequest(
     aiProviderRequestURL,
     options,
@@ -917,6 +919,12 @@ export async function recursiveOutputHookHandler(
     requestHandler,
     retry?.use_retry_after_header || false,
   ));
+
+  // The provider's own span, for the attempt that answered: from here to its
+  // first token, or to its whole answer when nothing streams. The log row's
+  // times span the whole request instead, routing and review included, and
+  // that is the gateway's time rather than the model's.
+  c.set('provider_start_time', sentAt);
 
   // Create callbacks for streaming responses
   const onFirstChunk = isStreamingMode
@@ -930,7 +938,9 @@ export async function recursiveOutputHookHandler(
   if (isStreamingMode) {
     const streamEndPromise = new Promise<void>((resolve) => {
       streamEndResolver = (accumulatedChunks: string) => {
-        c.set('stream_end_time', Date.now());
+        const endTime = Date.now();
+        c.set('stream_end_time', endTime);
+        c.set('provider_end_time', endTime);
         c.set('accumulated_stream_chunks', accumulatedChunks);
         resolve();
       };
@@ -955,6 +965,11 @@ export async function recursiveOutputHookHandler(
     onFirstChunk,
     streamEndResolver,
   );
+
+  if (!isStreamingMode) {
+    // The whole body has been read by now; a stream stamps this as it ends.
+    c.set('provider_end_time', Date.now());
+  }
 
   if (!mappedResponse.ok) {
     const errorBody = await mappedResponse.text();

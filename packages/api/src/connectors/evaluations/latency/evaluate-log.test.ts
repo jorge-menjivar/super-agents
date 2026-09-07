@@ -4,7 +4,10 @@ import { HttpMethod } from '@api/types/http';
 import { FunctionName } from '@shared/types/api/request';
 import { AIProvider } from '@shared/types/constants';
 import type { SkillOptimizationEvaluation } from '@shared/types/data';
-import type { CompletedLog } from '@shared/types/data/log';
+import type {
+  AIProviderRequestLog,
+  CompletedLog,
+} from '@shared/types/data/log';
 import { EvaluationMethodName } from '@shared/types/evaluations';
 import { CacheMode, CacheStatus } from '@shared/types/middleware/cache';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -254,6 +257,88 @@ describe('Latency - evaluateLog', () => {
       expect(result.score).toBeCloseTo(0.5, 2);
       expect(result.extra_data.latency_ms).toBe(midpoint);
       expect(result.extra_data.has_first_token_time).toBe(false);
+    });
+  });
+
+  describe('Provider timing', () => {
+    // The row spans the whole request: it arrived at 1000 and was answered
+    // at 9000, with the skill chosen, the request embedded and a reviewer
+    // consulted somewhere in between. The provider itself was asked at 6000.
+    const timed = (
+      first_token_time: number | null,
+      provider: Pick<AIProviderRequestLog, 'start_time' | 'end_time'>,
+    ): CompletedLog => ({
+      ...baseLog,
+      start_time: 1000,
+      first_token_time,
+      end_time: 9000,
+      duration: 8000,
+      ai_provider_request_log: {
+        ...(baseLog.ai_provider_request_log as AIProviderRequestLog),
+        ...provider,
+      },
+    });
+
+    it("counts the provider's answer from the moment it was asked, not the request from its arrival", async () => {
+      const result = await evaluateLog(
+        createMockContext(),
+        baseEvaluation,
+        timed(null, { start_time: 6000, end_time: 6250 }),
+        mockStorageConnector,
+      );
+
+      // 250ms, under the 300ms target. The 8000ms the row spans would have
+      // scored the model for the gateway's work around the call.
+      expect(result.score).toBe(1.0);
+      expect(result.extra_data.latency_ms).toBe(250);
+      expect(result.extra_data.measured).toBe('response');
+      expect(result.extra_data.measured_from).toBe('provider');
+      expect(result.display_info[1].content).toContain(
+        'Provider Response Time: 250ms',
+      );
+    });
+
+    it('counts time to first token from the moment the provider was asked', async () => {
+      const result = await evaluateLog(
+        createMockContext(),
+        baseEvaluation,
+        timed(6200, { start_time: 6000, end_time: 7000 }),
+        mockStorageConnector,
+      );
+
+      expect(result.score).toBe(1.0);
+      expect(result.extra_data.latency_ms).toBe(200);
+      expect(result.extra_data.measured).toBe('ttft');
+      expect(result.extra_data.measured_from).toBe('provider');
+    });
+
+    it("measures across the whole request when the log predates the provider's timing", async () => {
+      const result = await evaluateLog(
+        createMockContext(),
+        baseEvaluation,
+        timed(null, {}),
+        mockStorageConnector,
+      );
+
+      expect(result.extra_data.latency_ms).toBe(8000);
+      expect(result.extra_data.measured).toBe('response');
+      expect(result.extra_data.measured_from).toBe('request');
+      expect(result.score).toBeCloseTo(1 - (8000 - 300) / (8787 - 300), 5);
+      expect(result.display_info[1].content).toContain(
+        'Total Response Time: 8000ms',
+      );
+    });
+
+    it("falls back to the request's span when only the provider's start was recorded", async () => {
+      const result = await evaluateLog(
+        createMockContext(),
+        baseEvaluation,
+        timed(null, { start_time: 6000 }),
+        mockStorageConnector,
+      );
+
+      expect(result.extra_data.latency_ms).toBe(8000);
+      expect(result.extra_data.measured_from).toBe('request');
     });
   });
 

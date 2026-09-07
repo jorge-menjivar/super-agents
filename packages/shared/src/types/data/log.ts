@@ -25,6 +25,17 @@ export const AIProviderRequestLog = z.object({
   raw_response_body: z.string(),
   cache_mode: z.enum(CacheMode),
   cache_status: z.enum(CacheStatus),
+  /**
+   * When the provider was asked, and when it had finished answering, for the
+   * attempt whose answer this log records. The log row's own `start_time` and
+   * `end_time` span the whole request -- choosing the skill, embedding the
+   * request, the hooks, a reviewer -- which is the gateway's time rather than
+   * the model's; a measure of the model reads this pair instead. Absent on a
+   * cache hit, which asked no provider, and on a row written before the
+   * gateway recorded it.
+   */
+  start_time: z.number().optional(),
+  end_time: z.number().optional(),
 });
 
 export type AIProviderRequestLog = z.infer<typeof AIProviderRequestLog>;

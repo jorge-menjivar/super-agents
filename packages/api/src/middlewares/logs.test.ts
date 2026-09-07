@@ -6,7 +6,7 @@ import type {
   LogsStorageConnector,
   UserDataStorageConnector,
 } from '@api/types/connector';
-import type { AppEnv } from '@api/types/hono';
+import type { AppContext, AppEnv } from '@api/types/hono';
 import type { SkillRoutingDecision } from '@api/utils/super-agents/skill-routing';
 import { FunctionName } from '@shared/types/api/request';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
@@ -81,9 +81,14 @@ describe('logsMiddleware', () => {
   let logsConnector: { createLog: ReturnType<typeof vi.fn> };
   let userData: UserDataStorageConnector;
   let app: Hono<AppEnv>;
+  /** What the handler under test leaves on the context, beyond the usual. */
+  let arrange: (c: AppContext) => void;
+  let providerLog: AIProviderRequestLog;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    arrange = () => undefined;
+    providerLog = { ...aiProviderLog };
     requestData = {
       functionName: FunctionName.CHAT_COMPLETE,
       method: HttpMethod.POST,
@@ -126,7 +131,8 @@ describe('logsMiddleware', () => {
         c.set('agent', agent);
         c.set('skill', skill);
         c.set('skill_routing', decision);
-        c.set('ai_provider_log', aiProviderLog);
+        c.set('ai_provider_log', providerLog);
+        arrange(c);
         // The handler splices the arm's prompt into the request it forwards.
         (requestData.requestBody as { messages: unknown[] }).messages[0] = {
           role: 'system',
@@ -160,6 +166,21 @@ describe('logsMiddleware', () => {
 
     const log = await storedLog();
     expect(log.metadata).toEqual({ skill_routing: decision });
+  });
+
+  it('records when a streamed answer ended, which its provider log could not know when written', async () => {
+    arrange = (c) => {
+      // The handler returned while the stream was still running.
+      c.set('stream_end_promise', Promise.resolve());
+      c.set('provider_end_time', 4321);
+    };
+
+    await app.request('/v1/chat/completions', { method: 'POST' });
+
+    const log = await storedLog();
+    expect(log.ai_provider_request_log).toEqual(
+      expect.objectContaining({ end_time: 4321 }),
+    );
   });
 
   it('records which configuration served the request', async () => {

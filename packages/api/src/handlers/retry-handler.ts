@@ -71,9 +71,17 @@ export const retryRequest = async (
   attempt: number | undefined;
   createdAt: Date;
   skip: boolean;
+  /**
+   * When the attempt that produced `response` was sent. Earlier attempts and
+   * the waits between them are the provider's unavailability rather than its
+   * speed, so a measure of how fast it answered starts here, not at
+   * `createdAt`.
+   */
+  sentAt: number;
 }> => {
   let lastAttempt: number | undefined;
   const start = new Date();
+  let sentAt = start.getTime();
   let retrySkipped = false;
 
   let remainingRetryTimeout = MAX_RETRY_LIMIT_MS;
@@ -82,6 +90,7 @@ export const retryRequest = async (
     const result = await retry(
       async (bail: (error: Error) => void, attempt: number) => {
         try {
+          sentAt = Date.now();
           let response: Response;
           if (timeout) {
             response = await fetchWithTimeout(
@@ -168,6 +177,7 @@ export const retryRequest = async (
             attempt: lastAttempt,
             createdAt: start,
             skip: retrySkipped,
+            sentAt,
           };
         } catch (error) {
           if (attempt >= retryCount + 1) {
@@ -225,6 +235,7 @@ export const retryRequest = async (
       attempt: lastAttempt,
       createdAt: start,
       skip: retrySkipped,
+      sentAt,
     };
   }
 };

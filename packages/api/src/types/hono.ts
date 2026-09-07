@@ -75,6 +75,13 @@ export interface AppEnv {
     hook_logs?: HookLog[];
     first_token_time?: number;
     stream_end_time?: number;
+    /**
+     * When the provider was asked, and when it had answered, for the attempt
+     * whose answer is being served; the log row's own times span the whole
+     * request. Set around the provider call, and kept on the provider log.
+     */
+    provider_start_time?: number;
+    provider_end_time?: number;
     stream_end_promise?: Promise<void>;
     accumulated_stream_chunks?: string;
     cache_storage_connector: CacheStorageConnector;

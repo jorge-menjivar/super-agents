@@ -34,20 +34,67 @@ function calculateLatencyScore(
   return 1.0 - position / range;
 }
 
+/** How long the model took, and which span of the log the number came from. */
+interface LatencyMeasurement {
+  latency_ms: number;
+  /** To the first token, or to the whole answer when the request did not stream. */
+  measured: 'ttft' | 'response';
+  /**
+   * `provider` counts from the moment the provider was asked. `request`
+   * counts from the moment the request arrived, which is all a log written
+   * before the gateway recorded the provider's own timing has to offer.
+   */
+  measured_from: 'provider' | 'request';
+}
+
 /**
- * Extract latency from log
+ * How long the model took, read from the log.
  *
- * For streaming requests with first_token_time: Uses TTFT (first_token_time - start_time)
- * Otherwise: Uses total duration as proxy
+ * The provider's own timing is preferred. The log row's `start_time` is when
+ * the request arrived, and everything the gateway did before asking the
+ * provider -- choosing the skill, embedding the request, the input hooks --
+ * sits between the two; its `end_time` likewise waits for the output hooks,
+ * a reviewer among them. None of that is the model's to answer for, and a
+ * score that counted it would move with the gateway's load rather than with
+ * the configuration under test. A log without the provider's timing is
+ * measured across the whole request, as every log once was.
  */
-function extractLatency(log: Log): number | null {
-  // If we have first_token_time, use it for precise TTFT measurement
-  if (log.first_token_time !== null && log.first_token_time !== undefined) {
-    return log.first_token_time - log.start_time;
+function extractLatency(log: Log): LatencyMeasurement | null {
+  const provider = log.ai_provider_request_log;
+  const firstToken = log.first_token_time ?? null;
+
+  if (provider?.start_time !== undefined) {
+    if (firstToken !== null) {
+      return {
+        latency_ms: firstToken - provider.start_time,
+        measured: 'ttft',
+        measured_from: 'provider',
+      };
+    }
+    if (provider.end_time !== undefined) {
+      return {
+        latency_ms: provider.end_time - provider.start_time,
+        measured: 'response',
+        measured_from: 'provider',
+      };
+    }
   }
 
-  // Fallback to duration for non-streaming or if first_token_time wasn't captured
-  return log.duration;
+  if (firstToken !== null) {
+    return {
+      latency_ms: firstToken - log.start_time,
+      measured: 'ttft',
+      measured_from: 'request',
+    };
+  }
+  if (log.duration === null) {
+    return null;
+  }
+  return {
+    latency_ms: log.duration,
+    measured: 'response',
+    measured_from: 'request',
+  };
 }
 
 export function evaluateLog(
@@ -61,10 +108,10 @@ export function evaluateLog(
   try {
     const params = LatencyEvaluationParameters.parse(evaluation.params);
 
-    const latency_ms = extractLatency(log);
+    const measurement = extractLatency(log);
 
     // If we couldn't extract latency, return 0.5 (neutral score)
-    if (latency_ms === null) {
+    if (measurement === null) {
       const execution_time = Date.now() - start_time;
       return Promise.resolve({
         evaluation_id: evaluation.id,
@@ -85,6 +132,8 @@ export function evaluateLog(
       });
     }
 
+    const { latency_ms, measured, measured_from } = measurement;
+
     const score = calculateLatencyScore(
       latency_ms,
       params.target_latency_ms,
@@ -95,9 +144,15 @@ export function evaluateLog(
 
     // Format latency performance for display
     const latencyType =
-      log.first_token_time !== null
+      measured === 'ttft'
         ? 'Time to First Token (TTFT)'
-        : 'Total Response Time';
+        : measured_from === 'provider'
+          ? 'Provider Response Time'
+          : 'Total Response Time';
+    const measuredFrom =
+      measured_from === 'provider'
+        ? 'when the provider was asked'
+        : "when the request arrived (this log predates the provider's own timing)";
 
     const performance =
       latency_ms <= params.target_latency_ms
@@ -115,6 +170,8 @@ export function evaluateLog(
         target_latency_ms: params.target_latency_ms,
         max_latency_ms: params.max_latency_ms,
         has_first_token_time: log.first_token_time !== null,
+        measured,
+        measured_from,
         execution_time,
       },
       display_info: [
@@ -124,7 +181,7 @@ export function evaluateLog(
         },
         {
           label: 'Latency Measurement',
-          content: `${latencyType}: ${latency_ms}ms\nTarget: ${params.target_latency_ms}ms\nMaximum: ${params.max_latency_ms}ms\nScore: ${(score * 100).toFixed(1)}%`,
+          content: `${latencyType}: ${latency_ms}ms\nMeasured from: ${measuredFrom}\nTarget: ${params.target_latency_ms}ms\nMaximum: ${params.max_latency_ms}ms\nScore: ${(score * 100).toFixed(1)}%`,
         },
       ],
       judge_model_name: null,

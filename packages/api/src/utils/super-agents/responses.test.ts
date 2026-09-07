@@ -34,6 +34,7 @@ describe('createResponse', () => {
     // Mock context
     mockContext = {
       set: vi.fn(),
+      get: vi.fn(),
     } as unknown as AppContext;
 
     // Mock response
@@ -138,6 +139,45 @@ describe('createResponse', () => {
           cache_status: 'miss',
           cache_mode: CacheMode.DISABLED,
         }),
+      );
+    });
+
+    it('keeps when the provider was asked and answered on the log', async () => {
+      // What the handler left on the context around the provider call.
+      const timing: Record<string, number> = {
+        provider_start_time: 6000,
+        provider_end_time: 6250,
+      };
+      const context = {
+        set: vi.fn(),
+        get: (key: string) => timing[key],
+      } as unknown as AppContext;
+
+      await createResponse(context, mockOptions);
+
+      expect(context.set).toHaveBeenCalledWith(
+        'ai_provider_log',
+        expect.objectContaining({ start_time: 6000, end_time: 6250 }),
+      );
+    });
+
+    it('leaves a cache hit untimed, since it asked no provider', async () => {
+      // Timing left behind by a target tried before the hit.
+      const timing: Record<string, number> = {
+        provider_start_time: 6000,
+        provider_end_time: 6250,
+      };
+      const context = {
+        set: vi.fn(),
+        get: (key: string) => timing[key],
+      } as unknown as AppContext;
+      mockOptions.cacheStatus = 'HIT' as CacheStatus;
+
+      await createResponse(context, mockOptions);
+
+      expect(context.set).toHaveBeenCalledWith(
+        'ai_provider_log',
+        expect.not.objectContaining({ start_time: expect.anything() }),
       );
     });
 

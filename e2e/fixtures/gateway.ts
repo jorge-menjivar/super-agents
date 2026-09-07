@@ -114,6 +114,19 @@ export const stubReply = async (
   });
 };
 
+/**
+ * Make every reply for this model wait `ms` before answering -- how a test
+ * tells a slow reviewer from the model it reviews, on a stub that otherwise
+ * answers at once. Zero lifts it.
+ */
+export const stubDelay = async (
+  request: APIRequestContext,
+  model: string,
+  ms: number,
+): Promise<void> => {
+  await request.post(`${STUB_URL}/__control/delay`, { data: { model, ms } });
+};
+
 export const stubReset = async (
   request: APIRequestContext,
   model: string,

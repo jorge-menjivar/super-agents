@@ -27,6 +27,14 @@ import { createSkill } from '../fixtures/skills';
 
 const LOGS_PATH = '/v1/super-agents/observability/logs';
 
+/** A completed row's timing, as the streamed test reads it. */
+interface StreamedRow {
+  start_time: number;
+  first_token_time: number;
+  end_time: number;
+  ai_provider_request_log: { start_time: number; end_time: number };
+}
+
 test.describe('the log row a request opens', () => {
   test('records a completed request once, not twice', async ({ request }) => {
     const agent = await createAgent(request, uniqueAgentName('inflight'));
@@ -68,6 +76,58 @@ test.describe('the log row a request opens', () => {
       expect(logs[0].duration).toBeGreaterThanOrEqual(0);
       expect(logs[0].error).toBeNull();
       expect(logs[0].ai_provider_request_log).not.toBeNull();
+
+      // The provider's own span sits inside the row's. The row counts the
+      // gateway's work around the call -- choosing the skill, embedding the
+      // request, the hooks -- and the latency evaluation reads the provider's
+      // span so that none of it counts against the model.
+      const provider = logs[0].ai_provider_request_log;
+      expect(provider.start_time).toBeGreaterThanOrEqual(logs[0].start_time);
+      expect(provider.end_time).toBeGreaterThanOrEqual(provider.start_time);
+      expect(provider.end_time).toBeLessThanOrEqual(logs[0].end_time);
+    } finally {
+      await stubReset(request, model);
+    }
+  });
+
+  test("records when a streamed answer began and ended, by the provider's clock", async ({
+    request,
+  }) => {
+    const agent = await createAgent(request, uniqueAgentName('streamed'));
+    await createSkill(request, agent.id, 'streamed_skill');
+    const model = uniqueModelName('streamed');
+
+    try {
+      const response = await request.post(CHAT_COMPLETIONS_PATH, {
+        headers: {
+          'sa-config': saConfig(agent.name, 'streamed_skill', { model }),
+        },
+        data: chatBody('is anyone there', true),
+      });
+      expect(response.status()).toBe(200);
+      // The row completes once the stream has been read to its end.
+      await response.text();
+
+      const completed = async () =>
+        (
+          (await request
+            .get(`${LOGS_PATH}?agent_id=${agent.id}`)
+            .then((r) => r.json())) as StreamedRow[]
+        ).find((log) => log.end_time !== null);
+      await expect
+        .poll(completed, {
+          timeout: 15_000,
+          message: 'the request was never logged',
+        })
+        .toBeDefined();
+      const log = (await completed()) as StreamedRow;
+
+      // The first token is stamped as the provider's first chunk arrives, so
+      // it falls after the provider was asked and before its answer ended.
+      const provider = log.ai_provider_request_log;
+      expect(log.first_token_time).toBeGreaterThanOrEqual(provider.start_time);
+      expect(provider.end_time).toBeGreaterThanOrEqual(log.first_token_time);
+      expect(provider.end_time).toBeLessThanOrEqual(log.end_time);
     } finally {
       await stubReset(request, model);
     }

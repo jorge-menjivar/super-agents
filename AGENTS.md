@@ -617,6 +617,19 @@ The system uses special auto-generated skills in the `super-agents` agent (defin
 - `embedding`: Text embedding generation
 - `describe-skill`: Name and description for a skill the gateway creates
 
+### Latency
+
+The log row's `start_time` and `end_time` span the whole request: choosing
+the skill, embedding it, the hooks, a reviewer. `ai_provider_request_log`
+carries a `start_time` and `end_time` of its own -- when the provider was
+asked, for the attempt that answered, and when its answer was in -- and the
+latency evaluation reads those: to `first_token_time`, stamped as the
+provider's first chunk arrives, when the request streamed, and to the whole
+answer otherwise. A held stream is unstreamed at the provider, so it is
+measured to its whole answer, and the review it then waits for is not
+counted. A log written before the gateway recorded the provider's timing is
+measured across the whole request instead.
+
 ## Development Workflow
 
 1. Run `pnpm dev` to start both web and API servers

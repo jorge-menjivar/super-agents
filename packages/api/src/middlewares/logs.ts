@@ -840,6 +840,12 @@ export const logsMiddleware = (
         await streamEndPromise;
       }
 
+      // A stream's provider log was written before the stream ended; when
+      // the provider finished answering is known only now.
+      if (aiProviderLog.end_time === undefined) {
+        aiProviderLog.end_time = c.get('provider_end_time');
+      }
+
       // For streaming requests, parse accumulated chunks and update the log
       const accumulatedChunks = c.get('accumulated_stream_chunks') as
         | string

@@ -14,6 +14,7 @@ import {
   parseSSE,
   STUB_URL,
   saConfig,
+  stubDelay,
   stubReply,
   stubRequests,
   stubReset,
@@ -1303,6 +1304,48 @@ test.describe('response review', () => {
     expect((await stubRequests(request, reviewerModel)).length).toBe(
       reviewsBefore + 1,
     );
+  });
+
+  test("keeps the reviewer's time out of the provider's own timing", async ({
+    request,
+  }) => {
+    // The reviewer takes its time; the model it reviews answers at once.
+    await stubReply(request, reviewerModel, allow);
+    await stubDelay(request, reviewerModel, 1500);
+    try {
+      const response = await ask(request, 'how long did that take?');
+      expect(response.status()).toBe(200);
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await logMentioning(
+                request,
+                reviewedSkillId,
+                'how long did that take?',
+              )
+            )?.end_time,
+        )
+        .toEqual(expect.any(Number));
+      const log = (await logMentioning(
+        request,
+        reviewedSkillId,
+        'how long did that take?',
+      )) as LoggedRequest;
+      const provider = log.ai_provider_request_log as {
+        start_time: number;
+        end_time: number;
+      };
+
+      // The row waited for the review; the provider's own span did not, and
+      // that span is what the latency evaluation scores the model on.
+      expect(log.duration ?? 0).toBeGreaterThanOrEqual(1500);
+      expect(provider.end_time - provider.start_time).toBeLessThan(1500);
+      expect(provider.start_time).toBeGreaterThanOrEqual(log.start_time);
+    } finally {
+      await stubDelay(request, reviewerModel, 0);
+    }
   });
 
   test('does not review the review, even when the reviewers point at each other', async ({
