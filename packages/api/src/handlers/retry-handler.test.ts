@@ -59,3 +59,33 @@ describe('retryRequest with a provider error', () => {
     expect(body.error.code).toBe('unsupported_value');
   });
 });
+
+describe('retryRequest timing', () => {
+  it('reports when the attempt that answered was sent, not when the first was', async () => {
+    let attempts = 0;
+    const flakyProvider = () => {
+      attempts += 1;
+      return Promise.resolve(
+        attempts === 1
+          ? new Response('{"error":"busy"}', { status: 500 })
+          : new Response('{}', { status: 200 }),
+      );
+    };
+
+    const { response, createdAt, sentAt } = await retryRequest(
+      url,
+      {},
+      1,
+      [500],
+      null,
+      flakyProvider,
+    );
+
+    expect(response.status).toBe(200);
+    expect(attempts).toBe(2);
+    // The retry waits a second before asking again. The failed attempt and
+    // that wait are the provider's unavailability, not its speed, so a
+    // measure of how fast it answered must not start at `createdAt`.
+    expect(sentAt - createdAt.getTime()).toBeGreaterThanOrEqual(900);
+  });
+});

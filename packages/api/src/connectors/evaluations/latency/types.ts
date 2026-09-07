@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
 /**
- * Parameters for latency evaluation (Time-to-First-Token / TTFT)
+ * Parameters for the latency evaluation.
  *
- * This evaluation measures how quickly the AI provider starts responding.
- * For streaming requests: Uses first_token_time - start_time
- * For non-streaming requests: Uses the full duration as a proxy
+ * It measures how quickly the provider answered, counted from the moment it
+ * was asked: to its first token when the request streamed, and to its whole
+ * answer otherwise. Nothing the gateway did around the call -- choosing the
+ * skill, embedding the request, the hooks, a reviewer -- counts, since none
+ * of it is the model's to answer for.
  *
  * The score is normalized based on target_latency_ms and max_latency_ms:
  * - Responses at or below target_latency_ms score 1.0 (perfect)

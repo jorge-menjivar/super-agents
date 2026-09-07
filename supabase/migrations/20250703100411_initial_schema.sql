@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS logs (
   -- Base info
   id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   agent_id UUID NOT NULL,
-  skill_id UUID NOT NULL,
+  skill_id UUID,
   cluster_id UUID,
   method http_method NOT NULL,
   endpoint TEXT NOT NULL,
@@ -242,6 +242,7 @@ CREATE INDEX idx_logs_cache_status ON logs(cache_status);
 ALTER TABLE logs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "service_role_full_access" ON logs FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+COMMENT ON COLUMN logs.skill_id IS 'Null until routing has picked the skill, and for a request that failed before it did: the row is written when the request reaches its agent';
 COMMENT ON COLUMN logs.start_time IS 'Timestamp in milliseconds when the request started';
 COMMENT ON COLUMN logs.first_token_time IS 'Timestamp in milliseconds when the first token was received (for streaming responses). NULL for non-streaming requests or if not captured.';
 COMMENT ON COLUMN logs.end_time IS 'Timestamp in milliseconds when the request completed';

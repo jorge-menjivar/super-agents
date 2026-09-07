@@ -47,6 +47,7 @@ import { stripAgentSkillPath } from '@shared/utils/url';
 import type { MiddlewareHandler } from 'hono';
 import { getRuntimeKey } from 'hono/adapter';
 import type { Factory } from 'hono/factory';
+import { z } from 'zod';
 
 let logId = 0;
 const MAX_RESPONSE_LENGTH = 100000;
@@ -574,6 +575,38 @@ const shouldLogRequest = (url: URL): boolean => {
  * still open is touched, which is what makes this safe to call as a backstop
  * on a path that may already have completed the row.
  */
+/**
+ * The message inside a gateway error body, when it is one -- `{"error":
+ * "..."}` from the middlewares, `{"error":{"message":"..."}}` from the
+ * provider path -- and otherwise the body itself, cut to size. It is what
+ * the dashboard shows beside a failed row.
+ */
+const errorMessageFrom = (body: string): string => {
+  const fallback = body.slice(0, MAX_ERROR_LENGTH);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return fallback;
+  }
+  if (!parsed || typeof parsed !== 'object' || !('error' in parsed)) {
+    return fallback;
+  }
+  const { error: found } = parsed as { error: unknown };
+  if (typeof found === 'string') {
+    return found.slice(0, MAX_ERROR_LENGTH);
+  }
+  if (
+    found &&
+    typeof found === 'object' &&
+    'message' in found &&
+    typeof found.message === 'string'
+  ) {
+    return found.message.slice(0, MAX_ERROR_LENGTH);
+  }
+  return fallback;
+};
+
 const closeFailedRequest = async (
   c: AppContext,
   requestId: string,
@@ -592,7 +625,7 @@ const closeFailedRequest = async (
       message = await c.res
         .clone()
         .text()
-        .then((body) => body.slice(0, MAX_ERROR_LENGTH))
+        .then(errorMessageFrom)
         .catch(() => undefined);
     }
 
@@ -611,16 +644,26 @@ const closeFailedRequest = async (
 };
 
 /**
- * Announce a request that is about to be sent to a provider, so the dashboard
- * can show it as a pending row while it runs.
+ * Announce a request that is on its way to a provider, so the dashboard can
+ * show it as a pending row while it runs.
  *
- * Called from the agent-and-skill middleware rather than from here, because
- * this middleware's own pre-handler section runs before either has been
- * resolved and a pending row has to say which skill's logs it belongs in.
- * That puts skill routing inside the announced request's dead time -- an
- * ordinary lookup, though the arbiter can make it a slow one -- which is the
- * price of knowing the ids.
+ * Called from the agent-and-skill middleware twice: as soon as the agent is
+ * known, with no skill yet, and again once routing has picked one. The row
+ * is upserted, so the second call fills the skill in. Announcing before
+ * routing is what keeps its dead time -- embedding the request, compacting
+ * its prompt, the arbiter -- out of the wait for the row to appear, which is
+ * the row's whole purpose. This middleware's own pre-handler section cannot
+ * do it: it runs before the agent has been resolved.
  */
+/**
+ * The config as the arriving row records it. `skill_name` is optional here,
+ * unlike in `NonPrivateSuperAgentsConfig`: before routing there is none, and
+ * the completion write records the config with the skill routing chose.
+ */
+const ArrivingSuperAgentsConfig = NonPrivateSuperAgentsConfig.extend({
+  skill_name: z.string().optional(),
+});
+
 export const markRequestStarted = (c: AppContext): void => {
   // Nothing about a row that exists to be looked at is worth failing a
   // request over, and this runs on every request the gateway serves.
@@ -658,12 +701,13 @@ export const markRequestStarted = (c: AppContext): void => {
     const startParams: LogStartParams = {
       id: requestId,
       agent_id: c.get('agent').id,
-      skill_id: c.get('skill').id,
+      // Unset until routing has picked one; the second call fills it in.
+      skill_id: (c.get('skill') as Skill | undefined)?.id ?? null,
       method: saRequestData.method,
       endpoint: url.pathname,
       function_name: saRequestData.functionName,
       start_time: c.get('log_start_time') ?? Date.now(),
-      base_sa_config: NonPrivateSuperAgentsConfig.parse(saConfig),
+      base_sa_config: ArrivingSuperAgentsConfig.parse(saConfig),
       model,
       trace_id: saConfig.trace_id ?? undefined,
     };
@@ -838,6 +882,12 @@ export const logsMiddleware = (
       // Wait for stream to end if it's a streaming request
       if (streamEndPromise) {
         await streamEndPromise;
+      }
+
+      // A stream's provider log was written before the stream ended; when
+      // the provider finished answering is known only now.
+      if (aiProviderLog.end_time === undefined) {
+        aiProviderLog.end_time = c.get('provider_end_time');
       }
 
       // For streaming requests, parse accumulated chunks and update the log

@@ -25,6 +25,17 @@ export const AIProviderRequestLog = z.object({
   raw_response_body: z.string(),
   cache_mode: z.enum(CacheMode),
   cache_status: z.enum(CacheStatus),
+  /**
+   * When the provider was asked, and when it had finished answering, for the
+   * attempt whose answer this log records. The log row's own `start_time` and
+   * `end_time` span the whole request -- choosing the skill, embedding the
+   * request, the hooks, a reviewer -- which is the gateway's time rather than
+   * the model's; a measure of the model reads this pair instead. Absent on a
+   * cache hit, which asked no provider, and on a row written before the
+   * gateway recorded it.
+   */
+  start_time: z.number().optional(),
+  end_time: z.number().optional(),
 });
 
 export type AIProviderRequestLog = z.infer<typeof AIProviderRequestLog>;
@@ -47,7 +58,12 @@ export const Log = z.object({
   // Base info
   id: z.uuid(),
   agent_id: z.uuid(),
-  skill_id: z.uuid(),
+  /**
+   * Null until routing has picked the skill, and for a request that failed
+   * before it did: the row is written when the request reaches its agent,
+   * which is before the skill is known.
+   */
+  skill_id: z.uuid().nullable(),
   cluster_id: z.uuid().nullable(),
   method: z.enum(HttpMethod),
   endpoint: z.string(),
@@ -124,6 +140,7 @@ export type Log = z.infer<typeof Log>;
  * stated in the types rather than assumed.
  */
 export const CompletedLog = Log.extend({
+  skill_id: z.uuid(),
   status: z.number(),
   end_time: z.number(),
   duration: z.number(),
@@ -137,6 +154,7 @@ export type CompletedLog = z.infer<typeof CompletedLog>;
 
 /** Whether the request this log describes has finished. */
 export const isCompletedLog = (log: Log): log is CompletedLog =>
+  log.skill_id !== null &&
   log.end_time !== null &&
   log.duration !== null &&
   log.status !== null &&
@@ -201,7 +219,8 @@ export type LogsQueryParams = z.infer<typeof LogsQueryParams>;
 export const LogStartParams = z.object({
   id: z.uuid(),
   agent_id: z.uuid(),
-  skill_id: z.uuid(),
+  /** Null when the row opens before routing; written again once it is known. */
+  skill_id: z.uuid().nullable(),
   method: z.enum(HttpMethod),
   endpoint: z.string(),
   function_name: z.enum(FunctionName),

@@ -353,6 +353,20 @@ Database management:
 - Seed data: `supabase/seed.sql`
 - Start/stop: `supabase start|stop`
 
+### The log row a request opens
+
+A gateway request is written to `logs` when it reaches its agent, before a
+skill is chosen, and completed by an upsert under the same id when it
+finishes (`markRequestStarted` in `middlewares/logs.ts`, called from the
+agent-and-skill middleware). Until routing has picked the skill the row's
+`skill_id` is null -- the column is nullable for exactly this -- and the
+middleware writes the row again once it has, so the skill's own logs pick it
+up. A request that fails before a provider answers, routing included, is
+closed as a failed row with its status and an `error`, which is how the
+failures that used to leave no trace are seen. The dashboard learns of both
+ends over the event stream (`log:request-started`, `log:request-settled`)
+and draws a running row until the completion lands.
+
 ## Coding Style & Naming Conventions
 
 - **Language**: TypeScript, React 19, Vite, TanStack Router
@@ -616,6 +630,19 @@ The system uses special auto-generated skills in the `super-agents` agent (defin
 - `extract-task-and-outcome`: Task/outcome extraction
 - `embedding`: Text embedding generation
 - `describe-skill`: Name and description for a skill the gateway creates
+
+### Latency
+
+The log row's `start_time` and `end_time` span the whole request: choosing
+the skill, embedding it, the hooks, a reviewer. `ai_provider_request_log`
+carries a `start_time` and `end_time` of its own -- when the provider was
+asked, for the attempt that answered, and when its answer was in -- and the
+latency evaluation reads those: to `first_token_time`, stamped as the
+provider's first chunk arrives, when the request streamed, and to the whole
+answer otherwise. A held stream is unstreamed at the provider, so it is
+measured to its whole answer, and the review it then waits for is not
+counted. A log written before the gateway recorded the provider's timing is
+measured across the whole request instead.
 
 ## Development Workflow
 

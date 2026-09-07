@@ -4,6 +4,7 @@ import {
   CHAT_COMPLETIONS_PATH,
   chatBody,
   saConfig,
+  stubDelay,
   stubReset,
   uniqueModelName,
 } from '../fixtures/gateway';
@@ -26,6 +27,14 @@ import { createSkill } from '../fixtures/skills';
  */
 
 const LOGS_PATH = '/v1/super-agents/observability/logs';
+
+/** A completed row's timing, as the streamed test reads it. */
+interface StreamedRow {
+  start_time: number;
+  first_token_time: number;
+  end_time: number;
+  ai_provider_request_log: { start_time: number; end_time: number };
+}
 
 test.describe('the log row a request opens', () => {
   test('records a completed request once, not twice', async ({ request }) => {
@@ -68,16 +77,117 @@ test.describe('the log row a request opens', () => {
       expect(logs[0].duration).toBeGreaterThanOrEqual(0);
       expect(logs[0].error).toBeNull();
       expect(logs[0].ai_provider_request_log).not.toBeNull();
+
+      // The provider's own span sits inside the row's. The row counts the
+      // gateway's work around the call -- choosing the skill, embedding the
+      // request, the hooks -- and the latency evaluation reads the provider's
+      // span so that none of it counts against the model.
+      const provider = logs[0].ai_provider_request_log;
+      expect(provider.start_time).toBeGreaterThanOrEqual(logs[0].start_time);
+      expect(provider.end_time).toBeGreaterThanOrEqual(provider.start_time);
+      expect(provider.end_time).toBeLessThanOrEqual(logs[0].end_time);
     } finally {
       await stubReset(request, model);
     }
   });
 
-  test('records a request that failed before a provider answered', async ({
+  test('shows the request as running while the provider answers', async ({
     request,
   }) => {
-    // The gap this closes: naming a skill that does not exist used to be
-    // answered with a 404 and logged nowhere at all.
+    const agent = await createAgent(request, uniqueAgentName('running'));
+    await createSkill(request, agent.id, 'running_skill');
+    const model = uniqueModelName('running');
+    // Long enough to be seen, short enough not to hold up the run.
+    await stubDelay(request, model, 3000);
+
+    const rows = async () =>
+      (await request
+        .get(`${LOGS_PATH}?agent_id=${agent.id}`)
+        .then((r) => r.json())) as {
+        status: number | null;
+        end_time: number | null;
+      }[];
+
+    try {
+      const pending = request.post(CHAT_COMPLETIONS_PATH, {
+        headers: {
+          'sa-config': saConfig(agent.name, 'running_skill', { model }),
+        },
+        data: chatBody('are you still there'),
+      });
+
+      // The row is open before the provider has answered: no status, no
+      // end. This is what the dashboard draws as a running request.
+      await expect
+        .poll(async () => (await rows()).map((row) => row.end_time), {
+          timeout: 2500,
+          message: 'the request was never shown as running',
+        })
+        .toEqual([null]);
+      expect((await rows())[0].status).toBeNull();
+
+      const response = await pending;
+      expect(response.status()).toBe(200);
+      await expect
+        .poll(async () => (await rows()).map((row) => row.end_time), {
+          timeout: 15_000,
+          message: 'the request never completed its row',
+        })
+        .toEqual([expect.any(Number)]);
+    } finally {
+      await stubReset(request, model);
+    }
+  });
+
+  test("records when a streamed answer began and ended, by the provider's clock", async ({
+    request,
+  }) => {
+    const agent = await createAgent(request, uniqueAgentName('streamed'));
+    await createSkill(request, agent.id, 'streamed_skill');
+    const model = uniqueModelName('streamed');
+
+    try {
+      const response = await request.post(CHAT_COMPLETIONS_PATH, {
+        headers: {
+          'sa-config': saConfig(agent.name, 'streamed_skill', { model }),
+        },
+        data: chatBody('is anyone there', true),
+      });
+      expect(response.status()).toBe(200);
+      // The row completes once the stream has been read to its end.
+      await response.text();
+
+      const completed = async () =>
+        (
+          (await request
+            .get(`${LOGS_PATH}?agent_id=${agent.id}`)
+            .then((r) => r.json())) as StreamedRow[]
+        ).find((log) => log.end_time !== null);
+      await expect
+        .poll(completed, {
+          timeout: 15_000,
+          message: 'the request was never logged',
+        })
+        .toBeDefined();
+      const log = (await completed()) as StreamedRow;
+
+      // The first token is stamped as the provider's first chunk arrives, so
+      // it falls after the provider was asked and before its answer ended.
+      const provider = log.ai_provider_request_log;
+      expect(log.first_token_time).toBeGreaterThanOrEqual(provider.start_time);
+      expect(provider.end_time).toBeGreaterThanOrEqual(log.first_token_time);
+      expect(provider.end_time).toBeLessThanOrEqual(log.end_time);
+    } finally {
+      await stubReset(request, model);
+    }
+  });
+
+  test('records a request that named a skill that does not exist', async ({
+    request,
+  }) => {
+    // Answered with a 404 before any skill resolved. The row is opened as
+    // soon as the agent is known, so this leaves a failed row on the agent
+    // with no skill -- where it used to leave nothing at all.
     const agent = await createAgent(request, uniqueAgentName('failed'));
     await createSkill(request, agent.id, 'real_skill');
     const model = uniqueModelName('failed');
@@ -91,14 +201,25 @@ test.describe('the log row a request opens', () => {
       });
       expect(response.status()).toBe(404);
 
-      // Nothing is recorded: the row is opened only once the skill resolves,
-      // and this request never got that far. Asserting it explicitly because
-      // it is the known edge of the feature, not an oversight.
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      const logs = await request
-        .get(`${LOGS_PATH}?agent_id=${agent.id}`)
-        .then((r) => r.json());
-      expect(logs).toHaveLength(0);
+      const rows = async () =>
+        (await request
+          .get(`${LOGS_PATH}?agent_id=${agent.id}`)
+          .then((r) => r.json())) as {
+          skill_id: string | null;
+          status: number | null;
+          end_time: number | null;
+          error: string | null;
+        }[];
+      await expect
+        .poll(async () => (await rows()).map((row) => row.status), {
+          timeout: 15_000,
+          message: 'the failed request left no trace',
+        })
+        .toEqual([404]);
+      const [log] = await rows();
+      expect(log.skill_id).toBeNull();
+      expect(log.end_time).not.toBeNull();
+      expect(log.error).toBe('Skill with name no_such_skill not found');
     } finally {
       await stubReset(request, model);
     }

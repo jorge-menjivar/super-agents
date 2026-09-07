@@ -64,9 +64,9 @@ export interface AppEnv {
     /** Set when the caller named only the agent and the gateway chose the skill. */
     skill_routing?: SkillRoutingDecision;
     /**
-     * Identifies this request to the in-flight registry, so the dashboard can
-     * pair the pending row it drew on arrival with the news that the request
-     * has finished. Set by the logs middleware before the handler runs.
+     * The id of the log row this request opens on arrival and completes at
+     * the end, so that the two writes land on one row. Set by the logs
+     * middleware before the handler runs.
      */
     log_request_id?: string;
     /** When the request arrived, shared by the row opened then and its completion. */
@@ -75,6 +75,13 @@ export interface AppEnv {
     hook_logs?: HookLog[];
     first_token_time?: number;
     stream_end_time?: number;
+    /**
+     * When the provider was asked, and when it had answered, for the attempt
+     * whose answer is being served; the log row's own times span the whole
+     * request. Set around the provider call, and kept on the provider log.
+     */
+    provider_start_time?: number;
+    provider_end_time?: number;
     stream_end_promise?: Promise<void>;
     accumulated_stream_chunks?: string;
     cache_storage_connector: CacheStorageConnector;

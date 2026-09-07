@@ -1,12 +1,14 @@
 import {
   logsMiddleware,
+  markRequestStarted,
   truncateOversizedResponseBody,
 } from '@api/middlewares/logs';
 import type {
   LogsStorageConnector,
   UserDataStorageConnector,
 } from '@api/types/connector';
-import type { AppEnv } from '@api/types/hono';
+import type { AppContext, AppEnv } from '@api/types/hono';
+import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import type { SkillRoutingDecision } from '@api/utils/super-agents/skill-routing';
 import { FunctionName } from '@shared/types/api/request';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
@@ -78,12 +80,20 @@ const aiProviderLog = {
 
 describe('logsMiddleware', () => {
   let requestData: SuperAgentsRequestData;
-  let logsConnector: { createLog: ReturnType<typeof vi.fn> };
+  let logsConnector: {
+    createLog: ReturnType<typeof vi.fn>;
+    failLog: ReturnType<typeof vi.fn>;
+  };
   let userData: UserDataStorageConnector;
   let app: Hono<AppEnv>;
+  /** What the handler under test leaves on the context, beyond the usual. */
+  let arrange: (c: AppContext) => void;
+  let providerLog: AIProviderRequestLog;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    arrange = () => undefined;
+    providerLog = { ...aiProviderLog };
     requestData = {
       functionName: FunctionName.CHAT_COMPLETE,
       method: HttpMethod.POST,
@@ -100,6 +110,7 @@ describe('logsMiddleware', () => {
       createLog: vi
         .fn()
         .mockImplementation(async (_c, params) => ({ ...params, id: 'log-1' })),
+      failLog: vi.fn().mockResolvedValue(undefined),
     };
     userData = {
       incrementSkillTotalRequests: vi.fn(),
@@ -126,7 +137,8 @@ describe('logsMiddleware', () => {
         c.set('agent', agent);
         c.set('skill', skill);
         c.set('skill_routing', decision);
-        c.set('ai_provider_log', aiProviderLog);
+        c.set('ai_provider_log', providerLog);
+        arrange(c);
         // The handler splices the arm's prompt into the request it forwards.
         (requestData.requestBody as { messages: unknown[] }).messages[0] = {
           role: 'system',
@@ -160,6 +172,59 @@ describe('logsMiddleware', () => {
 
     const log = await storedLog();
     expect(log.metadata).toEqual({ skill_routing: decision });
+  });
+
+  it('records when a streamed answer ended, which its provider log could not know when written', async () => {
+    arrange = (c) => {
+      // The handler returned while the stream was still running.
+      c.set('stream_end_promise', Promise.resolve());
+      c.set('provider_end_time', 4321);
+    };
+
+    await app.request('/v1/chat/completions', { method: 'POST' });
+
+    const log = await storedLog();
+    expect(log.ai_provider_request_log).toEqual(
+      expect.objectContaining({ end_time: 4321 }),
+    );
+  });
+
+  it('closes a request that failed before a provider was asked with the error itself', async () => {
+    app = new Hono<AppEnv>()
+      .use('*', async (c, next) => {
+        c.set('sa_request_data', requestData);
+        c.set('user_data_storage_connector', userData);
+        await next();
+      })
+      .use(
+        '*',
+        logsMiddleware(
+          createFactory<AppEnv>(),
+          () => logsConnector as unknown as LogsStorageConnector,
+        ),
+      )
+      // What the agent-and-skill middleware answers for a skill that does
+      // not exist, having already opened the row.
+      .post('/v1/chat/completions', (c) =>
+        c.json({ error: 'Skill with name nope not found' }, 404),
+      );
+
+    const response = await app.request('/v1/chat/completions', {
+      method: 'POST',
+    });
+    expect(response.status).toBe(404);
+
+    await vi.waitFor(() =>
+      expect(logsConnector.failLog).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          status: 404,
+          // The message, not the JSON it came wrapped in.
+          error: 'Skill with name nope not found',
+        }),
+      ),
+    );
+    expect(logsConnector.createLog).not.toHaveBeenCalled();
   });
 
   it('records which configuration served the request', async () => {
@@ -221,6 +286,86 @@ describe('logsMiddleware', () => {
     const log = await storedLog();
     expect(log.metadata).toEqual({});
     expect(log.original_system_prompt).toBe('You are the caller.');
+  });
+});
+
+describe('markRequestStarted', () => {
+  const startLog = vi.fn().mockResolvedValue(undefined);
+
+  /** What the agent-and-skill middleware has on the context when it calls. */
+  const arrived = {
+    log_request_id: 'request-1',
+    log_start_time: 1000,
+    sa_request_data: {
+      functionName: FunctionName.CHAT_COMPLETE,
+      method: HttpMethod.POST,
+      url: 'http://localhost/v1/chat/completions',
+      requestBody: { model: 'gpt-4o', messages: [] },
+    },
+    sa_config_pre_processed: saConfig,
+    agent,
+    logs_storage_connector: { startLog },
+  };
+
+  const context = (values: Record<string, unknown>): AppContext =>
+    ({
+      req: { url: 'http://localhost/v1/chat/completions' },
+      get: (key: string) => values[key],
+    }) as unknown as AppContext;
+
+  beforeEach(() => {
+    startLog.mockClear();
+    vi.mocked(emitSSEEvent).mockClear();
+  });
+
+  it('opens the row with no skill as soon as the agent is known', async () => {
+    markRequestStarted(context(arrived));
+
+    expect(startLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        id: 'request-1',
+        agent_id: 'agent-1',
+        skill_id: null,
+        start_time: 1000,
+        model: 'gpt-4o',
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(emitSSEEvent).toHaveBeenCalledWith('log:request-started', {
+        log_id: 'request-1',
+        agent_id: 'agent-1',
+        skill_id: null,
+      }),
+    );
+  });
+
+  it('opens the row for a request that named only its agent', () => {
+    // No `skill_name` in the header: routing will pick one. The config
+    // schema the completion write parses with would refuse this.
+    markRequestStarted(
+      context({
+        ...arrived,
+        sa_config_pre_processed: { agent_name: 'helper', trace_id: 'trace-1' },
+      }),
+    );
+
+    expect(startLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        skill_id: null,
+        base_sa_config: { agent_name: 'helper' },
+      }),
+    );
+  });
+
+  it('writes the row again with the skill once routing has picked one', () => {
+    markRequestStarted(context({ ...arrived, skill }));
+
+    expect(startLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: 'request-1', skill_id: 'skill-1' }),
+    );
   });
 });
 

@@ -5,7 +5,8 @@ const LOGS_PATH = '/v1/super-agents/observability/logs';
 /** The parts of a log these specs read. */
 export interface LoggedRequest {
   id: string;
-  skill_id: string;
+  /** Null while routing is still picking the skill, and if it never did. */
+  skill_id: string | null;
   /** How a review finds the request it reviewed: the same trace, as a span. */
   trace_id: string | null;
   span_id: string | null;
@@ -16,7 +17,9 @@ export interface LoggedRequest {
     hook: { id: string };
     result: { deny_request: boolean; reason?: string; error?: string };
   }[];
+  start_time: number;
   end_time: number | null;
+  duration: number | null;
   metadata: Record<string, unknown>;
   original_system_prompt: string | null;
   /**
@@ -25,6 +28,13 @@ export interface LoggedRequest {
    */
   ai_provider_request_log: {
     request_body: { messages?: { role: string; content: string }[] };
+    /**
+     * The provider's own span: when it was asked, and when it had answered.
+     * Inside the row's, which also counts the gateway's work around the call.
+     * Absent on a cache hit.
+     */
+    start_time?: number;
+    end_time?: number;
   } | null;
 }
 

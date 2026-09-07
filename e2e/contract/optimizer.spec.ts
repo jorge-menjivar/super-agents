@@ -14,6 +14,7 @@ import {
   parseSSE,
   STUB_URL,
   saConfig,
+  stubDelay,
   stubReply,
   stubRequests,
   stubReset,
@@ -404,6 +405,51 @@ test.describe('skill routing', () => {
     await expect
       .poll(() => decisionFor(request, sql.id, 'monthly revenue'))
       .toBe('embedding');
+  });
+
+  test('shows the request on the agent before routing has picked a skill', async ({
+    request,
+  }) => {
+    // Routing embeds the request first. The stub holds that embedding, so
+    // the row has to be there without it.
+    await stubDelay(request, stub.embeddingModel, 3000);
+    const rows = async () =>
+      (await request
+        .get('/v1/super-agents/observability/logs', {
+          params: { agent_id: translate.agent_id },
+        })
+        .then((r) => r.json())) as LoggedRequest[];
+
+    try {
+      const pending = chatToAgent(
+        request,
+        agentName,
+        stub.textModel,
+        'Translate the message. vec(1,0,0,0,0,0,0,0)',
+        'still routing',
+      );
+
+      // Running, and not yet anyone's: a row with no skill.
+      await expect
+        .poll(
+          async () =>
+            (await rows()).find((row) => row.end_time === null)?.skill_id,
+          {
+            timeout: 2500,
+            message: 'the request was not on the agent before routing finished',
+          },
+        )
+        .toBeNull();
+
+      expect((await pending).status()).toBe(200);
+      // The same row, routed and completed.
+      await expect
+        .poll(() => decisionFor(request, translate.id, 'still routing'))
+        .toBe('embedding');
+      expect((await rows()).filter((row) => row.end_time === null)).toEqual([]);
+    } finally {
+      await stubDelay(request, stub.embeddingModel, 0);
+    }
   });
 
   test('still honours a skill named in the header', async ({ request }) => {
@@ -1303,6 +1349,48 @@ test.describe('response review', () => {
     expect((await stubRequests(request, reviewerModel)).length).toBe(
       reviewsBefore + 1,
     );
+  });
+
+  test("keeps the reviewer's time out of the provider's own timing", async ({
+    request,
+  }) => {
+    // The reviewer takes its time; the model it reviews answers at once.
+    await stubReply(request, reviewerModel, allow);
+    await stubDelay(request, reviewerModel, 1500);
+    try {
+      const response = await ask(request, 'how long did that take?');
+      expect(response.status()).toBe(200);
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await logMentioning(
+                request,
+                reviewedSkillId,
+                'how long did that take?',
+              )
+            )?.end_time,
+        )
+        .toEqual(expect.any(Number));
+      const log = (await logMentioning(
+        request,
+        reviewedSkillId,
+        'how long did that take?',
+      )) as LoggedRequest;
+      const provider = log.ai_provider_request_log as {
+        start_time: number;
+        end_time: number;
+      };
+
+      // The row waited for the review; the provider's own span did not, and
+      // that span is what the latency evaluation scores the model on.
+      expect(log.duration ?? 0).toBeGreaterThanOrEqual(1500);
+      expect(provider.end_time - provider.start_time).toBeLessThan(1500);
+      expect(provider.start_time).toBeGreaterThanOrEqual(log.start_time);
+    } finally {
+      await stubDelay(request, reviewerModel, 0);
+    }
   });
 
   test('does not review the review, even when the reviewers point at each other', async ({

@@ -6,8 +6,8 @@ import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import type { SuperAgentsResponseBody } from '@shared/types/api/response';
 import type { AIProvider } from '@shared/types/constants';
 import type { AIProviderRequestLog } from '@shared/types/data';
-import type {
-  CacheSettings,
+import {
+  type CacheSettings,
   CacheStatus,
 } from '@shared/types/middleware/cache';
 
@@ -37,6 +37,22 @@ export interface CreateResponseOptions extends CommonRequestOptions {
   cacheKey?: string;
   responseAlreadyHandled?: boolean;
 }
+
+/**
+ * When the provider was asked and when it had answered, as the handler that
+ * called it left them on the context. A cache hit asked no provider, and any
+ * timing on the context then belongs to a target tried before it.
+ */
+const providerTiming = (
+  c: AppContext,
+  cacheStatus: CacheStatus,
+): Pick<AIProviderRequestLog, 'start_time' | 'end_time'> =>
+  cacheStatus === CacheStatus.HIT || cacheStatus === CacheStatus.SEMANTIC_HIT
+    ? {}
+    : {
+        start_time: c.get('provider_start_time'),
+        end_time: c.get('provider_end_time'),
+      };
 
 export async function createResponse(
   c: AppContext,
@@ -68,6 +84,7 @@ export async function createResponse(
       raw_response_body: '', // Placeholder for streaming responses
       cache_status: options.cacheStatus,
       cache_mode: options.cacheSettings.mode,
+      ...providerTiming(c, options.cacheStatus),
     };
 
     c.set('ai_provider_log', aiProviderLog);
@@ -135,6 +152,7 @@ export async function createResponse(
       raw_response_body: '', // Placeholder for streaming responses
       cache_status: options.cacheStatus,
       cache_mode: options.cacheSettings.mode,
+      ...providerTiming(c, options.cacheStatus),
     };
 
     c.set('ai_provider_log', aiProviderLog);
@@ -165,6 +183,7 @@ export async function createResponse(
     raw_response_body: mappedResponseCloneText,
     cache_status: options.cacheStatus,
     cache_mode: options.cacheSettings.mode,
+    ...providerTiming(c, options.cacheStatus),
   };
 
   c.set('ai_provider_log', aiProviderLog);

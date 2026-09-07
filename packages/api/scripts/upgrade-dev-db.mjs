@@ -16,7 +16,9 @@
  * requests that fail before reaching one.
  *
  * SQLite cannot relax NOT NULL with ALTER, so the table is rebuilt: a new
- * table, the rows copied across, then swapped.
+ * table, the rows copied across, then swapped. The same rebuild later
+ * relaxed `skill_id`, once the row moved to before skill routing: until
+ * routing has picked the skill there is none to write.
  *
  * Also the response review columns on `agents`: `reviewer_agent_id`, the
  * agent whose responses another agent reviews before the client sees them,
@@ -73,6 +75,7 @@ const client = createClient({ url: `file:${dbPath}`, concurrency: 1 });
 
 /** Columns the current code expects on `logs`, in the order it creates them. */
 const NULLABLE_NOW = [
+  'skill_id',
   'status',
   'end_time',
   'duration',
@@ -186,7 +189,7 @@ const rebuildLogs = async (columns) => {
   const create = `CREATE TABLE logs_upgraded (
       id TEXT PRIMARY KEY,
       agent_id TEXT NOT NULL,
-      skill_id TEXT NOT NULL,
+      skill_id TEXT,
       cluster_id TEXT,
       method TEXT NOT NULL CHECK (method IN ('GET', 'POST', 'PUT', 'DELETE', 'PATCH')),
       endpoint TEXT NOT NULL,
@@ -222,9 +225,9 @@ const rebuildLogs = async (columns) => {
       FOREIGN KEY (cluster_id) REFERENCES skill_optimization_clusters(id) ON DELETE SET NULL
     )`;
 
-  const carried = columns
-    .map((column) => column.name)
-    .filter((name) => name !== 'error');
+  // Every column the old table has, `error` included when a previous
+  // rebuild added it: leaving one out would drop its values in the copy.
+  const carried = columns.map((column) => column.name);
   const columnList = carried.join(', ');
 
   // Off *before* the transaction opens: inside one it does nothing, and the

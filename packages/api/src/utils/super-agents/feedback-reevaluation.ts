@@ -30,17 +30,17 @@ export async function reevaluateLogFromFeedback(
     return;
   }
 
+  // Feedback can only be left on a request that answered, but the row is
+  // fetched by id and the type cannot know that.
+  if (!isCompletedLog(log)) {
+    return;
+  }
+
   const evaluations = await userDataConnector.getSkillOptimizationEvaluations(
     c,
     { agent_id: log.agent_id, skill_id: log.skill_id },
   );
   if (evaluations.length === 0) {
-    return;
-  }
-
-  // Feedback can only be left on a request that answered, but the row is
-  // fetched by id and the type cannot know that.
-  if (!isCompletedLog(log)) {
     return;
   }
 

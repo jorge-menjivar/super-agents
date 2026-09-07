@@ -26,6 +26,7 @@
  *   POST /__control/fence       {model} -- wrap structured output in a fence
  *   POST /__control/reply       {model, content} -- answer with this text instead;
  *                               an array is answered in order, the last one kept
+ *   POST /__control/delay       {model, ms} -- answer that much later; 0 lifts it
  *   POST /__control/reset       {model} -- forget everything for that model
  *
  * Configured with E2E_STUB_PORT (default 3103).
@@ -55,6 +56,8 @@ const failures = new Map();
  * rather than enforcing it.
  */
 const fenced = new Set();
+/** model name -> milliseconds every reply for it waits before answering. */
+const delays = new Map();
 
 const recordFor = (model) => {
   if (!received.has(model)) {
@@ -276,12 +279,24 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (url.pathname === '/__control/delay') {
+    const { model, ms } = JSON.parse((await readBody(request)) || '{}');
+    if (ms > 0) {
+      delays.set(model, Number(ms));
+    } else {
+      delays.delete(model);
+    }
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+
   if (url.pathname === '/__control/reset') {
     const { model } = JSON.parse((await readBody(request)) || '{}');
     received.delete(model);
     failures.delete(model);
     fenced.delete(model);
     canned.delete(model);
+    delays.delete(model);
     sendJson(response, 200, { ok: true });
     return;
   }
@@ -297,6 +312,11 @@ const server = createServer(async (request, response) => {
 
   const model = body?.model ?? '';
   recordFor(model).push(body);
+
+  const delay = delays.get(model);
+  if (delay) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
 
   const queued = failures.get(model);
   if (queued?.length) {

@@ -1,4 +1,5 @@
 import { agentAndSkillMiddleware } from '@api/middlewares/agent-and-skill';
+import { markRequestStarted } from '@api/middlewares/logs';
 import type { AppContext } from '@api/types/hono';
 import * as agentsUtils from '@api/utils/super-agents/agents';
 import * as skillRouting from '@api/utils/super-agents/skill-routing';
@@ -15,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock the utility functions
 vi.mock('@api/utils/super-agents/agents');
+vi.mock('@api/middlewares/logs', () => ({ markRequestStarted: vi.fn() }));
 vi.mock('@api/utils/super-agents/skills');
 // Partially, so `SkillRoutingError` stays the real class for `instanceof`.
 vi.mock('@api/utils/super-agents/skill-routing', async (importOriginal) => ({
@@ -371,6 +373,108 @@ describe('agentAndSkillMiddleware', () => {
         'custom-agent-123',
         'custom-skill-456',
       );
+    });
+  });
+
+  describe('announcing the request', () => {
+    const agent = {
+      id: '123e4567-e89b-12d3-a456-426614174000',
+      name: 'test-agent',
+    } as Agent;
+    const skill = {
+      id: '123e4567-e89b-12d3-a456-426614174001',
+      name: 'routed',
+    } as Skill;
+
+    /** A context that remembers what the middleware sets on it. */
+    const statefulContext = (
+      config: Partial<SuperAgentsConfig>,
+    ): AppContext => {
+      const values = new Map<string, unknown>([
+        ['sa_config_pre_processed', { ...mockSuperAgentsConfig, ...config }],
+        ['user_data_storage_connector', mockConnector],
+        ['sa_request_data', { functionName: 'chatComplete' }],
+      ]);
+      return {
+        req: { url: 'http://localhost/v1/chat/completions' },
+        get: (key: string) => values.get(key),
+        set: (key: string, value: unknown) => values.set(key, value),
+        json: (body: unknown, status: number) => ({ body, status }),
+      } as unknown as AppContext;
+    };
+
+    /** Records what each announcement could see of the skill. */
+    const recordAnnouncements = (seen: string[]) => {
+      vi.mocked(markRequestStarted).mockImplementation((c) => {
+        const known = c.get('skill') as Skill | undefined;
+        seen.push(known ? `announced with ${known.name}` : 'announced bare');
+      });
+    };
+
+    beforeEach(() => {
+      vi.mocked(agentsUtils.getAgent).mockResolvedValue(agent);
+      // A named skill is learned from after the answer; not what is under test.
+      vi.mocked(skillRouting.learnSkillIntent).mockResolvedValue(undefined);
+    });
+
+    it('announces the request before routing, and again once the skill is known', async () => {
+      const seen: string[] = [];
+      recordAnnouncements(seen);
+      vi.mocked(skillRouting.routeRequestToSkill).mockImplementation(() => {
+        seen.push('routed');
+        return Promise.resolve({
+          skill,
+          decision: {
+            method: 'embedding',
+            similarity: 0.93,
+            threshold: 0.8,
+            candidates: 2,
+          },
+        });
+      });
+
+      await agentAndSkillMiddleware(
+        statefulContext({ skill_name: undefined }),
+        mockNext,
+      );
+
+      expect(seen).toEqual([
+        'announced bare',
+        'routed',
+        'announced with routed',
+      ]);
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it('announces a request that names its skill before looking it up too', async () => {
+      const seen: string[] = [];
+      recordAnnouncements(seen);
+      vi.mocked(skillsUtils.getSkill).mockResolvedValue(skill);
+
+      await agentAndSkillMiddleware(
+        statefulContext({ skill_name: 'routed' }),
+        mockNext,
+      );
+
+      expect(seen).toEqual(['announced bare', 'announced with routed']);
+    });
+
+    it('leaves the bare announcement behind a skill that does not exist, for the failure to close', async () => {
+      const seen: string[] = [];
+      recordAnnouncements(seen);
+      vi.mocked(skillsUtils.getSkill).mockResolvedValue(null);
+
+      const response = await agentAndSkillMiddleware(
+        statefulContext({ skill_name: 'nope' }),
+        mockNext,
+      );
+
+      expect(seen).toEqual(['announced bare']);
+      expect(mockNext).not.toHaveBeenCalled();
+      expect(response).toEqual({
+        body: { error: 'Skill with name nope not found' },
+        status: 404,
+      });
     });
   });
 
