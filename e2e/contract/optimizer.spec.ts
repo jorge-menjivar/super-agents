@@ -407,6 +407,51 @@ test.describe('skill routing', () => {
       .toBe('embedding');
   });
 
+  test('shows the request on the agent before routing has picked a skill', async ({
+    request,
+  }) => {
+    // Routing embeds the request first. The stub holds that embedding, so
+    // the row has to be there without it.
+    await stubDelay(request, stub.embeddingModel, 3000);
+    const rows = async () =>
+      (await request
+        .get('/v1/super-agents/observability/logs', {
+          params: { agent_id: translate.agent_id },
+        })
+        .then((r) => r.json())) as LoggedRequest[];
+
+    try {
+      const pending = chatToAgent(
+        request,
+        agentName,
+        stub.textModel,
+        'Translate the message. vec(1,0,0,0,0,0,0,0)',
+        'still routing',
+      );
+
+      // Running, and not yet anyone's: a row with no skill.
+      await expect
+        .poll(
+          async () =>
+            (await rows()).find((row) => row.end_time === null)?.skill_id,
+          {
+            timeout: 2500,
+            message: 'the request was not on the agent before routing finished',
+          },
+        )
+        .toBeNull();
+
+      expect((await pending).status()).toBe(200);
+      // The same row, routed and completed.
+      await expect
+        .poll(() => decisionFor(request, translate.id, 'still routing'))
+        .toBe('embedding');
+      expect((await rows()).filter((row) => row.end_time === null)).toEqual([]);
+    } finally {
+      await stubDelay(request, stub.embeddingModel, 0);
+    }
+  });
+
   test('still honours a skill named in the header', async ({ request }) => {
     // A translate-shaped prompt sent to the SQL skill by name: the name wins.
     const response = await chatToAgent(

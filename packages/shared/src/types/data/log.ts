@@ -58,7 +58,12 @@ export const Log = z.object({
   // Base info
   id: z.uuid(),
   agent_id: z.uuid(),
-  skill_id: z.uuid(),
+  /**
+   * Null until routing has picked the skill, and for a request that failed
+   * before it did: the row is written when the request reaches its agent,
+   * which is before the skill is known.
+   */
+  skill_id: z.uuid().nullable(),
   cluster_id: z.uuid().nullable(),
   method: z.enum(HttpMethod),
   endpoint: z.string(),
@@ -135,6 +140,7 @@ export type Log = z.infer<typeof Log>;
  * stated in the types rather than assumed.
  */
 export const CompletedLog = Log.extend({
+  skill_id: z.uuid(),
   status: z.number(),
   end_time: z.number(),
   duration: z.number(),
@@ -148,6 +154,7 @@ export type CompletedLog = z.infer<typeof CompletedLog>;
 
 /** Whether the request this log describes has finished. */
 export const isCompletedLog = (log: Log): log is CompletedLog =>
+  log.skill_id !== null &&
   log.end_time !== null &&
   log.duration !== null &&
   log.status !== null &&
@@ -212,7 +219,8 @@ export type LogsQueryParams = z.infer<typeof LogsQueryParams>;
 export const LogStartParams = z.object({
   id: z.uuid(),
   agent_id: z.uuid(),
-  skill_id: z.uuid(),
+  /** Null when the row opens before routing; written again once it is known. */
+  skill_id: z.uuid().nullable(),
   method: z.enum(HttpMethod),
   endpoint: z.string(),
   function_name: z.enum(FunctionName),

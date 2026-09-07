@@ -182,11 +182,12 @@ test.describe('the log row a request opens', () => {
     }
   });
 
-  test('records a request that failed before a provider answered', async ({
+  test('records a request that named a skill that does not exist', async ({
     request,
   }) => {
-    // The gap this closes: naming a skill that does not exist used to be
-    // answered with a 404 and logged nowhere at all.
+    // Answered with a 404 before any skill resolved. The row is opened as
+    // soon as the agent is known, so this leaves a failed row on the agent
+    // with no skill -- where it used to leave nothing at all.
     const agent = await createAgent(request, uniqueAgentName('failed'));
     await createSkill(request, agent.id, 'real_skill');
     const model = uniqueModelName('failed');
@@ -200,14 +201,25 @@ test.describe('the log row a request opens', () => {
       });
       expect(response.status()).toBe(404);
 
-      // Nothing is recorded: the row is opened only once the skill resolves,
-      // and this request never got that far. Asserting it explicitly because
-      // it is the known edge of the feature, not an oversight.
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      const logs = await request
-        .get(`${LOGS_PATH}?agent_id=${agent.id}`)
-        .then((r) => r.json());
-      expect(logs).toHaveLength(0);
+      const rows = async () =>
+        (await request
+          .get(`${LOGS_PATH}?agent_id=${agent.id}`)
+          .then((r) => r.json())) as {
+          skill_id: string | null;
+          status: number | null;
+          end_time: number | null;
+          error: string | null;
+        }[];
+      await expect
+        .poll(async () => (await rows()).map((row) => row.status), {
+          timeout: 15_000,
+          message: 'the failed request left no trace',
+        })
+        .toEqual([404]);
+      const [log] = await rows();
+      expect(log.skill_id).toBeNull();
+      expect(log.end_time).not.toBeNull();
+      expect(log.error).toBe('Skill with name no_such_skill not found');
     } finally {
       await stubReset(request, model);
     }

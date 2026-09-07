@@ -33,6 +33,12 @@ export const agentAndSkillMiddleware = createMiddleware(
           );
         }
 
+        // Announced now, before the skill is known: routing can be slow
+        // enough to watch, and a request that fails inside it should leave
+        // a row too. Announced again once the skill has been chosen.
+        c.set('agent', agent);
+        markRequestStarted(c);
+
         let skill: Skill | null;
         if (saConfig.skill_name) {
           skill = await getSkill(
@@ -81,12 +87,9 @@ export const agentAndSkillMiddleware = createMiddleware(
           });
         }
 
-        c.set('agent', agent);
         c.set('skill', skill);
 
-        // The first point at which a pending row could say which skill's logs
-        // it belongs in, and still early enough to cover the provider call --
-        // which is nearly all of a request's elapsed time.
+        // Now with the skill, so the row reaches the skill's own logs too.
         markRequestStarted(c);
       }
     }

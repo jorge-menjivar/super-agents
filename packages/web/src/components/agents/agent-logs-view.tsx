@@ -81,7 +81,15 @@ export function AgentLogsView(): ReactElement {
   const getSkillName = (log: Log): string | null =>
     skills.find((skill) => skill.id === log.skill_id)?.name ?? null;
 
-  const renderSkill = (log: Log) => <LogTagBadge value={getSkillName(log)} />;
+  // A running row with no skill is one routing has not placed yet.
+  const renderSkill = (log: Log) => (
+    <LogTagBadge
+      value={getSkillName(log)}
+      missing={
+        log.skill_id === null && log.end_time === null ? 'routing…' : '—'
+      }
+    />
+  );
 
   const renderPartition = (log: Log) => {
     if (!log.cluster_id) {

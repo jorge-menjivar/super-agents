@@ -36,6 +36,8 @@ export const SSEEventType = z.enum([
    * A gateway request that has arrived and is still running. The dashboard
    * shows it as a pending row whose duration ticks up, so a request in
    * progress is visible rather than appearing only once it has finished.
+   * Sent as soon as the request reaches its agent, before a skill has been
+   * chosen, and again once one has.
    */
   'log:request-started',
   /** That request has finished; the pending row can go. */
@@ -60,31 +62,6 @@ export const SSEEventType = z.enum([
 ]);
 
 export type SSEEventType = z.infer<typeof SSEEventType>;
-
-/**
- * A gateway request that is currently running.
- *
- * Sent with `log:request-started`, and replayed for everything still in
- * flight when a client connects, so a reload does not lose the pending rows.
- *
- * Elapsed time is sent as a duration rather than as a start timestamp on
- * purpose: the browser's clock and the server's need not agree, and the
- * client only ever has to add its own elapsed time to this.
- */
-export const InFlightRequest = z.object({
-  request_id: z.string(),
-  agent_id: z.string(),
-  skill_id: z.string(),
-  method: z.string(),
-  endpoint: z.string(),
-  function_name: z.string(),
-  /** The model the caller asked for, when the request named one. */
-  model: z.string().nullable(),
-  /** How long it had been running when this was sent. */
-  elapsed_ms: z.number(),
-});
-
-export type InFlightRequest = z.infer<typeof InFlightRequest>;
 
 /**
  * SSE Event Data

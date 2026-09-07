@@ -89,6 +89,11 @@ export function AgentRecentLogsCard(): ReactElement | null {
                     value={
                       skills.find((skill) => skill.id === log.skill_id)?.name
                     }
+                    missing={
+                      log.skill_id === null && log.end_time === null
+                        ? 'routing…'
+                        : '—'
+                    }
                   />
                 ),
               }}

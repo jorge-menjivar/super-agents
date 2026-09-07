@@ -808,6 +808,51 @@ describe('the log row a request opens', () => {
     expect(log.model).toBe('gpt-5.6');
   });
 
+  it('opens with no skill, and takes the one routing picks without reopening', async () => {
+    const { client, c } = await freshDatabase();
+    await seedParents(client);
+
+    // Announced when the request reached its agent, before routing.
+    await libsqlLogsStorageConnector.startLog(c, {
+      ...startParams(REQUEST),
+      skill_id: null,
+    });
+    const [arrived] = await libsqlLogsStorageConnector.getLogs(c, {
+      id: REQUEST,
+    });
+    expect(arrived.skill_id).toBeNull();
+    expect(arrived.end_time).toBeNull();
+
+    // Announced again once routing has picked the skill.
+    await libsqlLogsStorageConnector.startLog(c, startParams(REQUEST));
+    const logs = await libsqlLogsStorageConnector.getLogs(c, {});
+    expect(logs).toHaveLength(1);
+    expect(logs[0].skill_id).toBe(SKILL);
+    expect(logs[0].end_time).toBeNull();
+  });
+
+  it('closes a request that failed before routing picked a skill', async () => {
+    const { client, c } = await freshDatabase();
+    await seedParents(client);
+
+    await libsqlLogsStorageConnector.startLog(c, {
+      ...startParams(REQUEST),
+      skill_id: null,
+    });
+    await libsqlLogsStorageConnector.failLog(c, {
+      id: REQUEST,
+      status: 504,
+      end_time: 4000,
+      duration: 3000,
+      error: 'The arbiter timed out.',
+    });
+
+    const [log] = await libsqlLogsStorageConnector.getLogs(c, { id: REQUEST });
+    expect(log.skill_id).toBeNull();
+    expect(log.status).toBe(504);
+    expect(log.error).toBe('The arbiter timed out.');
+  });
+
   it('is completed by the write at the end, not duplicated', async () => {
     const { client, c } = await freshDatabase();
     await seedParents(client);

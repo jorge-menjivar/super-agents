@@ -5,7 +5,8 @@ const LOGS_PATH = '/v1/super-agents/observability/logs';
 /** The parts of a log these specs read. */
 export interface LoggedRequest {
   id: string;
-  skill_id: string;
+  /** Null while routing is still picking the skill, and if it never did. */
+  skill_id: string | null;
   /** How a review finds the request it reviewed: the same trace, as a span. */
   trace_id: string | null;
   span_id: string | null;

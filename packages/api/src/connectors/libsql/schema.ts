@@ -241,7 +241,10 @@ const initialSchema: LibsqlMigration = {
     `CREATE TABLE IF NOT EXISTS logs (
       id TEXT PRIMARY KEY,
       agent_id TEXT NOT NULL,
-      skill_id TEXT NOT NULL,
+      -- Null until routing has picked the skill, and for a request that
+      -- failed before it did: the row is written when the request reaches
+      -- its agent, which is before the skill is known.
+      skill_id TEXT,
       cluster_id TEXT,
       method TEXT NOT NULL CHECK (method IN ('GET', 'POST', 'PUT', 'DELETE', 'PATCH')),
       endpoint TEXT NOT NULL,
