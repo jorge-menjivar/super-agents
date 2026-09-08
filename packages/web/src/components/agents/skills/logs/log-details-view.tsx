@@ -112,6 +112,14 @@ const OUTCOME_LAMP: Record<string, string> = {
   running: 'bg-blue-500 animate-pulse',
 };
 
+/** The status code beside the request's other facts, in its outcome's colour. */
+const OUTCOME_TEXT: Record<string, string> = {
+  failed: 'text-red-500',
+  unreviewed: 'text-amber-500',
+  served: 'text-foreground',
+  running: 'text-muted-foreground',
+};
+
 /** The verdict word in a shut strip takes the colour of what it decided. */
 const SUMMARY_TONE: Record<string, string> = {
   denied: 'text-red-500',
@@ -439,7 +447,6 @@ export function LogDetailsView(): ReactElement {
           </span>
         }
         description={[
-          selectedLog.status !== null ? String(selectedLog.status) : null,
           formatLogTimestamp(selectedLog.start_time),
           selectedLog.duration !== null
             ? formatDuration(selectedLog.duration)
@@ -466,6 +473,12 @@ export function LogDetailsView(): ReactElement {
         <Card className="flex flex-col h-full overflow-hidden">
           <CardHeader className="flex flex-row justify-between items-center p-4 bg-card-header border-b">
             <div className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+              <HeaderItem label="Status:" title={outcome.title}>
+                <span className={cn('font-mono', OUTCOME_TEXT[outcome.tone])}>
+                  {selectedLog.status ?? '\u2014'}
+                </span>
+              </HeaderItem>
+              <HeaderSeparator />
               {logSkillName && selectedAgent && (
                 <>
                   <HeaderItem label="Skill:">

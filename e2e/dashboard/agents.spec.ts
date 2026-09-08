@@ -320,7 +320,7 @@ test.describe('log page', () => {
       await expect(
         page.getByText('reviewer:absent withheld the response'),
       ).toBeVisible();
-      await expect(page.getByText(/^446 ·/)).toBeVisible();
+      await expect(page.getByText('446', { exact: true })).toBeVisible();
 
       // The request is drawn to scale, so the model's own time is apart from
       // everything the gateway did around it.
