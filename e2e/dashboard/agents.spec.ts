@@ -324,16 +324,18 @@ test.describe('log page', () => {
       // everything the gateway did around it.
       await expect(page.getByRole('region', { name: 'Timing' })).toBeVisible();
 
-      // The hooks are shut, showing only what they decided between them.
+      // A denial is the one verdict worth reading without asking for it, so
+      // the Hooks strip opens on arrival with the reason already in it.
       await expect(
         page.getByText('1 ran · Denied by reviewer:absent'),
       ).toBeVisible();
-      await expect(page.getByRole('region', { name: 'Hooks' })).toHaveCount(0);
-
-      await page.getByRole('button', { name: /^Hooks/ }).click();
       const hooks = page.getByRole('region', { name: 'Hooks' });
       await expect(hooks.getByText('Denied', { exact: true })).toBeVisible();
       await expect(hooks.getByText(/fails closed/)).toBeVisible();
+
+      // It still shuts on its summary, like every other strip.
+      await page.getByRole('button', { name: /^Hooks/ }).click();
+      await expect(page.getByRole('region', { name: 'Hooks' })).toHaveCount(0);
 
       // What the model wrote is still drawn with the conversation.
       await expect(

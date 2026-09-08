@@ -31,7 +31,6 @@ import { useNavigation } from '@web/providers/navigation';
 import { useSkillOptimizationClusters } from '@web/providers/skill-optimization-clusters';
 import { useSkillOptimizationEvaluationRuns } from '@web/providers/skill-optimization-evaluation-runs';
 import { useSkills } from '@web/providers/skills';
-import { createSkillAvatar } from '@web/utils/avatars';
 import { describeHookLog, summariseHooks } from '@web/utils/hook-outcome';
 import { outcomeOf } from '@web/utils/log-outcome';
 import { traceOf } from '@web/utils/log-trace';
@@ -95,8 +94,10 @@ const HEADER_BADGE = 'h-5 px-2 py-0 text-xs';
 /** The score an answer has to reach to read as a good one. */
 const GOOD_SCORE = 0.7;
 
-const HeaderSeparator = (): ReactElement => (
-  <Separator orientation="vertical" className="h-4" />
+const HeaderDot = (): ReactElement => (
+  <span aria-hidden="true" className="text-muted-foreground/60">
+    ·
+  </span>
 );
 
 /** The lamp beside the page's title: the request's outcome, as a colour. */
@@ -443,7 +444,7 @@ export function LogDetailsView(): ReactElement {
         }
         description={[
           formatLogTimestamp(selectedLog.start_time),
-          selectedLog.duration !== null
+          trace === null && selectedLog.duration !== null
             ? formatDuration(selectedLog.duration)
             : null,
         ]
@@ -467,43 +468,46 @@ export function LogDetailsView(): ReactElement {
         {/* Log Detail Card */}
         <Card className="flex flex-col h-full overflow-hidden">
           <CardHeader className="flex flex-row justify-between items-center p-4 bg-card-header border-b">
+            {/* What the request was, as one line: only the facts that need
+                naming carry a word, and the values do the rest. */}
             <div className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
               <HeaderItem label="Status:" title={outcome.title}>
-                <span className={cn('font-mono', OUTCOME_TEXT[outcome.tone])}>
+                <span
+                  className={cn(
+                    'font-mono font-medium',
+                    OUTCOME_TEXT[outcome.tone],
+                  )}
+                >
                   {selectedLog.status ?? '\u2014'}
                 </span>
               </HeaderItem>
-              <HeaderSeparator />
-              {logSkillName && selectedAgent && (
+              {selectedAgent && (
                 <>
-                  <HeaderItem label="Skill:">
-                    <button
-                      type="button"
-                      className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={() =>
-                        navigateToSkillDashboard(
-                          selectedAgent.name,
-                          logSkillName,
-                        )
-                      }
-                    >
-                      <Badge
-                        variant="outline"
-                        className={`${HEADER_BADGE} gap-1.5 hover:bg-accent`}
-                      >
-                        <img
-                          src={createSkillAvatar(logSkillName)}
-                          alt=""
-                          className="h-3.5 w-3.5 rounded-sm"
-                        />
-                        {logSkillName}
-                      </Badge>
-                    </button>
+                  <HeaderDot />
+                  <HeaderItem>
+                    <span className="font-medium">{selectedAgent.name}</span>
+                    {logSkillName && (
+                      <>
+                        <span className="text-muted-foreground">/</span>
+                        <button
+                          type="button"
+                          className="rounded-sm font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={() =>
+                            navigateToSkillDashboard(
+                              selectedAgent.name,
+                              logSkillName,
+                            )
+                          }
+                        >
+                          {logSkillName}
+                        </button>
+                      </>
+                    )}
                   </HeaderItem>
-                  <HeaderSeparator />
                 </>
               )}
-              <HeaderItem label="Model:">
+              <HeaderDot />
+              <HeaderItem>
                 <span className="font-mono">
                   {selectedLog.ai_provider
                     ? (PrettyAIProvider[selectedLog.ai_provider] ??
@@ -514,40 +518,33 @@ export function LogDetailsView(): ReactElement {
               </HeaderItem>
               {clusterName && (
                 <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Partition:">
-                    <Badge
-                      variant="outline"
-                      className={`${HEADER_BADGE} font-mono`}
-                    >
-                      {clusterName}
-                    </Badge>
+                  <HeaderDot />
+                  <HeaderItem label="partition">
+                    <span className="font-mono">{clusterName}</span>
                   </HeaderItem>
                 </>
               )}
               {temperature !== null && (
                 <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Temp:">
+                  <HeaderDot />
+                  <HeaderItem label="temp">
                     <span className="font-mono">{temperature.toFixed(2)}</span>
                   </HeaderItem>
                 </>
               )}
               {thinkingEffort && (
                 <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Thinking:">
-                    <Badge variant="secondary" className={HEADER_BADGE}>
-                      {thinkingEffort}
-                    </Badge>
+                  <HeaderDot />
+                  <HeaderItem label="thinking">
+                    <span className="font-mono">{thinkingEffort}</span>
                   </HeaderItem>
                 </>
               )}
               {selectedLog.span_name && (
                 <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Span:">
-                    <span>{selectedLog.span_name}</span>
+                  <HeaderDot />
+                  <HeaderItem label="span">
+                    <span className="font-mono">{selectedLog.span_name}</span>
                   </HeaderItem>
                 </>
               )}
@@ -559,6 +556,7 @@ export function LogDetailsView(): ReactElement {
           {selectedLog.hook_logs.length > 0 && (
             <LogStrip
               name="Hooks"
+              defaultOpen={hookSummary.verdict === 'denied'}
               note={
                 <span className={SUMMARY_TONE[hookSummary.verdict]}>
                   {hookSummary.text}
