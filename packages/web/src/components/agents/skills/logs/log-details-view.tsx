@@ -6,7 +6,6 @@ import type { Log } from '@shared/types/data/log';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
 import { CompletionViewer } from '@web/components/agents/skills/logs/components/completion-viewer';
-import { EmbeddingFingerprint } from '@web/components/agents/skills/logs/components/embedding-fingerprint';
 import {
   type EvaluationDetail,
   EvaluationResults,
@@ -626,14 +625,9 @@ export function LogDetailsView(): ReactElement {
                   </>
                 }
               >
-                <div className="flex flex-row flex-wrap items-start gap-6">
-                  <p className="max-w-prose flex-1 text-sm leading-relaxed text-muted-foreground">
-                    {skillRouting.title}
-                  </p>
-                  {selectedLog.embedding && (
-                    <EmbeddingFingerprint values={selectedLog.embedding} />
-                  )}
-                </div>
+                <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
+                  {skillRouting.title}
+                </p>
               </LogStrip>
             )}
             {(evaluationDetails.length > 0 || averageScore !== null) && (
