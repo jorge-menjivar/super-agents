@@ -3,6 +3,8 @@ import type { AppContext } from '@api/types/hono';
 import { decryptAPIKey, encryptAPIKey } from '@api/utils/api-key-encryption';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import {
+  type AgentOptions,
+  type AgentOptionsUpdate,
   Agent as AgentSchema,
   type Feedback,
   type FeedbackCreateParams,
@@ -17,6 +19,7 @@ import {
   type ModelQueryParams,
   Model as ModelSchema,
   type ModelUpdateParams,
+  mergeAgentOptions,
   mergeSystemSettingsOptions,
   type Skill,
   type SkillCreateParams,
@@ -242,11 +245,31 @@ export const libsqlUserDataStorageConnector: UserDataStorageConnector = {
     id: string,
     update: AgentUpdateParams,
   ): Promise<Agent> => {
-    const { description, metadata, ...rest } = update as AgentUpdateParams &
-      Record<string, unknown>;
+    const client = getLibsqlClient(c);
+    const { description, metadata, options, ...rest } =
+      update as AgentUpdateParams & Record<string, unknown>;
+
+    // The options patch is merged over what is stored, so a caller that
+    // changes one role's timeout does not have to send the rest.
+    let merged: AgentOptions | undefined;
+    if (options !== undefined) {
+      const current = await selectFrom(
+        client,
+        'agents',
+        { id },
+        z.array(AgentSchema),
+      );
+      if (current.length === 0) {
+        throw new Error(`Agent ${id} not found`);
+      }
+      merged = mergeAgentOptions(
+        current[0].options,
+        options as AgentOptionsUpdate,
+      );
+    }
 
     const rows = await updateIn(
-      getLibsqlClient(c),
+      client,
       'agents',
       { id },
       {
@@ -254,6 +277,7 @@ export const libsqlUserDataStorageConnector: UserDataStorageConnector = {
         // Nullable in the params but NOT NULL in the table: null means "leave it".
         description: description ?? undefined,
         metadata: metadata === undefined ? undefined : toJsonColumn(metadata),
+        options: merged === undefined ? undefined : toJsonColumn(merged),
       },
       z.array(AgentSchema),
     );

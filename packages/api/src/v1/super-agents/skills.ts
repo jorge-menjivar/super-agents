@@ -2,7 +2,10 @@ import { handleGenerateArms } from '@api/optimization/skill-optimizations';
 import { generateEvaluationCreateParams } from '@api/optimization/utils/evaluations';
 import type { AppEnv } from '@api/types/hono';
 import { parseDatabaseError } from '@api/utils/database-error';
-import { resolveEmbeddingModelConfig } from '@api/utils/evaluation-model-resolver';
+import {
+  agentById,
+  resolveEmbeddingModelConfig,
+} from '@api/utils/evaluation-model-resolver';
 import { getInitialClusterCentroids } from '@api/utils/math';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import { zValidator } from '@hono/zod-validator';
@@ -33,10 +36,12 @@ export const skillsRouter = new Hono<AppEnv>()
 
       const newSkill = await userDataStorageConnector.createSkill(c, data);
 
-      // Get embedding model config for cluster centroids
+      // Centroids belong to the skill, so they are computed with the model
+      // its agent embeds by -- the same one that will score its requests.
       const embeddingConfig = await resolveEmbeddingModelConfig(
         c,
         userDataStorageConnector,
+        await agentById(c, userDataStorageConnector, newSkill.agent_id),
       );
 
       // Only create clusters if embedding model is configured
@@ -169,6 +174,7 @@ export const skillsRouter = new Hono<AppEnv>()
           const embeddingConfig = await resolveEmbeddingModelConfig(
             c,
             userDataStorageConnector,
+            await agentById(c, userDataStorageConnector, skill.agent_id),
           );
 
           // Only create clusters if embedding model is configured
@@ -832,7 +838,11 @@ export const skillsRouter = new Hono<AppEnv>()
       });
 
       // Get embedding model config for cluster centroids
-      const embeddingConfig = await resolveEmbeddingModelConfig(c, connector);
+      const embeddingConfig = await resolveEmbeddingModelConfig(
+        c,
+        connector,
+        await agentById(c, connector, skill.agent_id),
+      );
 
       // Only reset clusters if embedding model is configured
       if (embeddingConfig) {

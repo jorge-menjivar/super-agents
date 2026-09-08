@@ -2,7 +2,10 @@ import { handleGenerateArms } from '@api/optimization/skill-optimizations';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { generateEmbeddingForRequest } from '@api/utils/embeddings';
-import { resolveEmbeddingModelConfig } from '@api/utils/evaluation-model-resolver';
+import {
+  agentById,
+  resolveEmbeddingModelConfig,
+} from '@api/utils/evaluation-model-resolver';
 import {
   cosineSimilarity,
   getInitialClusterCentroids,
@@ -230,6 +233,7 @@ async function validateTargetConfiguration(
       const embeddingConfig = await resolveEmbeddingModelConfig(
         c,
         userDataStorageConnector,
+        await agentById(c, userDataStorageConnector, skill.agent_id),
       );
 
       if (clusters.length === 0) {

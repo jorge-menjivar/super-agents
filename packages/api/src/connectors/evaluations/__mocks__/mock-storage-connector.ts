@@ -44,12 +44,14 @@ export function createMockStorageConnector(): UserDataStorageConnector {
       },
     ]),
     // Stub other methods (not used in evaluation tests)
-    getAgents: vi.fn(),
+    // Judging resolves the agent whose answer is being scored; an empty
+    // list is "no agent", which leaves the call on the system settings.
+    getAgents: vi.fn().mockResolvedValue([]),
     getAgentById: vi.fn(),
     createAgent: vi.fn(),
     updateAgent: vi.fn(),
     deleteAgent: vi.fn(),
-    getSkills: vi.fn(),
+    getSkills: vi.fn().mockResolvedValue([]),
     getSkillById: vi.fn(),
     createSkill: vi.fn(),
     updateSkill: vi.fn(),

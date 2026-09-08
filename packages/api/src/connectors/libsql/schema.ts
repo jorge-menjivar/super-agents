@@ -60,8 +60,13 @@ const initialSchema: LibsqlMigration = {
       auto_create_skills INTEGER NOT NULL DEFAULT 1 CHECK (auto_create_skills IN (0, 1)),
       skill_match_threshold REAL NOT NULL DEFAULT 0.8,
       max_auto_created_skills INTEGER NOT NULL DEFAULT 10,
+      system_prompt_reflection_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
+      evaluation_generation_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
+      embedding_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
+      judge_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
       skill_arbiter_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
-      skill_arbiter_timeout_ms INTEGER CHECK (skill_arbiter_timeout_ms IS NULL OR skill_arbiter_timeout_ms > 0),
+      intent_compaction_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
+      options TEXT NOT NULL DEFAULT '{}',
       reviewer_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
       review_fail_closed INTEGER NOT NULL DEFAULT 0 CHECK (review_fail_closed IN (0, 1)),
       review_expose_reason INTEGER NOT NULL DEFAULT 0 CHECK (review_expose_reason IN (0, 1)),
@@ -70,23 +75,61 @@ const initialSchema: LibsqlMigration = {
       CHECK (reviewer_agent_id IS NULL OR reviewer_agent_id <> id)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_agents_reviewer_agent_id ON agents(reviewer_agent_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agents_system_prompt_reflection_model_id ON agents(system_prompt_reflection_model_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agents_evaluation_generation_model_id ON agents(evaluation_generation_model_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agents_judge_model_id ON agents(judge_model_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agents_skill_arbiter_model_id ON agents(skill_arbiter_model_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agents_intent_compaction_model_id ON agents(intent_compaction_model_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agents_embedding_model_id ON agents(embedding_model_id)`,
     updatedAtTrigger('agents'),
     // Postgres enforces this through `validate_agent_model_types`.
     `CREATE TRIGGER IF NOT EXISTS agents_validate_model_types_insert
     BEFORE INSERT ON agents
     FOR EACH ROW
-    WHEN NEW.skill_arbiter_model_id IS NOT NULL
+    WHEN NEW.system_prompt_reflection_model_id IS NOT NULL OR NEW.evaluation_generation_model_id IS NOT NULL OR NEW.judge_model_id IS NOT NULL OR NEW.skill_arbiter_model_id IS NOT NULL OR NEW.intent_compaction_model_id IS NOT NULL OR NEW.embedding_model_id IS NOT NULL
     BEGIN
-      SELECT CASE WHEN (SELECT model_type FROM models WHERE id = NEW.skill_arbiter_model_id) IS NOT 'text'
+      SELECT CASE WHEN NEW.system_prompt_reflection_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.system_prompt_reflection_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'system_prompt_reflection_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.evaluation_generation_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.evaluation_generation_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'evaluation_generation_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.judge_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.judge_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'judge_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.skill_arbiter_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.skill_arbiter_model_id) IS NOT 'text'
         THEN RAISE(ABORT, 'skill_arbiter_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.intent_compaction_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.intent_compaction_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'intent_compaction_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.embedding_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.embedding_model_id) IS NOT 'embed'
+        THEN RAISE(ABORT, 'embedding_model_id must reference an embed model') END;
     END`,
     `CREATE TRIGGER IF NOT EXISTS agents_validate_model_types_update
     BEFORE UPDATE ON agents
     FOR EACH ROW
-    WHEN NEW.skill_arbiter_model_id IS NOT NULL
+    WHEN NEW.system_prompt_reflection_model_id IS NOT NULL OR NEW.evaluation_generation_model_id IS NOT NULL OR NEW.judge_model_id IS NOT NULL OR NEW.skill_arbiter_model_id IS NOT NULL OR NEW.intent_compaction_model_id IS NOT NULL OR NEW.embedding_model_id IS NOT NULL
     BEGIN
-      SELECT CASE WHEN (SELECT model_type FROM models WHERE id = NEW.skill_arbiter_model_id) IS NOT 'text'
+      SELECT CASE WHEN NEW.system_prompt_reflection_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.system_prompt_reflection_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'system_prompt_reflection_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.evaluation_generation_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.evaluation_generation_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'evaluation_generation_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.judge_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.judge_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'judge_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.skill_arbiter_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.skill_arbiter_model_id) IS NOT 'text'
         THEN RAISE(ABORT, 'skill_arbiter_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.intent_compaction_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.intent_compaction_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'intent_compaction_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.embedding_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.embedding_model_id) IS NOT 'embed'
+        THEN RAISE(ABORT, 'embedding_model_id must reference an embed model') END;
     END`,
 
     // --------------------------------------------------------- ai_providers

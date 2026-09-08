@@ -22,10 +22,6 @@ import { z } from 'zod';
 export const MIN_INTERNAL_TIMEOUT_MS = 1_000;
 export const MAX_INTERNAL_TIMEOUT_MS = 600_000;
 
-/** Kept under their old names for `Agent`'s per-agent arbiter override. */
-export const MIN_SKILL_ARBITER_TIMEOUT_MS = MIN_INTERNAL_TIMEOUT_MS;
-export const MAX_SKILL_ARBITER_TIMEOUT_MS = MAX_INTERNAL_TIMEOUT_MS;
-
 /**
  * Defaults, one per setting, chosen from what the call actually does rather
  * than from one number for everything.

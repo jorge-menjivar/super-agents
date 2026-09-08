@@ -1,3 +1,4 @@
+import { AgentOptions } from '@shared/types/data';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AgentsProvider } from '@web/providers/agents';
@@ -35,8 +36,13 @@ const mockAgent = {
   auto_create_skills: true,
   skill_match_threshold: 0.8,
   max_auto_created_skills: 10,
+  system_prompt_reflection_model_id: null,
+  evaluation_generation_model_id: null,
+  embedding_model_id: null,
+  judge_model_id: null,
   skill_arbiter_model_id: null,
-  skill_arbiter_timeout_ms: null,
+  intent_compaction_model_id: null,
+  options: AgentOptions.parse({}),
   reviewer_agent_id: null,
   review_fail_closed: false,
   review_expose_reason: false,
@@ -538,8 +544,13 @@ describe('EditAgentView', () => {
           auto_create_skills: false,
           skill_match_threshold: 0.8,
           max_auto_created_skills: 3,
+          system_prompt_reflection_model_id: null,
+          evaluation_generation_model_id: null,
+          embedding_model_id: null,
+          judge_model_id: null,
           skill_arbiter_model_id: null,
-          skill_arbiter_timeout_ms: null,
+          intent_compaction_model_id: null,
+          options: AgentOptions.parse({}),
           reviewer_agent_id: null,
           review_fail_closed: false,
           review_expose_reason: false,
@@ -547,7 +558,7 @@ describe('EditAgentView', () => {
       });
     });
 
-    it('saves an arbiter timeout of its own in milliseconds, and clears it when emptied', async () => {
+    it('saves a role timeout of its own in milliseconds, and clears it when emptied', async () => {
       renderEditAgentView();
 
       const timeout = screen.getByLabelText('Arbiter timeout (seconds)');
@@ -559,19 +570,48 @@ describe('EditAgentView', () => {
       await waitFor(() => {
         expect(mockUpdateAgent).toHaveBeenCalledWith(
           'agent-1',
-          expect.objectContaining({ skill_arbiter_timeout_ms: 30_000 }),
+          expect.objectContaining({
+            options: expect.objectContaining({
+              skill_arbiter: expect.objectContaining({ timeout_ms: 30_000 }),
+            }),
+          }),
         );
       });
 
+      // Emptied is how an agent goes back to inheriting the setting.
       fireEvent.change(timeout, { target: { value: '' } });
       fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
       await waitFor(() => {
         expect(mockUpdateAgent).toHaveBeenLastCalledWith(
           'agent-1',
-          expect.objectContaining({ skill_arbiter_timeout_ms: null }),
+          expect.objectContaining({
+            options: expect.objectContaining({
+              skill_arbiter: expect.objectContaining({ timeout_ms: null }),
+            }),
+          }),
         );
       });
+    });
+
+    it('offers every role a model of its own, and asks no effort of embedding', () => {
+      renderEditAgentView();
+
+      // One row per internal role: what the gateway asks a model for on this
+      // agent's behalf, all in one place.
+      for (const label of [
+        'System prompts model',
+        'Evaluations model',
+        'Embedding model',
+        'Judge model',
+        'Arbiter model',
+        'Compaction model',
+      ]) {
+        expect(screen.getByLabelText(label)).toBeInTheDocument();
+      }
+      // An embedding has nothing to think about, so it is not asked.
+      expect(screen.queryByLabelText('Embedding reasoning')).toBeNull();
+      expect(screen.getByLabelText('Judge reasoning')).toBeInTheDocument();
     });
 
     it('refuses a threshold outside 0 to 1', async () => {

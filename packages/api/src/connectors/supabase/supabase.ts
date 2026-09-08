@@ -10,8 +10,10 @@ import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import {
   Agent,
   type AgentCreateParams,
+  type AgentOptions,
   type AgentQueryParams,
   type AgentUpdateParams,
+  mergeAgentOptions,
 } from '@shared/types/data/agent';
 import {
   AIProviderConfig,
@@ -256,11 +258,28 @@ export const supabaseUserDataStorageConnector: UserDataStorageConnector = {
     id: string,
     update: AgentUpdateParams,
   ): Promise<Agent> => {
+    // The options patch is merged over what is stored, so a caller that
+    // changes one role's timeout does not have to send the rest.
+    const { options, ...rest } = update;
+    let merged: AgentOptions | undefined;
+    if (options) {
+      const current = await selectFromSupabase(
+        c,
+        'agents',
+        { id: `eq.${id}` },
+        z.array(Agent),
+      );
+      if (current.length === 0) {
+        throw new Error(`Agent ${id} not found`);
+      }
+      merged = mergeAgentOptions(current[0].options, options);
+    }
+
     const updatedAgent = await updateInSupabase(
       c,
       'agents',
       id,
-      update,
+      { ...rest, ...(merged && { options: merged }) },
       z.array(Agent),
     );
     return updatedAgent[0];

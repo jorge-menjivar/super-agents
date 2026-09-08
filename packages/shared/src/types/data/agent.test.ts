@@ -1,9 +1,13 @@
+import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import {
   Agent,
   AgentCreateParams,
+  AgentOptions,
   AgentQueryParams,
   AgentUpdateParams,
+  mergeAgentOptions,
 } from '@shared/types/data/agent';
+import { INTERNAL_ROLES } from '@shared/types/data/system-settings';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock uuid to have predictable values in tests
@@ -514,8 +518,13 @@ describe('Agent Data Transforms and Validation', () => {
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
+        system_prompt_reflection_model_id: null,
+        evaluation_generation_model_id: null,
+        embedding_model_id: null,
+        judge_model_id: null,
         skill_arbiter_model_id: null,
-        skill_arbiter_timeout_ms: null,
+        intent_compaction_model_id: null,
+        options: AgentOptions.parse({}),
         reviewer_agent_id: null,
         review_fail_closed: false,
         review_expose_reason: false,
@@ -534,8 +543,13 @@ describe('Agent Data Transforms and Validation', () => {
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
+        system_prompt_reflection_model_id: null,
+        evaluation_generation_model_id: null,
+        embedding_model_id: null,
+        judge_model_id: null,
         skill_arbiter_model_id: null,
-        skill_arbiter_timeout_ms: null,
+        intent_compaction_model_id: null,
+        options: AgentOptions.parse({}),
         reviewer_agent_id: null,
         review_fail_closed: false,
         review_expose_reason: false,
@@ -594,8 +608,13 @@ describe('Agent Data Transforms and Validation', () => {
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
+        system_prompt_reflection_model_id: null,
+        evaluation_generation_model_id: null,
+        embedding_model_id: null,
+        judge_model_id: null,
         skill_arbiter_model_id: null,
-        skill_arbiter_timeout_ms: null,
+        intent_compaction_model_id: null,
+        options: AgentOptions.parse({}),
         reviewer_agent_id: null,
         review_fail_closed: false,
         review_expose_reason: false,
@@ -628,8 +647,13 @@ describe('Agent Data Transforms and Validation', () => {
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
+        system_prompt_reflection_model_id: null,
+        evaluation_generation_model_id: null,
+        embedding_model_id: null,
+        judge_model_id: null,
         skill_arbiter_model_id: null,
-        skill_arbiter_timeout_ms: null,
+        intent_compaction_model_id: null,
+        options: AgentOptions.parse({}),
         reviewer_agent_id: null,
         review_fail_closed: false,
         review_expose_reason: false,
@@ -654,16 +678,59 @@ describe('automatic skill settings', () => {
     });
   });
 
-  it('leave the arbiter to the system settings unless overridden', () => {
+  it('leaves every role to the system settings unless overridden', () => {
     const created = AgentCreateParams.parse(minimal);
-    expect(created.skill_arbiter_model_id).toBeUndefined();
-    expect(created.skill_arbiter_timeout_ms).toBeUndefined();
+    // Absent rather than defaulted, all of it: an agent created with no
+    // opinion follows the system settings, and keeps following them.
+    for (const role of INTERNAL_ROLES) {
+      expect(
+        created[`${role}_model_id` as keyof typeof created],
+      ).toBeUndefined();
+    }
+    expect(created.options).toBeUndefined();
+  });
+
+  it('refuses a timeout the system settings would refuse', () => {
     expect(() =>
-      AgentCreateParams.parse({ ...minimal, skill_arbiter_timeout_ms: 500 }),
+      AgentCreateParams.parse({
+        ...minimal,
+        options: { skill_arbiter: { timeout_ms: 500 } },
+      }),
     ).toThrow();
-    expect(AgentUpdateParams.parse({ skill_arbiter_timeout_ms: null })).toEqual(
-      { skill_arbiter_timeout_ms: null },
-    );
+    expect(
+      AgentUpdateParams.parse({
+        options: { skill_arbiter: { timeout_ms: null } },
+      }),
+    ).toEqual({ options: { skill_arbiter: { timeout_ms: null } } });
+  });
+
+  it('merges a patch role by role, leaving the rest as they were', () => {
+    const current = AgentOptions.parse({
+      judge: { timeout_ms: 30_000, reasoning_effort: ReasoningEffort.LOW },
+      embedding: { timeout_ms: 5_000 },
+    });
+
+    const merged = mergeAgentOptions(current, {
+      judge: { timeout_ms: 45_000 },
+    });
+
+    // The role's other field survives the patch, and so do the other roles.
+    expect(merged.judge).toEqual({
+      timeout_ms: 45_000,
+      max_tokens: null,
+      reasoning_effort: ReasoningEffort.LOW,
+    });
+    expect(merged.embedding.timeout_ms).toBe(5_000);
+
+    // Null is how an agent goes back to inheriting; undefined changes nothing.
+    expect(
+      mergeAgentOptions(current, { judge: { reasoning_effort: null } }).judge
+        .reasoning_effort,
+    ).toBeNull();
+    expect(
+      mergeAgentOptions(current, { judge: { timeout_ms: undefined } }).judge
+        .timeout_ms,
+    ).toBe(30_000);
   });
 
   it('keep the threshold between 0 and 1 and the cap a whole, non-negative number', () => {

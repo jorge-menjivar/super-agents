@@ -4,10 +4,16 @@ import {
   resolveEmbeddingModelConfig,
   resolveEvaluationModelConfig,
   resolveJudgeModelConfig,
+  resolveRoleModel,
   resolveSystemSettingsModel,
 } from '@api/utils/evaluation-model-resolver';
 import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
-import type { Model, SkillOptimizationEvaluation } from '@shared/types/data';
+import type {
+  Agent,
+  Model,
+  SkillOptimizationEvaluation,
+} from '@shared/types/data';
+import { AgentOptions } from '@shared/types/data/agent';
 import { SystemSettingsOptions } from '@shared/types/data/system-settings';
 import { EvaluationMethodName } from '@shared/types/evaluations';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -24,6 +30,10 @@ describe('Evaluation Model Resolver', () => {
     getSystemSettings: vi.fn(),
     getModels: vi.fn(),
     getAIProviderAPIKeys: vi.fn(),
+    // Every role resolves through the agent it is being asked for; these
+    // answer "no agent", which is the system's own settings.
+    getSkills: vi.fn().mockResolvedValue([]),
+    getAgents: vi.fn().mockResolvedValue([]),
   } as unknown as UserDataStorageConnector;
 
   const mockModel: Model = {
@@ -384,6 +394,103 @@ describe('Evaluation Model Resolver', () => {
 
       expect(mockConnector.getSystemSettings).not.toHaveBeenCalled();
       expect(result?.model).toBe('gpt-4');
+    });
+  });
+
+  describe('resolveRoleModel, as an agent has it', () => {
+    /** An agent that answers for the judge and inherits everything else. */
+    const opinionated = {
+      id: 'agent-1',
+      name: 'helper',
+      judge_model_id: 'agent-judge-model',
+      system_prompt_reflection_model_id: null,
+      evaluation_generation_model_id: null,
+      embedding_model_id: null,
+      skill_arbiter_model_id: null,
+      intent_compaction_model_id: null,
+      options: AgentOptions.parse({
+        judge: { timeout_ms: 5_000, reasoning_effort: ReasoningEffort.NONE },
+      }),
+    } as Agent;
+
+    beforeEach(() => {
+      vi.mocked(mockConnector.getSystemSettings).mockResolvedValue(
+        mockSystemSettings,
+      );
+      vi.mocked(mockConnector.getModels).mockResolvedValue([mockModel]);
+      vi.mocked(mockConnector.getAIProviderAPIKeys).mockResolvedValue([
+        mockProvider,
+      ]);
+    });
+
+    it('asks for the model the agent named, on the terms it named', async () => {
+      const result = await resolveRoleModel(
+        mockContext,
+        'judge',
+        mockConnector,
+        opinionated,
+      );
+
+      expect(mockConnector.getModels).toHaveBeenCalledWith(mockContext, {
+        id: 'agent-judge-model',
+      });
+      expect(result).toMatchObject({
+        timeoutMs: 5_000,
+        reasoningEffort: ReasoningEffort.NONE,
+      });
+    });
+
+    it('falls through to the system for every role it left alone', async () => {
+      const result = await resolveRoleModel(
+        mockContext,
+        'system_prompt_reflection',
+        mockConnector,
+        opinionated,
+      );
+
+      expect(mockConnector.getModels).toHaveBeenCalledWith(mockContext, {
+        id: mockSystemSettings.system_prompt_reflection_model_id,
+      });
+      // The role's own settings, untouched by the agent's opinion of the judge.
+      expect(result).toMatchObject({
+        timeoutMs: mockSystemSettings.options.system_prompt_reflection
+          .timeout_ms as number,
+      });
+    });
+
+    it('answers as the system does when there is no agent at all', async () => {
+      const withAgent = await resolveRoleModel(
+        mockContext,
+        'judge',
+        mockConnector,
+        null,
+      );
+
+      expect(withAgent).toEqual(
+        await resolveSystemSettingsModel(mockContext, 'judge', mockConnector),
+      );
+    });
+
+    it("takes the agent's timeout even for the system's model", async () => {
+      // The two are resolved separately, so an agent can be impatient with a
+      // model it never chose.
+      const impatient = {
+        ...opinionated,
+        judge_model_id: null,
+        options: AgentOptions.parse({ judge: { timeout_ms: 2_000 } }),
+      } as Agent;
+
+      const result = await resolveRoleModel(
+        mockContext,
+        'judge',
+        mockConnector,
+        impatient,
+      );
+
+      expect(mockConnector.getModels).toHaveBeenCalledWith(mockContext, {
+        id: mockSystemSettings.judge_model_id,
+      });
+      expect(result).toMatchObject({ timeoutMs: 2_000 });
     });
   });
 

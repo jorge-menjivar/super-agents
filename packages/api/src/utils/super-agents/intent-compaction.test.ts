@@ -1,12 +1,15 @@
 import { createMockContext } from '@api/test-utils/mock-context';
 import type { UserDataStorageConnector } from '@api/types/connector';
-import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
+import { resolveRoleModel } from '@api/utils/evaluation-model-resolver';
 import {
   clearCompactedPrompts,
   compactSystemPrompt,
 } from '@api/utils/super-agents/intent-compaction';
 import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { AIProvider } from '@shared/types/constants';
+import type { Agent, SystemSettings } from '@shared/types/data';
+import { AgentOptions } from '@shared/types/data/agent';
+import { SystemSettingsOptions } from '@shared/types/data/system-settings';
 import { SYSTEM_PROMPT_BUDGET } from '@shared/utils/request-intent';
 import OpenAI from 'openai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -33,17 +36,32 @@ vi.mock('@api/constants', async (importOriginal) => ({
 }));
 
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
-  resolveSystemSettingsModel: vi.fn(),
+  resolveRoleModel: vi.fn(),
 }));
 
-const connector = {} as UserDataStorageConnector;
+const settings = {
+  intent_compaction_model_id: null,
+  system_prompt_reflection_model_id: 'reflection-model',
+  options: SystemSettingsOptions.parse({
+    intent_compaction: { timeout_ms: 90_000 },
+  }),
+} as SystemSettings;
+const connector = {
+  getSystemSettings: vi.fn().mockResolvedValue(settings),
+} as unknown as UserDataStorageConnector;
+const agent = {
+  id: 'agent-1',
+  name: 'helper',
+  intent_compaction_model_id: null,
+  options: AgentOptions.parse({}),
+} as Agent;
 const longPrompt = `You are a coding CLI. ${'x'.repeat(9000)}`;
 
 describe('compactSystemPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearCompactedPrompts();
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue({
+    vi.mocked(resolveRoleModel).mockResolvedValue({
       model: 'reflect-model',
       provider: AIProvider.OPENAI,
       apiKey: 'key',
@@ -56,8 +74,8 @@ describe('compactSystemPrompt', () => {
 
   it('compacts a prompt once and reuses the summary', async () => {
     const c = createMockContext();
-    const first = await compactSystemPrompt(c, connector, longPrompt);
-    const second = await compactSystemPrompt(c, connector, longPrompt);
+    const first = await compactSystemPrompt(c, connector, agent, longPrompt);
+    const second = await compactSystemPrompt(c, connector, agent, longPrompt);
 
     expect(first).toBe('A coding CLI for the blog.');
     expect(second).toBe(first);
@@ -69,8 +87,8 @@ describe('compactSystemPrompt', () => {
     );
   });
 
-  it('sends the compaction reasoning effort the settings chose', async () => {
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue({
+  it('sends the reasoning effort the resolver settled on', async () => {
+    vi.mocked(resolveRoleModel).mockResolvedValue({
       model: 'reflect-model',
       provider: AIProvider.OPENAI,
       apiKey: 'key',
@@ -78,7 +96,12 @@ describe('compactSystemPrompt', () => {
       reasoningEffort: ReasoningEffort.NONE,
     } as never);
 
-    await compactSystemPrompt(createMockContext(), connector, longPrompt);
+    await compactSystemPrompt(
+      createMockContext(),
+      connector,
+      agent,
+      longPrompt,
+    );
 
     // Summarising is transcription rather than deliberation, and a request
     // carrying the prompt waits for it.
@@ -87,25 +110,35 @@ describe('compactSystemPrompt', () => {
     });
   });
 
-  it('sends none when the role leaves the model to its default', async () => {
-    await compactSystemPrompt(createMockContext(), connector, longPrompt);
+  it('sends none when nothing named an effort', async () => {
+    await compactSystemPrompt(
+      createMockContext(),
+      connector,
+      agent,
+      longPrompt,
+    );
 
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('reasoning_effort');
   });
 
-  it('waits as long as the configured compaction timeout allows', async () => {
-    await compactSystemPrompt(createMockContext(), connector, longPrompt);
+  it('waits as long as the resolved timeout allows, and asks for this agent', async () => {
+    await compactSystemPrompt(
+      createMockContext(),
+      connector,
+      agent,
+      longPrompt,
+    );
 
     // The prompts that need compacting are long, so the wait is a setting
     // rather than a constant -- a slow model would otherwise never finish.
-    // It arrives with the model, from `options.intent_compaction.timeout_ms`.
     expect(vi.mocked(OpenAI).mock.calls[0][0]).toMatchObject({
       timeout: 90_000,
     });
-    expect(vi.mocked(resolveSystemSettingsModel)).toHaveBeenCalledWith(
+    expect(vi.mocked(resolveRoleModel)).toHaveBeenCalledWith(
       expect.anything(),
       'intent_compaction',
       connector,
+      agent,
     );
   });
 
@@ -113,21 +146,22 @@ describe('compactSystemPrompt', () => {
     const c = createMockContext();
     mockCreate.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
 
-    const fallback = await compactSystemPrompt(c, connector, longPrompt);
+    const fallback = await compactSystemPrompt(c, connector, agent, longPrompt);
     expect(fallback).toBe(longPrompt.slice(0, SYSTEM_PROMPT_BUDGET));
 
     // The failure was not kept: the next request asks again.
-    const retried = await compactSystemPrompt(c, connector, longPrompt);
+    const retried = await compactSystemPrompt(c, connector, agent, longPrompt);
     expect(retried).toBe('A coding CLI for the blog.');
     expect(mockCreate).toHaveBeenCalledTimes(2);
   });
 
   it('falls back when no model is configured', async () => {
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue(null);
+    vi.mocked(resolveRoleModel).mockResolvedValue(null);
 
     const fallback = await compactSystemPrompt(
       createMockContext(),
       connector,
+      agent,
       longPrompt,
     );
 
@@ -143,6 +177,7 @@ describe('compactSystemPrompt', () => {
     const summary = await compactSystemPrompt(
       createMockContext(),
       connector,
+      agent,
       longPrompt,
     );
 

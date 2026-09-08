@@ -5,8 +5,9 @@ import {
 } from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
-import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
+import { resolveRoleModel } from '@api/utils/evaluation-model-resolver';
 import { warn } from '@shared/console-logging';
+import type { Agent } from '@shared/types/data/agent';
 import { SYSTEM_PROMPT_BUDGET } from '@shared/utils/request-intent';
 import OpenAI from 'openai';
 
@@ -28,12 +29,15 @@ const MAX_ENTRIES = 64;
 async function compactOnce(
   c: AppContext,
   connector: UserDataStorageConnector,
+  agent: Agent,
   prompt: string,
 ): Promise<string> {
-  const modelConfig = await resolveSystemSettingsModel(
+  // The agent's answers where it has them, the system's where it does not.
+  const modelConfig = await resolveRoleModel(
     c,
     'intent_compaction',
     connector,
+    agent,
   );
   if (!modelConfig) {
     throw new Error('No intent compaction model configured');
@@ -68,8 +72,8 @@ async function compactOnce(
     })
     .chat.completions.create({
       ...SA_SKILL_REQUEST_PARAMS,
-      // Only when the role's setting names one: a model that takes no such
-      // parameter is left at its own default.
+      // Only when the agent or the role names one: a model that takes no
+      // such parameter is left at its own default.
       ...(modelConfig.reasoningEffort
         ? { reasoning_effort: modelConfig.reasoningEffort }
         : {}),
@@ -100,6 +104,7 @@ async function compactOnce(
 export function compactSystemPrompt(
   c: AppContext,
   connector: UserDataStorageConnector,
+  agent: Agent,
   prompt: string,
 ): Promise<string> {
   let pending = cache.get(prompt);
@@ -107,7 +112,7 @@ export function compactSystemPrompt(
     cache.delete(prompt);
     cache.set(prompt, pending);
   } else {
-    pending = compactOnce(c, connector, prompt);
+    pending = compactOnce(c, connector, agent, prompt);
     cache.set(prompt, pending);
     const created = pending;
     created.catch(() => {

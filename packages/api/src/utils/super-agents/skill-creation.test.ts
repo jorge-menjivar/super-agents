@@ -28,6 +28,8 @@ vi.mock('@api/optimization/utils/describe-skill', async (importOriginal) => ({
   describeSkillForRequest: vi.fn(),
 }));
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
+  agentById: vi.fn().mockResolvedValue(null),
+  resolveRoleModel: vi.fn(),
   resolveEmbeddingModelConfig: vi.fn(),
 }));
 vi.mock('@api/utils/sse-event-manager', () => ({ emitSSEEvent: vi.fn() }));

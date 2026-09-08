@@ -5,11 +5,7 @@ import {
 } from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
-import {
-  type ResolvedModelConfig,
-  resolveModelById,
-  resolveSystemSettingsModel,
-} from '@api/utils/evaluation-model-resolver';
+import { resolveRoleModel } from '@api/utils/evaluation-model-resolver';
 import { warn } from '@shared/console-logging';
 import type { Agent, Skill, SystemSettings } from '@shared/types/data';
 import type { RequestIntent } from '@shared/utils/request-intent';
@@ -37,14 +33,16 @@ const ArbiterAnswer = z.object({
 
 /**
  * How long one arbiter attempt may take for this agent: its own setting when
- * it has one, otherwise the system's.
+ * it has one, otherwise the system's. The lease that covers skill creation
+ * has to outlast it, which is why it is worth having on its own.
  */
 export function skillArbiterTimeoutMs(
   agent: Agent,
   settings: SystemSettings,
 ): number {
   return (
-    agent.skill_arbiter_timeout_ms ?? settings.options.skill_arbiter.timeout_ms
+    agent.options.skill_arbiter.timeout_ms ??
+    settings.options.skill_arbiter.timeout_ms
   );
 }
 
@@ -107,36 +105,6 @@ function arbiterUserMessage(
  * settings because it needs the timeout too: the arbiter is asked under the
  * skill-creation lease, which has to outlast it.
  */
-/**
- * The agent's own arbiter model, under the system's bounds.
- *
- * An agent overrides *which* model arbitrates, not how hard it may think. A
- * model resolved by id carries no settings of its own, so without this the
- * system's reasoning effort silently stopped applying to any agent that named
- * its own model -- while the timeout, resolved separately by
- * `skillArbiterTimeoutMs`, has always fallen back to the system value. The
- * two sit in the same position and now behave the same way.
- */
-async function resolveAgentArbiterModel(
-  c: AppContext,
-  modelId: string,
-  connector: UserDataStorageConnector,
-  settings: SystemSettings,
-): Promise<ResolvedModelConfig | null> {
-  const resolved = await resolveModelById(
-    c,
-    modelId,
-    connector,
-    'MODEL_RESOLVER_SKILL_ARBITER',
-  );
-  return (
-    resolved && {
-      ...resolved,
-      reasoningEffort: settings.options.skill_arbiter.reasoning_effort,
-    }
-  );
-}
-
 export async function arbitrateSkillForRequest(
   c: AppContext,
   connector: UserDataStorageConnector,
@@ -146,19 +114,13 @@ export async function arbitrateSkillForRequest(
   settings: SystemSettings,
 ): Promise<SkillArbiterVerdict> {
   try {
-    const modelConfig = agent.skill_arbiter_model_id
-      ? await resolveAgentArbiterModel(
-          c,
-          agent.skill_arbiter_model_id,
-          connector,
-          settings,
-        )
-      : await resolveSystemSettingsModel(
-          c,
-          'skill_arbiter',
-          connector,
-          settings,
-        );
+    const modelConfig = await resolveRoleModel(
+      c,
+      'skill_arbiter',
+      connector,
+      agent,
+      settings,
+    );
     if (!modelConfig) {
       warn(
         '[SKILL_ROUTING] No skill arbiter model configured, for the agent or the system; routing to the closest skill without arbitration',
@@ -169,7 +131,7 @@ export async function arbitrateSkillForRequest(
     const client = new OpenAI({
       apiKey: getInternalApiKey(c),
       baseURL: `${getApiUrl(c)}/v1`,
-      timeout: skillArbiterTimeoutMs(agent, settings),
+      timeout: modelConfig.timeoutMs,
       maxRetries: 1,
     });
     const saConfig = {

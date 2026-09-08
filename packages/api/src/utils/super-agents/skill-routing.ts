@@ -247,16 +247,22 @@ export async function absorbIntent(
 async function tryEmbedIntent(
   c: AppContext,
   connector: UserDataStorageConnector,
+  agent: Agent,
   intent: RequestIntent,
 ): Promise<RequestIntentEmbedding | null> {
   try {
-    const embeddingConfig = await resolveEmbeddingModelConfig(c, connector);
+    const embeddingConfig = await resolveEmbeddingModelConfig(
+      c,
+      connector,
+      agent,
+    );
     if (!embeddingConfig) {
       return null;
     }
     return await embedRequestIntent(
       c,
       connector,
+      agent,
       intent,
       embeddingConfig.modelId,
     );
@@ -346,7 +352,9 @@ async function routeOnce(
     }
     // Nothing to compare against: the first request gets the first skill.
     return create(
-      requestIntent ? await tryEmbedIntent(c, connector, requestIntent) : null,
+      requestIntent
+        ? await tryEmbedIntent(c, connector, agent, requestIntent)
+        : null,
       null,
       null,
     );
@@ -359,7 +367,11 @@ async function routeOnce(
     return fallback();
   }
 
-  const embeddingConfig = await resolveEmbeddingModelConfig(c, connector);
+  const embeddingConfig = await resolveEmbeddingModelConfig(
+    c,
+    connector,
+    agent,
+  );
   if (!embeddingConfig) {
     if (skills.length === 1) {
       return onlySkill();
@@ -390,6 +402,7 @@ async function routeOnce(
             connector,
             seedText(skill),
             embeddingConfig.modelId,
+            agent,
           );
           const routing = await connector.upsertSkillRouting(c, {
             skill_id: skill.id,
@@ -407,6 +420,7 @@ async function routeOnce(
     const intent = await embedRequestIntent(
       c,
       connector,
+      agent,
       requestIntent,
       embeddingConfig.modelId,
     );
@@ -634,7 +648,11 @@ export async function learnSkillIntent(
     if (!settings.embedding_model_id) {
       return;
     }
-    const embeddingConfig = await resolveEmbeddingModelConfig(c, connector);
+    const embeddingConfig = await resolveEmbeddingModelConfig(
+      c,
+      connector,
+      agent,
+    );
     if (!embeddingConfig) {
       return;
     }
@@ -642,6 +660,7 @@ export async function learnSkillIntent(
     const intent = await embedRequestIntent(
       c,
       connector,
+      agent,
       requestIntent,
       embeddingConfig.modelId,
     );

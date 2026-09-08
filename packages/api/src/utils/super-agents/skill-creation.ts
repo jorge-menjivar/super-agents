@@ -9,7 +9,10 @@ import type {
   UserDataStorageConnector,
 } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
-import { resolveEmbeddingModelConfig } from '@api/utils/evaluation-model-resolver';
+import {
+  agentById,
+  resolveEmbeddingModelConfig,
+} from '@api/utils/evaluation-model-resolver';
 import { getInitialClusterCentroids } from '@api/utils/math';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import type { RequestIntentEmbedding } from '@api/utils/super-agents/intent-embeddings';
@@ -35,7 +38,11 @@ export async function createInitialClusters(
   connector: UserDataStorageConnector,
   skill: Skill,
 ): Promise<void> {
-  const embeddingConfig = await resolveEmbeddingModelConfig(c, connector);
+  const embeddingConfig = await resolveEmbeddingModelConfig(
+    c,
+    connector,
+    await agentById(c, connector, skill.agent_id),
+  );
   if (!embeddingConfig) {
     return;
   }

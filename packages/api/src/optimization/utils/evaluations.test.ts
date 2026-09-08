@@ -4,7 +4,7 @@ import type {
   EvaluationMethodConnector,
   UserDataStorageConnector,
 } from '@api/types/connector';
-import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
+import { resolveRoleModel } from '@api/utils/evaluation-model-resolver';
 import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { AIProvider } from '@shared/types/constants';
 import type { Skill } from '@shared/types/data';
@@ -28,7 +28,8 @@ vi.mock('@api/constants', async (importOriginal) => ({
 }));
 
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
-  resolveSystemSettingsModel: vi.fn(async () => ({
+  agentById: vi.fn().mockResolvedValue(null),
+  resolveRoleModel: vi.fn(async () => ({
     model: 'glm-5.3-flash:cloud',
     provider: AIProvider.OLLAMA,
     apiKey: '',
@@ -116,7 +117,7 @@ describe('generateEvaluationCreateParams', () => {
   });
 
   it("sends the evaluation-generation role's reasoning effort", async () => {
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValueOnce({
+    vi.mocked(resolveRoleModel).mockResolvedValueOnce({
       model: 'glm-5.3-flash:cloud',
       provider: AIProvider.OLLAMA,
       apiKey: '',
@@ -177,7 +178,7 @@ describe('generateEvaluationCreateParams', () => {
     expect(params.evaluation_method).toBe(EvaluationMethodName.TURN_RELEVANCY);
     expect(params.params).toEqual({});
     expect(mockParse).not.toHaveBeenCalled();
-    expect(resolveSystemSettingsModel).not.toHaveBeenCalled();
+    expect(resolveRoleModel).not.toHaveBeenCalled();
   });
 
   it('does not call the model for a method with no AI parameters', async () => {

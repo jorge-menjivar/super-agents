@@ -1,7 +1,7 @@
 import { generateSeedSystemPromptWithContext } from '@api/optimization/utils/system-prompt';
 import { createMockContext } from '@api/test-utils/mock-context';
 import type { UserDataStorageConnector } from '@api/types/connector';
-import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
+import { resolveRoleModel } from '@api/utils/evaluation-model-resolver';
 import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { AIProvider } from '@shared/types/constants';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,7 +22,8 @@ vi.mock('@api/constants', async (importOriginal) => ({
 }));
 
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
-  resolveSystemSettingsModel: vi.fn(async () => ({
+  agentById: vi.fn().mockResolvedValue(null),
+  resolveRoleModel: vi.fn(async () => ({
     model: 'gpt-5-mini',
     provider: AIProvider.OPENAI,
     apiKey: 'sk-test',
@@ -85,7 +86,7 @@ describe('generateSeedSystemPromptWithContext', () => {
     // itself, so this role's setting has to reach the request. It travels
     // separately from the model here -- the client is built in one function
     // and the request in another -- which is where it would go missing.
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValueOnce({
+    vi.mocked(resolveRoleModel).mockResolvedValueOnce({
       model: 'gpt-5-mini',
       provider: AIProvider.OPENAI,
       apiKey: 'sk-test',

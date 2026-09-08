@@ -557,24 +557,35 @@ describe('agent models and routing settings', () => {
     expect(agent.max_auto_created_skills).toBe(3);
     // Unset overrides come back as null, never undefined.
     expect(agent.skill_arbiter_model_id).toBeNull();
-    expect(agent.skill_arbiter_timeout_ms).toBeNull();
+    expect(agent.judge_model_id).toBeNull();
+    // An agent with no opinion reads as inheriting every role.
+    expect(agent.options.skill_arbiter.timeout_ms).toBeNull();
+    expect(agent.options.judge.max_tokens).toBeNull();
 
     const updated = await store.updateAgent(c, agent.id, {
       auto_create_skills: true,
       max_auto_created_skills: 5,
       review_fail_closed: false,
       review_expose_reason: false,
-      skill_arbiter_timeout_ms: 30_000,
+      options: { skill_arbiter: { timeout_ms: 30_000 } },
     });
     expect(updated.auto_create_skills).toBe(true);
     expect(updated.max_auto_created_skills).toBe(5);
-    expect(updated.skill_arbiter_timeout_ms).toBe(30_000);
+    expect(updated.options.skill_arbiter.timeout_ms).toBe(30_000);
     expect(updated.description).toBe(agent.description);
 
-    const cleared = await store.updateAgent(c, agent.id, {
-      skill_arbiter_timeout_ms: null,
+    // A patch for one role leaves the others as they were.
+    const judged = await store.updateAgent(c, agent.id, {
+      options: { judge: { max_tokens: 4_000 } },
     });
-    expect(cleared.skill_arbiter_timeout_ms).toBeNull();
+    expect(judged.options.judge.max_tokens).toBe(4_000);
+    expect(judged.options.skill_arbiter.timeout_ms).toBe(30_000);
+
+    const cleared = await store.updateAgent(c, agent.id, {
+      options: { skill_arbiter: { timeout_ms: null } },
+    });
+    expect(cleared.options.skill_arbiter.timeout_ms).toBeNull();
+    expect(cleared.options.judge.max_tokens).toBe(4_000);
   });
 
   it('keeps an agent reviewer, refuses the agent itself, and forgets a deleted one', async () => {

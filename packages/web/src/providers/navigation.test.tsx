@@ -1,4 +1,5 @@
 import type { Agent, Skill } from '@shared/types/data';
+import { AgentOptions } from '@shared/types/data';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   act,
@@ -164,8 +165,13 @@ const mockAgents: Agent[] = [
     auto_create_skills: true,
     skill_match_threshold: 0.8,
     max_auto_created_skills: 10,
+    system_prompt_reflection_model_id: null,
+    evaluation_generation_model_id: null,
+    embedding_model_id: null,
+    judge_model_id: null,
     skill_arbiter_model_id: null,
-    skill_arbiter_timeout_ms: null,
+    intent_compaction_model_id: null,
+    options: AgentOptions.parse({}),
     reviewer_agent_id: null,
     review_fail_closed: false,
     review_expose_reason: false,
@@ -180,8 +186,13 @@ const mockAgents: Agent[] = [
     auto_create_skills: true,
     skill_match_threshold: 0.8,
     max_auto_created_skills: 10,
+    system_prompt_reflection_model_id: null,
+    evaluation_generation_model_id: null,
+    embedding_model_id: null,
+    judge_model_id: null,
     skill_arbiter_model_id: null,
-    skill_arbiter_timeout_ms: null,
+    intent_compaction_model_id: null,
+    options: AgentOptions.parse({}),
     reviewer_agent_id: null,
     review_fail_closed: false,
     review_expose_reason: false,

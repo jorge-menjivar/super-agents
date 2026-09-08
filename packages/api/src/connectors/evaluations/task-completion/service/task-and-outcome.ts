@@ -9,6 +9,7 @@ import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { resolveJudgeModelConfig } from '@api/utils/evaluation-model-resolver';
 import { warn } from '@shared/console-logging';
+import type { Agent } from '@shared/types/data';
 import OpenAI from 'openai';
 import z from 'zod';
 
@@ -54,11 +55,13 @@ export async function extractTaskAndOutcome(
   input: string,
   output: string,
   connector: UserDataStorageConnector,
+  /** Whose answer is being scored, when the caller knows. */
+  agent: Agent | null = null,
 ) {
-  // Resolve judge model from system settings for task extraction. Extraction
-  // runs under the judge's timeout and token budget alike: same model, same
-  // reasoning spent before the answer.
-  const modelConfig = await resolveJudgeModelConfig(c, connector);
+  // Extraction runs under the judge's model, timeout and token budget alike:
+  // same model, same reasoning spent before the answer -- and the agent's
+  // own where it has one.
+  const modelConfig = await resolveJudgeModelConfig(c, connector, agent);
 
   if (!modelConfig) {
     warn('[OPTIMIZER] No judge model configured in system settings');

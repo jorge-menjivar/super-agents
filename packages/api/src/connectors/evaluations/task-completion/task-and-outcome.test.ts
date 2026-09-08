@@ -34,6 +34,7 @@ vi.mock('openai', () => ({
 }));
 
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
+  agentOfSkill: vi.fn().mockResolvedValue(null),
   resolveJudgeModelConfig: vi.fn().mockResolvedValue({
     model: 'judge-model',
     provider: 'ollama',

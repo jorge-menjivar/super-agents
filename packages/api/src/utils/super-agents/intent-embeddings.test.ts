@@ -8,6 +8,7 @@ import {
   embedRequestIntent,
   intentEmbeddingCount,
 } from '@api/utils/super-agents/intent-embeddings';
+import type { Agent } from '@shared/types/data';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@api/utils/embeddings', async (importOriginal) => ({
@@ -20,6 +21,8 @@ vi.mock('@api/utils/super-agents/intent-compaction', () => ({
 
 const c = {} as AppContext;
 const connector = {} as UserDataStorageConnector;
+/** Whose prompt is being embedded: compaction may answer to the agent. */
+const agent = { id: 'agent-1', name: 'helper' } as Agent;
 const MODEL = 'embed-model';
 
 describe('embedIntent', () => {
@@ -137,7 +140,7 @@ describe('embedRequestIntent', () => {
       conversation: 'User: hola',
     };
 
-    const first = await embedRequestIntent(c, connector, intent, MODEL);
+    const first = await embedRequestIntent(c, connector, agent, intent, MODEL);
     expect(first.identity?.embedding).toEqual([
       'You translate.\n\nTools: lookup'.length,
       0,
@@ -149,6 +152,7 @@ describe('embedRequestIntent', () => {
     const second = await embedRequestIntent(
       c,
       connector,
+      agent,
       { ...intent, conversation: 'User: adios' },
       MODEL,
     );
@@ -165,11 +169,18 @@ describe('embedRequestIntent', () => {
       conversation: null,
     };
 
-    const embedded = await embedRequestIntent(c, connector, intent, MODEL);
+    const embedded = await embedRequestIntent(
+      c,
+      connector,
+      agent,
+      intent,
+      MODEL,
+    );
 
     expect(compactSystemPrompt).toHaveBeenCalledWith(
       c,
       connector,
+      agent,
       intent.systemPrompt,
     );
     expect(embedded.identity?.embedding).toEqual([
@@ -183,6 +194,7 @@ describe('embedRequestIntent', () => {
     const embedded = await embedRequestIntent(
       c,
       connector,
+      agent,
       { systemPrompt: null, tools: null, conversation: 'User: hi' },
       MODEL,
     );
