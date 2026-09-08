@@ -1,6 +1,6 @@
 'use client';
 
-import type { HookLog } from '@shared/types/data/log';
+import type { HookLog, Log } from '@shared/types/data/log';
 import { CacheStatus } from '@shared/types/middleware/cache';
 import {
   type Hook,
@@ -8,7 +8,9 @@ import {
   HookType,
 } from '@shared/types/middleware/hooks';
 import { Badge } from '@web/components/ui/badge';
+import { Button } from '@web/components/ui/button';
 import { formatDuration } from '@web/utils/time';
+import { ArrowUpRightIcon } from 'lucide-react';
 import type { ReactElement } from 'react';
 
 /** What a hook made of the request or the response, in a word. */
@@ -113,15 +115,32 @@ function reasonAudience(log: HookLog, outcome: HookOutcome): string | null {
 }
 
 /**
+ * Whether the answer this hook withheld or replaced was lost: a log written
+ * before the gateway kept it on the hook log has only the review to show
+ * what the model wrote.
+ */
+const judgedResponseLost = (log: HookLog, outcome: HookOutcome): boolean =>
+  log.hook.type === HookType.OUTPUT_HOOK &&
+  (outcome.verdict === 'denied' || outcome.verdict === 'replaced') &&
+  log.response_body === undefined;
+
+/**
  * Every hook that judged the request, with its verdict, however it went:
  * a request that was allowed through shows who allowed it and why, just as
  * a withheld one shows who withheld it. The response a hook withheld or
- * replaced is drawn with the conversation, not here.
+ * replaced is drawn with the conversation, not here. A reviewer hook links
+ * to the review its verdict came from, where what the reviewer was shown
+ * and said can be read in full.
  */
 export function HookResults({
   hookLogs,
+  reviewOf,
+  onOpenReview,
 }: {
   hookLogs: HookLog[];
+  /** The review a reviewer hook's verdict came from, when it is known. */
+  reviewOf?: (log: HookLog) => Log | undefined;
+  onOpenReview?: (review: Log, reviewerName: string) => void;
 }): ReactElement {
   return (
     <section
@@ -134,6 +153,14 @@ export function HookResults({
       {hookLogs.map((log) => {
         const outcome = describeHookLog(log);
         const audience = reasonAudience(log, outcome);
+        const review = reviewOf?.(log);
+        const reviewer =
+          'agent_name' in log.hook.config ? log.hook.config.agent_name : null;
+        const lost = judgedResponseLost(log, outcome)
+          ? review
+            ? 'What the model wrote was not kept on this log, which predates that; the review shows what the reviewer was sent.'
+            : 'What the model wrote was not kept on this log, which predates that.'
+          : null;
         return (
           <div
             key={`${log.hook.type}-${log.hook.id}-${log.start_time}`}
@@ -165,6 +192,17 @@ export function HookResults({
                   cached verdict
                 </Badge>
               )}
+              {review && reviewer && onOpenReview && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs ml-auto"
+                  onClick={() => onOpenReview(review, reviewer)}
+                >
+                  Open the review
+                  <ArrowUpRightIcon className="h-3 w-3" />
+                </Button>
+              )}
             </div>
             {log.result.reason && (
               <p className="text-sm whitespace-pre-wrap leading-relaxed">
@@ -176,9 +214,9 @@ export function HookResults({
                 {log.result.error}
               </p>
             )}
-            {(outcome.failure || audience) && (
+            {(outcome.failure || audience || lost) && (
               <p className="text-xs text-muted-foreground">
-                {[outcome.failure, audience].filter(Boolean).join(' ')}
+                {[outcome.failure, audience, lost].filter(Boolean).join(' ')}
               </p>
             )}
           </div>

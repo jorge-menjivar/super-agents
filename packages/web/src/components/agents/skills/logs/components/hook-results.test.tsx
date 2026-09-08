@@ -1,4 +1,4 @@
-import type { HookLog } from '@shared/types/data/log';
+import type { HookLog, Log } from '@shared/types/data/log';
 import { CacheMode, CacheStatus } from '@shared/types/middleware/cache';
 import {
   type Hook,
@@ -6,13 +6,13 @@ import {
   type HookResult,
   HookType,
 } from '@shared/types/middleware/hooks';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import {
   describeHookLog,
   describeHookProvider,
   HookResults,
 } from '@web/components/agents/skills/logs/components/hook-results';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const hookLog = (
   result: Partial<HookResult> = {},
@@ -219,6 +219,66 @@ describe('HookResults', () => {
       'The reviewer "guard" did not answer with a verdict',
     );
     expect(panel).toHaveTextContent('went through unreviewed');
+  });
+
+  it('links a reviewer hook to the review its verdict came from', () => {
+    const review = { id: 'review-1' } as Log;
+    const onOpenReview = vi.fn();
+    render(
+      <HookResults
+        hookLogs={[hookLog({ deny_request: true })]}
+        reviewOf={() => review}
+        onOpenReview={onOpenReview}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Open the review/ }));
+
+    expect(onOpenReview).toHaveBeenCalledWith(review, 'system-safety');
+  });
+
+  it('offers no link when the review is not known', () => {
+    render(
+      <HookResults
+        hookLogs={[hookLog({ deny_request: true })]}
+        reviewOf={() => undefined}
+        onOpenReview={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: /Open the review/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says when a withheld answer was not kept, and where it can still be read', () => {
+    const denied = hookLog({ deny_request: true });
+    const { rerender } = render(
+      <HookResults
+        hookLogs={[denied]}
+        reviewOf={() => ({ id: 'r' }) as Log}
+        onOpenReview={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('region', { name: 'Hooks' })).toHaveTextContent(
+      'What the model wrote was not kept on this log, which predates that; the review shows what the reviewer was sent.',
+    );
+
+    // Kept on the log: nothing to apologise for.
+    rerender(
+      <HookResults
+        hookLogs={[
+          hookLog(
+            { deny_request: true },
+            {},
+            { response_body: { choices: [] } },
+          ),
+        ]}
+      />,
+    );
+    expect(screen.getByRole('region', { name: 'Hooks' })).not.toHaveTextContent(
+      'was not kept',
+    );
   });
 
   it('marks a verdict served from the cache', () => {

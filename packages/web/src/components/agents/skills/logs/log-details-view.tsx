@@ -26,6 +26,7 @@ import { Separator } from '@web/components/ui/separator';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { useLogSession } from '@web/hooks/use-log-session';
 import { usePinnedToBottom } from '@web/hooks/use-pinned-to-bottom';
+import { useReviewsOf } from '@web/hooks/use-reviews';
 import { useSmartBack } from '@web/hooks/use-smart-back';
 import { useAgents } from '@web/providers/agents';
 import { useLogs } from '@web/providers/logs';
@@ -34,6 +35,7 @@ import { useSkillOptimizationClusters } from '@web/providers/skill-optimization-
 import { useSkillOptimizationEvaluationRuns } from '@web/providers/skill-optimization-evaluation-runs';
 import { useSkills } from '@web/providers/skills';
 import { createSkillAvatar } from '@web/utils/avatars';
+import { reviewOf } from '@web/utils/reviews';
 import {
   describeSkillRouting,
   readSkillRouting,
@@ -100,8 +102,11 @@ export function LogDetailsView(): ReactElement {
   const { skills, setQueryParams: setSkillQueryParams } = useSkills();
   const { selectedLog, newerLog, olderLog, isLoading, setAgentId, setSkillId } =
     useLogs();
-  const { replaceToLogDetail, navigateToSkillDashboard } = useNavigation();
+  const { replaceToLogDetail, navigateToLogDetail, navigateToSkillDashboard } =
+    useNavigation();
   const session = useLogSession(selectedLog);
+  // The reviews a reviewer hook's verdicts came from, under their agents
+  const reviews = useReviewsOf(selectedLog);
   const { clusters, setSkillId: setClustersSkillId } =
     useSkillOptimizationClusters();
   const {
@@ -701,7 +706,13 @@ export function LogDetailsView(): ReactElement {
             </div>
           )}
           {selectedLog.hook_logs.length > 0 && (
-            <HookResults hookLogs={selectedLog.hook_logs} />
+            <HookResults
+              hookLogs={selectedLog.hook_logs}
+              reviewOf={(hookLog) => reviewOf(hookLog, reviews)}
+              onOpenReview={(review, reviewer) =>
+                navigateToLogDetail(reviewer, review.id)
+              }
+            />
           )}
           <CardContent className="flex flex-row p-0 h-full relative overflow-hidden">
             {selectedLog.trace_id && session.logs.length > 1 && (
