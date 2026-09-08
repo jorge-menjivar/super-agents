@@ -4,7 +4,6 @@ import type { HookLog, Log } from '@shared/types/data/log';
 import { CacheStatus } from '@shared/types/middleware/cache';
 import { HookType } from '@shared/types/middleware/hooks';
 import { Badge } from '@web/components/ui/badge';
-import { Button } from '@web/components/ui/button';
 import {
   describeHookLog,
   describeHookProvider,
@@ -12,6 +11,7 @@ import {
   type HookVerdict,
 } from '@web/utils/hook-outcome';
 import { formatDuration } from '@web/utils/time';
+import { cn } from '@web/utils/ui/utils';
 import { ArrowUpRightIcon } from 'lucide-react';
 import type { ReactElement } from 'react';
 
@@ -56,6 +56,10 @@ const judgedResponseLost = (log: HookLog, outcome: HookOutcome): boolean =>
  * replaced is drawn with the conversation, not here. A reviewer hook links
  * to the review its verdict came from, where what the reviewer was shown
  * and said can be read in full.
+ *
+ * A hook is a verdict, what it said, and what that did -- three lines, not
+ * a card. The strip around them is the container already; boxing each one
+ * again inside it only draws more edges than there are things.
  */
 export function HookResults({
   hookLogs,
@@ -68,7 +72,7 @@ export function HookResults({
   onOpenReview?: (review: Log, reviewerName: string) => void;
 }): ReactElement {
   return (
-    <div className="space-y-2" data-testid="hooks">
+    <div className="divide-y" data-testid="hooks">
       {hookLogs.map((log) => {
         const outcome = describeHookLog(log);
         const audience = reasonAudience(log, outcome);
@@ -80,10 +84,11 @@ export function HookResults({
             ? 'What the model wrote was not kept on this log, which predates that; the review shows what the reviewer was sent.'
             : 'What the model wrote was not kept on this log, which predates that.'
           : null;
+        const denied = outcome.verdict === 'denied';
         return (
           <div
             key={`${log.hook.type}-${log.hook.id}-${log.start_time}`}
-            className="rounded-md border bg-muted/30 px-3 py-2 space-y-1"
+            className="space-y-1.5 py-2 first:pt-0 last:pb-0"
           >
             <div className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <Badge
@@ -92,7 +97,12 @@ export function HookResults({
               >
                 {outcome.label}
               </Badge>
-              <span className="font-mono">{log.hook.id}</span>
+              <Badge
+                variant="outline"
+                className="h-5 px-2 py-0 font-mono text-xs font-normal text-muted-foreground"
+              >
+                {log.hook.id}
+              </Badge>
               <span className="text-muted-foreground">
                 {log.hook.type === HookType.INPUT_HOOK
                   ? 'on the request'
@@ -111,31 +121,35 @@ export function HookResults({
                   cached verdict
                 </Badge>
               )}
-              {review && reviewer && onOpenReview && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-xs ml-auto"
-                  onClick={() => onOpenReview(review, reviewer)}
-                >
-                  Open the review
-                  <ArrowUpRightIcon className="h-3 w-3" />
-                </Button>
-              )}
             </div>
             {log.result.reason && (
-              <p className="text-sm whitespace-pre-wrap leading-relaxed">
+              <p
+                className={cn(
+                  'whitespace-pre-wrap border-l-2 pl-3 text-sm leading-relaxed',
+                  denied ? 'border-destructive' : 'border-border',
+                )}
+              >
                 {log.result.reason}
               </p>
             )}
             {log.result.error !== undefined && (
-              <p className="text-sm text-destructive whitespace-pre-wrap leading-relaxed">
+              <p className="whitespace-pre-wrap border-l-2 border-destructive pl-3 text-sm leading-relaxed text-destructive">
                 {log.result.error}
               </p>
             )}
-            {(outcome.failure || audience || lost) && (
+            {(outcome.failure || audience || lost || review) && (
               <p className="text-xs text-muted-foreground">
                 {[outcome.failure, audience, lost].filter(Boolean).join(' ')}
+                {review && reviewer && onOpenReview && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenReview(review, reviewer)}
+                    className="ml-1 inline-flex items-center gap-0.5 rounded-sm underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Open the review
+                    <ArrowUpRightIcon className="h-3 w-3" />
+                  </button>
+                )}
               </p>
             )}
           </div>

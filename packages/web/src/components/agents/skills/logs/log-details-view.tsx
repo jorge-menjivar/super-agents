@@ -481,18 +481,22 @@ export function LogDetailsView(): ReactElement {
             {outcome.label}
           </span>
         }
-        description={[
-          formatLogTimestamp(selectedLog.start_time),
-          selectedLog.duration !== null
-            ? formatDuration(selectedLog.duration)
-            : null,
-        ]
-          .filter((part): part is string => part !== null)
-          .join(' \u00b7 ')}
         showBackButton
         onBack={handleBack}
         actions={
           <>
+            {/* When it happened sits opposite the outcome, not beside it. */}
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {[
+                formatLogTimestamp(selectedLog.start_time),
+                selectedLog.duration !== null
+                  ? formatDuration(selectedLog.duration)
+                  : null,
+              ]
+                .filter((part): part is string => part !== null)
+                .join(' \u00b7 ')}
+            </span>
+            <Separator orientation="vertical" className="h-6" />
             <LogNavigation
               newerLog={newerLog}
               olderLog={olderLog}
