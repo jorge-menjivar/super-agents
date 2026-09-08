@@ -32,6 +32,19 @@ const stages: TraceStage[] = [
   },
 ];
 
+/**
+ * A request that spent four minutes before the provider and 1.4 seconds in
+ * it: the two names at the end have nowhere of their own to sit.
+ */
+const lopsided: TraceStage[] = [
+  { ...stages[0], ms: 242_000 },
+  { ...stages[1], ms: 1_400 },
+  { ...stages[2], ms: 3_200 },
+];
+
+const labelFor = (name: string): HTMLElement =>
+  screen.getByText(name, { exact: false }).parentElement as HTMLElement;
+
 describe('describeTrace', () => {
   it('reads the whole request as a sentence, for a reader who cannot see it', () => {
     expect(describeTrace(stages, 123_959)).toBe(
@@ -41,17 +54,54 @@ describe('describeTrace', () => {
 });
 
 describe('placeStages', () => {
-  it('puts each stage at the middle of its own share of the request', () => {
-    // routing spans 0-87.9% of the request, provider 87.9-94.2%, review
-    // 94.2-100%, so each middle is the centre of its own share.
-    const middles = placeStages(stages).map((stage) => stage.middle);
-    expect(middles[0]).toBeCloseTo(0.439, 3);
-    expect(middles[1]).toBeCloseTo(0.911, 3);
-    expect(middles[2]).toBeCloseTo(0.971, 3);
+  it('starts each name where its own segment starts', () => {
+    const starts = placeStages(stages).map((stage) => stage.start);
+    expect(starts[0]).toBe(0);
+    expect(starts[1]).toBeCloseTo(0.879, 3);
+    expect(starts[2]).toBeCloseTo(0.942, 3);
+  });
+
+  it('keeps names on one row while each has room', () => {
+    expect(placeStages(stages).map((stage) => stage.row)).toEqual([0, 0, 0]);
+    expect(placeStages(stages).every((stage) => !stage.atEnd)).toBe(true);
+  });
+
+  it('drops a name to a second row rather than let it touch the one before', () => {
+    // The review begins 0.6% after the provider, which is far less than the
+    // provider's name needs, so it goes under it instead of beside it.
+    expect(placeStages(lopsided).map((stage) => stage.row)).toEqual([0, 0, 1]);
+  });
+
+  it('pulls a name back to the end when it would run off it', () => {
+    expect(placeStages(lopsided).map((stage) => stage.atEnd)).toEqual([
+      false,
+      true,
+      true,
+    ]);
   });
 });
 
 describe('RequestTrace', () => {
+  it('draws each stage as long as it took', () => {
+    render(<RequestTrace stages={stages} total={123_959} />);
+
+    const widths = Array.from(screen.getByRole('img').children).map(
+      (child) => (child as HTMLElement).style.flexGrow,
+    );
+    expect(widths).toEqual(['108950', '7867', '7142']);
+  });
+
+  it('tells the provider apart from the gateway and the hooks by colour', () => {
+    render(<RequestTrace stages={stages} total={123_959} />);
+
+    const [gateway, provider, hook] = Array.from(
+      screen.getByRole('img').children,
+    );
+    expect(gateway.className).toContain('bg-stone-300');
+    expect(provider.className).toContain('bg-teal-600');
+    expect(hook.className).toContain('bg-amber-600');
+  });
+
   it('names every stage with its own duration', () => {
     render(<RequestTrace stages={stages} total={123_959} />);
 
@@ -64,64 +114,38 @@ describe('RequestTrace', () => {
     expect(timing).toHaveTextContent('7.1s');
   });
 
-  it('draws each stage as long as it took', () => {
-    const { container } = render(
-      <RequestTrace stages={stages} total={123_959} />,
-    );
-
-    const bar = screen.getByRole('img');
-    const widths = Array.from(bar.children).map(
-      (child) => (child as HTMLElement).style.flexGrow,
-    );
-    expect(widths).toEqual(['108950', '7867', '7142']);
-    // Every stage keeps a floor, so a short one is never invisible.
-    expect(container.querySelectorAll('.min-w-\\[2px\\]')).toHaveLength(3);
-  });
-
-  it('tells the provider apart from the gateway and the hooks by colour', () => {
+  it('sets each name at the left edge of the stage it belongs to', () => {
     render(<RequestTrace stages={stages} total={123_959} />);
 
-    const bar = screen.getByRole('img');
-    const [gateway, provider, hook] = Array.from(bar.children);
-    expect(gateway.className).toContain('bg-muted-foreground/40');
-    expect(provider.className).toContain('bg-teal-500');
-    expect(hook.className).toContain('bg-amber-500');
+    // Nothing sits in front of the word, so the word is what lines up.
+    expect(labelFor('routing').style.left).toBe('0%');
+    expect(Number.parseFloat(labelFor('provider').style.left)).toBeCloseTo(
+      87.9,
+      1,
+    );
+    expect(Number.parseFloat(labelFor('review').style.left)).toBeCloseTo(
+      94.2,
+      1,
+    );
   });
 
-  it('sets each label over its own stage, not in a row beside the bar', () => {
+  it('holds every name on one line when each has room', () => {
     render(<RequestTrace stages={stages} total={123_959} />);
 
-    const routing = screen.getByText('routing').parentElement as HTMLElement;
-    const provider = screen.getByText('provider').parentElement as HTMLElement;
-    const review = screen.getByText('review').parentElement as HTMLElement;
+    for (const name of ['routing', 'provider', 'review']) {
+      expect(labelFor(name).style.top).toBe('5px');
+    }
+  });
 
-    // The long stage is named over its own middle, not beside the bar.
-    expect(Number.parseFloat(routing.style.left)).toBeCloseTo(43.9, 1);
-    expect(routing.style.transform).toBe('translateX(-50%)');
+  it('stacks and pulls back the names of stages with nowhere to sit', () => {
+    render(<RequestTrace stages={lopsided} total={246_600} />);
 
-    // The two short ones end at the right, so their labels anchor there
-    // rather than overflowing the bar. Their risers still point at them.
+    const provider = labelFor('provider');
+    const review = labelFor('review');
     expect(provider.style.right).toBe('0px');
     expect(review.style.right).toBe('0px');
-  });
-
-  it('alternates rows so neighbouring labels cannot overlap', () => {
-    render(<RequestTrace stages={stages} total={123_959} />);
-
-    const tops = ['routing', 'provider', 'review'].map(
-      (label) =>
-        (screen.getByText(label).parentElement as HTMLElement).style.top,
-    );
-    expect(tops).toEqual(['7px', '24px', '7px']);
-  });
-
-  it('keeps two stages on one row, since they cannot collide', () => {
-    render(<RequestTrace stages={stages.slice(0, 2)} total={116_817} />);
-
-    const tops = ['routing', 'provider'].map(
-      (label) =>
-        (screen.getByText(label).parentElement as HTMLElement).style.top,
-    );
-    expect(tops).toEqual(['7px', '7px']);
+    expect(provider.style.top).toBe('5px');
+    expect(review.style.top).toBe('20px');
+    expect(labelFor('routing').style.left).toBe('0%');
   });
 });
