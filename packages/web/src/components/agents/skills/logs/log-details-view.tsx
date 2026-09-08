@@ -7,6 +7,7 @@ import { EvaluationMethodName } from '@shared/types/evaluations';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
 import { CompletionViewer } from '@web/components/agents/skills/logs/components/completion-viewer';
+import { EmbeddingFingerprint } from '@web/components/agents/skills/logs/components/embedding-fingerprint';
 import { GenericViewer } from '@web/components/agents/skills/logs/components/generic-viewer';
 import { HookResults } from '@web/components/agents/skills/logs/components/hook-results';
 import { LogStrip } from '@web/components/agents/skills/logs/components/log-strip';
@@ -505,7 +506,7 @@ export function LogDetailsView(): ReactElement {
       <div className="flex-1 overflow-hidden p-6">
         {/* Log Detail Card */}
         <Card className="flex flex-col h-full overflow-hidden">
-          <CardHeader className="flex flex-row justify-between items-center p-4 bg-card-header border-b">
+          <CardHeader className="flex flex-row justify-between items-center px-4 py-2 bg-card-header border-b">
             {/* What the request was, as one line: every fact is a child of
                 the same flex, so one gap sets the spacing throughout. */}
             <div className="flex flex-row flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs">
@@ -631,9 +632,14 @@ export function LogDetailsView(): ReactElement {
                 </>
               }
             >
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                {skillRouting.title}
-              </p>
+              <div className="flex flex-row flex-wrap items-start gap-6">
+                <p className="max-w-prose flex-1 text-sm leading-relaxed text-muted-foreground">
+                  {skillRouting.title}
+                </p>
+                {selectedLog.embedding && (
+                  <EmbeddingFingerprint values={selectedLog.embedding} />
+                )}
+              </div>
             </LogStrip>
           )}
           {(evaluationDetails.length > 0 || averageScore !== null) && (
