@@ -625,7 +625,7 @@ export function LogDetailsView(): ReactElement {
                   </>
                 }
               >
-                <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
+                <p className="text-sm leading-relaxed text-muted-foreground">
                   {skillRouting.title}
                 </p>
               </LogStrip>
@@ -651,7 +651,7 @@ export function LogDetailsView(): ReactElement {
                         >
                           {(averageScore * 100).toFixed(0)}%
                         </span>
-                        {' weighted'}
+                        {' overall'}
                       </>
                     )}
                   </>
