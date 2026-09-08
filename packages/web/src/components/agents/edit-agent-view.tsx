@@ -1,6 +1,7 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
+import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
 import type { AgentUpdateParams } from '@shared/types/data';
 import {
@@ -104,6 +105,7 @@ const EditAgentFormSchema = z
       .min(MIN_TIMEOUT_SECONDS, `Must be at least ${MIN_TIMEOUT_SECONDS}`)
       .max(MAX_TIMEOUT_SECONDS, `Must be at most ${MAX_TIMEOUT_SECONDS}`)
       .nullable(),
+    intent_compaction_reasoning_effort: z.enum(ReasoningEffort).nullable(),
     // Null means responses go unreviewed.
     reviewer_agent_id: z.string().nullable(),
     review_fail_closed: z.boolean(),
@@ -169,6 +171,7 @@ export function EditAgentView(): React.ReactElement {
       skill_arbiter_timeout_seconds: null,
       intent_compaction_model_id: null,
       intent_compaction_timeout_seconds: null,
+      intent_compaction_reasoning_effort: null,
       reviewer_agent_id: null,
       review_fail_closed: false,
       review_expose_reason: false,
@@ -193,6 +196,8 @@ export function EditAgentView(): React.ReactElement {
           selectedAgent.intent_compaction_timeout_ms === null
             ? null
             : selectedAgent.intent_compaction_timeout_ms / 1000,
+        intent_compaction_reasoning_effort:
+          selectedAgent.intent_compaction_reasoning_effort,
         reviewer_agent_id: selectedAgent.reviewer_agent_id,
         review_fail_closed: selectedAgent.review_fail_closed,
         review_expose_reason: selectedAgent.review_expose_reason,
@@ -222,6 +227,8 @@ export function EditAgentView(): React.ReactElement {
           data.intent_compaction_timeout_seconds === null
             ? null
             : data.intent_compaction_timeout_seconds * 1000,
+        intent_compaction_reasoning_effort:
+          data.intent_compaction_reasoning_effort,
         reviewer_agent_id: data.reviewer_agent_id,
         review_fail_closed: data.review_fail_closed,
         review_expose_reason: data.review_expose_reason,
@@ -525,7 +532,7 @@ export function EditAgentView(): React.ReactElement {
                       prompt so the request can be routed by it. Routing waits
                       for this, so the agent whose callers send the longest
                       prompts is the one that may want its own answer. */}
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-4 sm:grid-cols-3">
                     <FormField
                       control={form.control}
                       name="intent_compaction_model_id"
@@ -597,6 +604,44 @@ export function EditAgentView(): React.ReactElement {
                               disabled={isUpdating}
                             />
                           </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="intent_compaction_reasoning_effort"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Compaction reasoning</FormLabel>
+                          <FormDescription>
+                            Summarising is transcription, not deliberation.
+                            Empty uses the system setting.
+                          </FormDescription>
+                          <Select
+                            value={field.value ?? SYSTEM_DEFAULT}
+                            onValueChange={selectChange(
+                              SYSTEM_DEFAULT,
+                              field.onChange,
+                            )}
+                            disabled={isUpdating}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value={SYSTEM_DEFAULT}>
+                                System default
+                              </SelectItem>
+                              {Object.values(ReasoningEffort).map((effort) => (
+                                <SelectItem key={effort} value={effort}>
+                                  {effort}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           <FormMessage />
                         </FormItem>
                       )}

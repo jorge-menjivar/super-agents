@@ -64,6 +64,7 @@ const initialSchema: LibsqlMigration = {
       skill_arbiter_timeout_ms INTEGER CHECK (skill_arbiter_timeout_ms IS NULL OR skill_arbiter_timeout_ms > 0),
       intent_compaction_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
       intent_compaction_timeout_ms INTEGER CHECK (intent_compaction_timeout_ms IS NULL OR intent_compaction_timeout_ms > 0),
+      intent_compaction_reasoning_effort TEXT CHECK (intent_compaction_reasoning_effort IS NULL OR intent_compaction_reasoning_effort IN ('none', 'minimal', 'low', 'medium', 'high')),
       reviewer_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
       review_fail_closed INTEGER NOT NULL DEFAULT 0 CHECK (review_fail_closed IN (0, 1)),
       review_expose_reason INTEGER NOT NULL DEFAULT 0 CHECK (review_expose_reason IN (0, 1)),

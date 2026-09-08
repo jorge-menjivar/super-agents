@@ -28,6 +28,7 @@ const mockAgent = {
   skill_arbiter_timeout_ms: null,
   intent_compaction_model_id: null,
   intent_compaction_timeout_ms: null,
+  intent_compaction_reasoning_effort: null,
   reviewer_agent_id: null,
   review_fail_closed: false,
   review_expose_reason: false,

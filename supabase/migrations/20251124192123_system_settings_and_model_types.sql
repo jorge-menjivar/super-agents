@@ -327,7 +327,8 @@ ALTER TABLE agents
 ADD COLUMN IF NOT EXISTS skill_arbiter_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
 ADD COLUMN IF NOT EXISTS skill_arbiter_timeout_ms INTEGER CHECK (skill_arbiter_timeout_ms IS NULL OR skill_arbiter_timeout_ms > 0),
 ADD COLUMN IF NOT EXISTS intent_compaction_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
-ADD COLUMN IF NOT EXISTS intent_compaction_timeout_ms INTEGER CHECK (intent_compaction_timeout_ms IS NULL OR intent_compaction_timeout_ms > 0);
+ADD COLUMN IF NOT EXISTS intent_compaction_timeout_ms INTEGER CHECK (intent_compaction_timeout_ms IS NULL OR intent_compaction_timeout_ms > 0),
+ADD COLUMN IF NOT EXISTS intent_compaction_reasoning_effort TEXT CHECK (intent_compaction_reasoning_effort IS NULL OR intent_compaction_reasoning_effort IN ('none', 'minimal', 'low', 'medium', 'high'));
 
 CREATE INDEX IF NOT EXISTS idx_agents_skill_arbiter_model_id ON agents(skill_arbiter_model_id);
 CREATE INDEX IF NOT EXISTS idx_agents_intent_compaction_model_id ON agents(intent_compaction_model_id);
@@ -336,6 +337,7 @@ COMMENT ON COLUMN agents.skill_arbiter_model_id IS 'The model the skill arbiter 
 COMMENT ON COLUMN agents.skill_arbiter_timeout_ms IS 'How long one arbiter attempt may take for this agent, in milliseconds; NULL means the system setting';
 COMMENT ON COLUMN agents.intent_compaction_model_id IS 'The model that compacts an over-long system prompt before this agent routes by it; NULL means the system setting';
 COMMENT ON COLUMN agents.intent_compaction_timeout_ms IS 'How long one compaction attempt may take for this agent, in milliseconds; NULL means the system setting';
+COMMENT ON COLUMN agents.intent_compaction_reasoning_effort IS 'How hard the compaction model may think for this agent; NULL means the system setting';
 
 CREATE OR REPLACE FUNCTION validate_agent_model_types()
 RETURNS TRIGGER AS $$

@@ -91,13 +91,15 @@ describe('compactSystemPrompt', () => {
   });
 
   it('sends the compaction reasoning effort the settings chose', async () => {
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue({
-      model: 'reflect-model',
-      provider: AIProvider.OPENAI,
-      apiKey: 'key',
-      timeoutMs: 90_000,
-      reasoningEffort: ReasoningEffort.NONE,
-    } as never);
+    vi.mocked(connector.getSystemSettings).mockResolvedValueOnce({
+      ...settings,
+      options: SystemSettingsOptions.parse({
+        intent_compaction: {
+          timeout_ms: 90_000,
+          reasoning_effort: ReasoningEffort.NONE,
+        },
+      }),
+    });
 
     await compactSystemPrompt(
       createMockContext(),
@@ -206,6 +208,21 @@ describe('compactSystemPrompt', () => {
     // head of the prompt than wait a minute and a half may say so.
     expect(vi.mocked(OpenAI).mock.calls[0][0]).toMatchObject({
       timeout: 15_000,
+    });
+  });
+
+  it('thinks as hard as the agent says, whoever chose the model', async () => {
+    await compactSystemPrompt(
+      createMockContext(),
+      connector,
+      { ...agent, intent_compaction_reasoning_effort: ReasoningEffort.NONE },
+      longPrompt,
+    );
+
+    // The effort belongs with the model, and an agent that named a fast one
+    // to stop waiting is answering for both.
+    expect(mockCreate.mock.calls[0][0]).toMatchObject({
+      reasoning_effort: 'none',
     });
   });
 

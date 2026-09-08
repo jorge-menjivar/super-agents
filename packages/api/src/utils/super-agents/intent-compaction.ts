@@ -6,11 +6,11 @@ import {
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import {
-  type ResolvedModelConfig,
   resolveModelById,
   resolveSystemSettingsModel,
 } from '@api/utils/evaluation-model-resolver';
 import { warn } from '@shared/console-logging';
+import type { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import type { Agent } from '@shared/types/data/agent';
 import type { SystemSettings } from '@shared/types/data/system-settings';
 import { SYSTEM_PROMPT_BUDGET } from '@shared/utils/request-intent';
@@ -50,29 +50,22 @@ export function intentCompactionTimeoutMs(
 }
 
 /**
- * The agent's own compaction model, under the system's bounds.
+ * How hard the compaction model may think, the agent's answer before the
+ * system's.
  *
- * As with the arbiter: an agent overrides *which* model compacts, not how
- * hard it may think, since a model resolved by id carries no settings of its
- * own.
+ * A model resolved by id carries no settings of its own, so this is resolved
+ * beside the model rather than with it -- and it is a setting the agent may
+ * answer because the two are chosen together: an agent that named a fast
+ * model to stop waiting on routing wants that model's effort, not the one
+ * that suits whatever the system compacts with.
  */
-async function resolveAgentCompactionModel(
-  c: AppContext,
-  modelId: string,
-  connector: UserDataStorageConnector,
+export function intentCompactionReasoningEffort(
+  agent: Agent,
   settings: SystemSettings,
-): Promise<ResolvedModelConfig | null> {
-  const resolved = await resolveModelById(
-    c,
-    modelId,
-    connector,
-    'MODEL_RESOLVER_INTENT_COMPACTION',
-  );
+): ReasoningEffort | null {
   return (
-    resolved && {
-      ...resolved,
-      reasoningEffort: settings.options.intent_compaction.reasoning_effort,
-    }
+    agent.intent_compaction_reasoning_effort ??
+    settings.options.intent_compaction.reasoning_effort
   );
 }
 
@@ -84,11 +77,11 @@ async function compactOnce(
 ): Promise<string> {
   const settings = await connector.getSystemSettings(c);
   const modelConfig = agent.intent_compaction_model_id
-    ? await resolveAgentCompactionModel(
+    ? await resolveModelById(
         c,
         agent.intent_compaction_model_id,
         connector,
-        settings,
+        'MODEL_RESOLVER_INTENT_COMPACTION',
       )
     : await resolveSystemSettingsModel(
         c,
@@ -99,6 +92,7 @@ async function compactOnce(
   if (!modelConfig) {
     throw new Error('No intent compaction model configured');
   }
+  const reasoningEffort = intentCompactionReasoningEffort(agent, settings);
 
   const client = new OpenAI({
     apiKey: getInternalApiKey(c),
@@ -129,11 +123,9 @@ async function compactOnce(
     })
     .chat.completions.create({
       ...SA_SKILL_REQUEST_PARAMS,
-      // Only when the role's setting names one: a model that takes no such
-      // parameter is left at its own default.
-      ...(modelConfig.reasoningEffort
-        ? { reasoning_effort: modelConfig.reasoningEffort }
-        : {}),
+      // Only when the agent or the role names one: a model that takes no
+      // such parameter is left at its own default.
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       model: modelConfig.model,
       // Deterministic, so the summary -- and with it the identity embedding
       // -- stays put across restarts instead of drifting per process.

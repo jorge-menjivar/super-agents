@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ReasoningEffort } from '../api/routes/shared/thinking';
 import {
   MAX_INTERNAL_TIMEOUT_MS,
   MIN_INTERNAL_TIMEOUT_MS,
@@ -46,6 +47,12 @@ export const Agent = z.object({
    * system setting. Routing waits for it, so an agent whose callers send
    * large prompts is the one that needs its own answer here. */
   intent_compaction_timeout_ms: TimeoutOverride,
+
+  /** How hard the compaction model may think for this agent; null means the
+   * system setting. It sits beside the model because the two are chosen
+   * together: the effort that suits the system's model is rarely the one
+   * that suits the fast model an agent picked to stop waiting. */
+  intent_compaction_reasoning_effort: z.enum(ReasoningEffort).nullable(),
 
   /** Another agent that reviews every response before the client receives
    * it, and may withhold or rewrite it; null means responses go unreviewed.
@@ -107,6 +114,10 @@ export const AgentCreateParams = z
     skill_arbiter_timeout_ms: TimeoutOverride.optional(),
     intent_compaction_model_id: z.uuid().nullable().optional(),
     intent_compaction_timeout_ms: TimeoutOverride.optional(),
+    intent_compaction_reasoning_effort: z
+      .enum(ReasoningEffort)
+      .nullable()
+      .optional(),
     reviewer_agent_id: z.uuid().nullable().optional(),
     review_fail_closed: z.boolean().default(false),
     review_expose_reason: z.boolean().default(false),
@@ -126,6 +137,10 @@ export const AgentUpdateParams = z
     skill_arbiter_timeout_ms: TimeoutOverride.optional(),
     intent_compaction_model_id: z.uuid().nullable().optional(),
     intent_compaction_timeout_ms: TimeoutOverride.optional(),
+    intent_compaction_reasoning_effort: z
+      .enum(ReasoningEffort)
+      .nullable()
+      .optional(),
     reviewer_agent_id: z.uuid().nullable().optional(),
     review_fail_closed: z.boolean().optional(),
     review_expose_reason: z.boolean().optional(),
@@ -143,6 +158,7 @@ export const AgentUpdateParams = z
         'skill_arbiter_timeout_ms',
         'intent_compaction_model_id',
         'intent_compaction_timeout_ms',
+        'intent_compaction_reasoning_effort',
         'reviewer_agent_id',
         'review_fail_closed',
         'review_expose_reason',
