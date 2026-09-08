@@ -2,6 +2,7 @@ import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { embedText, RequestEmbeddingError } from '@api/utils/embeddings';
 import { compactSystemPrompt } from '@api/utils/super-agents/intent-compaction';
+import type { Agent } from '@shared/types/data/agent';
 import {
   identityText,
   type RequestIntent,
@@ -112,12 +113,13 @@ export interface RequestIntentEmbedding {
 export async function embedRequestIntent(
   c: AppContext,
   connector: UserDataStorageConnector,
+  agent: Agent,
   intent: RequestIntent,
   modelId: string,
 ): Promise<RequestIntentEmbedding> {
   const compacted =
     intent.systemPrompt && intent.systemPrompt.length > SYSTEM_PROMPT_BUDGET
-      ? await compactSystemPrompt(c, connector, intent.systemPrompt)
+      ? await compactSystemPrompt(c, connector, agent, intent.systemPrompt)
       : null;
   const identity = identityText(intent, compacted);
 

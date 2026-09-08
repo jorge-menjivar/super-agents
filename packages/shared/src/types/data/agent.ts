@@ -1,14 +1,15 @@
 import { z } from 'zod';
 import {
-  MAX_SKILL_ARBITER_TIMEOUT_MS,
-  MIN_SKILL_ARBITER_TIMEOUT_MS,
+  MAX_INTERNAL_TIMEOUT_MS,
+  MIN_INTERNAL_TIMEOUT_MS,
 } from './system-settings';
 
-/** The agent's own arbiter timeout, in milliseconds; null means the system setting. */
-const SkillArbiterTimeoutOverride = z
+/** An agent's own timeout for an internal call, in milliseconds; null means
+ * the system setting. */
+const TimeoutOverride = z
   .int()
-  .min(MIN_SKILL_ARBITER_TIMEOUT_MS)
-  .max(MAX_SKILL_ARBITER_TIMEOUT_MS)
+  .min(MIN_INTERNAL_TIMEOUT_MS)
+  .max(MAX_INTERNAL_TIMEOUT_MS)
   .nullable();
 
 export const Agent = z.object({
@@ -35,7 +36,16 @@ export const Agent = z.object({
 
   /** How long one arbiter attempt may take for this agent; null means the
    * system setting. */
-  skill_arbiter_timeout_ms: SkillArbiterTimeoutOverride,
+  skill_arbiter_timeout_ms: TimeoutOverride,
+
+  /** The model that compacts an over-long system prompt before this agent's
+   * requests are routed by it; null means the system setting. */
+  intent_compaction_model_id: z.uuid().nullable(),
+
+  /** How long one compaction attempt may take for this agent; null means the
+   * system setting. Routing waits for it, so an agent whose callers send
+   * large prompts is the one that needs its own answer here. */
+  intent_compaction_timeout_ms: TimeoutOverride,
 
   /** Another agent that reviews every response before the client receives
    * it, and may withhold or rewrite it; null means responses go unreviewed.
@@ -94,7 +104,9 @@ export const AgentCreateParams = z
     skill_match_threshold: z.number().min(0).max(1).default(0.8),
     max_auto_created_skills: z.int().min(0).default(10),
     skill_arbiter_model_id: z.uuid().nullable().optional(),
-    skill_arbiter_timeout_ms: SkillArbiterTimeoutOverride.optional(),
+    skill_arbiter_timeout_ms: TimeoutOverride.optional(),
+    intent_compaction_model_id: z.uuid().nullable().optional(),
+    intent_compaction_timeout_ms: TimeoutOverride.optional(),
     reviewer_agent_id: z.uuid().nullable().optional(),
     review_fail_closed: z.boolean().default(false),
     review_expose_reason: z.boolean().default(false),
@@ -111,7 +123,9 @@ export const AgentUpdateParams = z
     skill_match_threshold: z.number().min(0).max(1).optional(),
     max_auto_created_skills: z.int().min(0).optional(),
     skill_arbiter_model_id: z.uuid().nullable().optional(),
-    skill_arbiter_timeout_ms: SkillArbiterTimeoutOverride.optional(),
+    skill_arbiter_timeout_ms: TimeoutOverride.optional(),
+    intent_compaction_model_id: z.uuid().nullable().optional(),
+    intent_compaction_timeout_ms: TimeoutOverride.optional(),
     reviewer_agent_id: z.uuid().nullable().optional(),
     review_fail_closed: z.boolean().optional(),
     review_expose_reason: z.boolean().optional(),
@@ -127,6 +141,8 @@ export const AgentUpdateParams = z
         'max_auto_created_skills',
         'skill_arbiter_model_id',
         'skill_arbiter_timeout_ms',
+        'intent_compaction_model_id',
+        'intent_compaction_timeout_ms',
         'reviewer_agent_id',
         'review_fail_closed',
         'review_expose_reason',

@@ -5,8 +5,14 @@ import {
 } from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
-import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
+import {
+  type ResolvedModelConfig,
+  resolveModelById,
+  resolveSystemSettingsModel,
+} from '@api/utils/evaluation-model-resolver';
 import { warn } from '@shared/console-logging';
+import type { Agent } from '@shared/types/data/agent';
+import type { SystemSettings } from '@shared/types/data/system-settings';
 import { SYSTEM_PROMPT_BUDGET } from '@shared/utils/request-intent';
 import OpenAI from 'openai';
 
@@ -25,16 +31,71 @@ const COMPACTOR_SYSTEM_PROMPT = `You compact system prompts for an AI gateway th
 const cache = new Map<string, Promise<string>>();
 const MAX_ENTRIES = 64;
 
+/**
+ * How long one compaction attempt may take for this agent.
+ *
+ * Routing waits for compaction, so this is time the caller spends before the
+ * provider is asked anything -- and an agent whose callers send system
+ * prompts of tens of kilobytes is exactly the one whose summary takes
+ * longest. That is why the agent may answer for itself.
+ */
+export function intentCompactionTimeoutMs(
+  agent: Agent,
+  settings: SystemSettings,
+): number {
+  return (
+    agent.intent_compaction_timeout_ms ??
+    settings.options.intent_compaction.timeout_ms
+  );
+}
+
+/**
+ * The agent's own compaction model, under the system's bounds.
+ *
+ * As with the arbiter: an agent overrides *which* model compacts, not how
+ * hard it may think, since a model resolved by id carries no settings of its
+ * own.
+ */
+async function resolveAgentCompactionModel(
+  c: AppContext,
+  modelId: string,
+  connector: UserDataStorageConnector,
+  settings: SystemSettings,
+): Promise<ResolvedModelConfig | null> {
+  const resolved = await resolveModelById(
+    c,
+    modelId,
+    connector,
+    'MODEL_RESOLVER_INTENT_COMPACTION',
+  );
+  return (
+    resolved && {
+      ...resolved,
+      reasoningEffort: settings.options.intent_compaction.reasoning_effort,
+    }
+  );
+}
+
 async function compactOnce(
   c: AppContext,
   connector: UserDataStorageConnector,
+  agent: Agent,
   prompt: string,
 ): Promise<string> {
-  const modelConfig = await resolveSystemSettingsModel(
-    c,
-    'intent_compaction',
-    connector,
-  );
+  const settings = await connector.getSystemSettings(c);
+  const modelConfig = agent.intent_compaction_model_id
+    ? await resolveAgentCompactionModel(
+        c,
+        agent.intent_compaction_model_id,
+        connector,
+        settings,
+      )
+    : await resolveSystemSettingsModel(
+        c,
+        'intent_compaction',
+        connector,
+        settings,
+      );
   if (!modelConfig) {
     throw new Error('No intent compaction model configured');
   }
@@ -44,7 +105,7 @@ async function compactOnce(
     baseURL: `${getApiUrl(c)}/v1`,
     // One attempt; the client retries once, so the whole call takes at most
     // twice this.
-    timeout: modelConfig.timeoutMs,
+    timeout: intentCompactionTimeoutMs(agent, settings),
     maxRetries: 1,
   });
   const saConfig = {
@@ -100,6 +161,7 @@ async function compactOnce(
 export function compactSystemPrompt(
   c: AppContext,
   connector: UserDataStorageConnector,
+  agent: Agent,
   prompt: string,
 ): Promise<string> {
   let pending = cache.get(prompt);
@@ -107,7 +169,7 @@ export function compactSystemPrompt(
     cache.delete(prompt);
     cache.set(prompt, pending);
   } else {
-    pending = compactOnce(c, connector, prompt);
+    pending = compactOnce(c, connector, agent, prompt);
     cache.set(prompt, pending);
     const created = pending;
     created.catch(() => {

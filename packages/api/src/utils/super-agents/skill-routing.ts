@@ -247,6 +247,7 @@ export async function absorbIntent(
 async function tryEmbedIntent(
   c: AppContext,
   connector: UserDataStorageConnector,
+  agent: Agent,
   intent: RequestIntent,
 ): Promise<RequestIntentEmbedding | null> {
   try {
@@ -257,6 +258,7 @@ async function tryEmbedIntent(
     return await embedRequestIntent(
       c,
       connector,
+      agent,
       intent,
       embeddingConfig.modelId,
     );
@@ -346,7 +348,9 @@ async function routeOnce(
     }
     // Nothing to compare against: the first request gets the first skill.
     return create(
-      requestIntent ? await tryEmbedIntent(c, connector, requestIntent) : null,
+      requestIntent
+        ? await tryEmbedIntent(c, connector, agent, requestIntent)
+        : null,
       null,
       null,
     );
@@ -407,6 +411,7 @@ async function routeOnce(
     const intent = await embedRequestIntent(
       c,
       connector,
+      agent,
       requestIntent,
       embeddingConfig.modelId,
     );
@@ -642,6 +647,7 @@ export async function learnSkillIntent(
     const intent = await embedRequestIntent(
       c,
       connector,
+      agent,
       requestIntent,
       embeddingConfig.modelId,
     );

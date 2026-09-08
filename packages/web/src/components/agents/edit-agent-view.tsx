@@ -4,8 +4,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
 import type { AgentUpdateParams } from '@shared/types/data';
 import {
-  MAX_SKILL_ARBITER_TIMEOUT_MS,
-  MIN_SKILL_ARBITER_TIMEOUT_MS,
+  MAX_INTERNAL_TIMEOUT_MS,
+  MIN_INTERNAL_TIMEOUT_MS,
 } from '@shared/types/data/system-settings';
 import { sanitizeUserInput } from '@shared/utils/security';
 import { useParams } from '@tanstack/react-router';
@@ -47,8 +47,8 @@ import * as React from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
-const MIN_ARBITER_TIMEOUT_SECONDS = MIN_SKILL_ARBITER_TIMEOUT_MS / 1000;
-const MAX_ARBITER_TIMEOUT_SECONDS = MAX_SKILL_ARBITER_TIMEOUT_MS / 1000;
+const MIN_TIMEOUT_SECONDS = MIN_INTERNAL_TIMEOUT_MS / 1000;
+const MAX_TIMEOUT_SECONDS = MAX_INTERNAL_TIMEOUT_MS / 1000;
 
 /** The select's value for "no override": a Radix item cannot be the empty string. */
 const SYSTEM_DEFAULT = '__system_default__';
@@ -94,14 +94,15 @@ const EditAgentFormSchema = z
     skill_arbiter_timeout_seconds: z
       .number({ error: 'Enter a whole number of seconds, or leave it empty' })
       .int('Must be a whole number of seconds')
-      .min(
-        MIN_ARBITER_TIMEOUT_SECONDS,
-        `Must be at least ${MIN_ARBITER_TIMEOUT_SECONDS}`,
-      )
-      .max(
-        MAX_ARBITER_TIMEOUT_SECONDS,
-        `Must be at most ${MAX_ARBITER_TIMEOUT_SECONDS}`,
-      )
+      .min(MIN_TIMEOUT_SECONDS, `Must be at least ${MIN_TIMEOUT_SECONDS}`)
+      .max(MAX_TIMEOUT_SECONDS, `Must be at most ${MAX_TIMEOUT_SECONDS}`)
+      .nullable(),
+    intent_compaction_model_id: z.string().nullable(),
+    intent_compaction_timeout_seconds: z
+      .number({ error: 'Enter a whole number of seconds, or leave it empty' })
+      .int('Must be a whole number of seconds')
+      .min(MIN_TIMEOUT_SECONDS, `Must be at least ${MIN_TIMEOUT_SECONDS}`)
+      .max(MAX_TIMEOUT_SECONDS, `Must be at most ${MAX_TIMEOUT_SECONDS}`)
       .nullable(),
     // Null means responses go unreviewed.
     reviewer_agent_id: z.string().nullable(),
@@ -166,6 +167,8 @@ export function EditAgentView(): React.ReactElement {
       max_auto_created_skills: 10,
       skill_arbiter_model_id: null,
       skill_arbiter_timeout_seconds: null,
+      intent_compaction_model_id: null,
+      intent_compaction_timeout_seconds: null,
       reviewer_agent_id: null,
       review_fail_closed: false,
       review_expose_reason: false,
@@ -185,6 +188,11 @@ export function EditAgentView(): React.ReactElement {
           selectedAgent.skill_arbiter_timeout_ms === null
             ? null
             : selectedAgent.skill_arbiter_timeout_ms / 1000,
+        intent_compaction_model_id: selectedAgent.intent_compaction_model_id,
+        intent_compaction_timeout_seconds:
+          selectedAgent.intent_compaction_timeout_ms === null
+            ? null
+            : selectedAgent.intent_compaction_timeout_ms / 1000,
         reviewer_agent_id: selectedAgent.reviewer_agent_id,
         review_fail_closed: selectedAgent.review_fail_closed,
         review_expose_reason: selectedAgent.review_expose_reason,
@@ -209,6 +217,11 @@ export function EditAgentView(): React.ReactElement {
           data.skill_arbiter_timeout_seconds === null
             ? null
             : data.skill_arbiter_timeout_seconds * 1000,
+        intent_compaction_model_id: data.intent_compaction_model_id,
+        intent_compaction_timeout_ms:
+          data.intent_compaction_timeout_seconds === null
+            ? null
+            : data.intent_compaction_timeout_seconds * 1000,
         reviewer_agent_id: data.reviewer_agent_id,
         review_fail_closed: data.review_fail_closed,
         review_expose_reason: data.review_expose_reason,
@@ -486,8 +499,90 @@ export function EditAgentView(): React.ReactElement {
                             <Input
                               type="number"
                               step="1"
-                              min={MIN_ARBITER_TIMEOUT_SECONDS}
-                              max={MAX_ARBITER_TIMEOUT_SECONDS}
+                              min={MIN_TIMEOUT_SECONDS}
+                              max={MAX_TIMEOUT_SECONDS}
+                              placeholder="System default"
+                              name={field.name}
+                              value={field.value ?? ''}
+                              onBlur={field.onBlur}
+                              onChange={(e) =>
+                                field.onChange(
+                                  e.target.value === ''
+                                    ? null
+                                    : e.target.valueAsNumber,
+                                )
+                              }
+                              disabled={isUpdating}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  {/* Compaction: the model that shortens an over-long system
+                      prompt so the request can be routed by it. Routing waits
+                      for this, so the agent whose callers send the longest
+                      prompts is the one that may want its own answer. */}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="intent_compaction_model_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Compaction model</FormLabel>
+                          <FormDescription>
+                            Summarises a system prompt too long to route by.
+                            Empty uses the system setting.
+                          </FormDescription>
+                          <Select
+                            value={field.value ?? SYSTEM_DEFAULT}
+                            onValueChange={selectChange(
+                              SYSTEM_DEFAULT,
+                              field.onChange,
+                            )}
+                            disabled={isUpdating}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value={SYSTEM_DEFAULT}>
+                                System default
+                              </SelectItem>
+                              {textModelOptions.map((model) => (
+                                <SelectItem key={model.id} value={model.id}>
+                                  {model.modelName}{' '}
+                                  <span className="text-muted-foreground">
+                                    ({model.providerName})
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="intent_compaction_timeout_seconds"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Compaction timeout (seconds)</FormLabel>
+                          <FormDescription>
+                            The request waits for this, then routes on the head
+                            of the prompt. Empty uses the system setting.
+                          </FormDescription>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="1"
+                              min={MIN_TIMEOUT_SECONDS}
+                              max={MAX_TIMEOUT_SECONDS}
                               placeholder="System default"
                               name={field.name}
                               value={field.value ?? ''}

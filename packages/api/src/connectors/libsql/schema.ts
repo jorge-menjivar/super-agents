@@ -62,6 +62,8 @@ const initialSchema: LibsqlMigration = {
       max_auto_created_skills INTEGER NOT NULL DEFAULT 10,
       skill_arbiter_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
       skill_arbiter_timeout_ms INTEGER CHECK (skill_arbiter_timeout_ms IS NULL OR skill_arbiter_timeout_ms > 0),
+      intent_compaction_model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
+      intent_compaction_timeout_ms INTEGER CHECK (intent_compaction_timeout_ms IS NULL OR intent_compaction_timeout_ms > 0),
       reviewer_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
       review_fail_closed INTEGER NOT NULL DEFAULT 0 CHECK (review_fail_closed IN (0, 1)),
       review_expose_reason INTEGER NOT NULL DEFAULT 0 CHECK (review_expose_reason IN (0, 1)),
@@ -70,23 +72,32 @@ const initialSchema: LibsqlMigration = {
       CHECK (reviewer_agent_id IS NULL OR reviewer_agent_id <> id)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_agents_reviewer_agent_id ON agents(reviewer_agent_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agents_intent_compaction_model_id ON agents(intent_compaction_model_id)`,
     updatedAtTrigger('agents'),
     // Postgres enforces this through `validate_agent_model_types`.
     `CREATE TRIGGER IF NOT EXISTS agents_validate_model_types_insert
     BEFORE INSERT ON agents
     FOR EACH ROW
-    WHEN NEW.skill_arbiter_model_id IS NOT NULL
+    WHEN NEW.skill_arbiter_model_id IS NOT NULL OR NEW.intent_compaction_model_id IS NOT NULL
     BEGIN
-      SELECT CASE WHEN (SELECT model_type FROM models WHERE id = NEW.skill_arbiter_model_id) IS NOT 'text'
+      SELECT CASE WHEN NEW.skill_arbiter_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.skill_arbiter_model_id) IS NOT 'text'
         THEN RAISE(ABORT, 'skill_arbiter_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.intent_compaction_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.intent_compaction_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'intent_compaction_model_id must reference a text model') END;
     END`,
     `CREATE TRIGGER IF NOT EXISTS agents_validate_model_types_update
     BEFORE UPDATE ON agents
     FOR EACH ROW
-    WHEN NEW.skill_arbiter_model_id IS NOT NULL
+    WHEN NEW.skill_arbiter_model_id IS NOT NULL OR NEW.intent_compaction_model_id IS NOT NULL
     BEGIN
-      SELECT CASE WHEN (SELECT model_type FROM models WHERE id = NEW.skill_arbiter_model_id) IS NOT 'text'
+      SELECT CASE WHEN NEW.skill_arbiter_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.skill_arbiter_model_id) IS NOT 'text'
         THEN RAISE(ABORT, 'skill_arbiter_model_id must reference a text model') END;
+      SELECT CASE WHEN NEW.intent_compaction_model_id IS NOT NULL
+        AND (SELECT model_type FROM models WHERE id = NEW.intent_compaction_model_id) IS NOT 'text'
+        THEN RAISE(ABORT, 'intent_compaction_model_id must reference a text model') END;
     END`,
 
     // --------------------------------------------------------- ai_providers

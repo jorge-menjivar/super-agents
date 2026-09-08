@@ -174,12 +174,13 @@ BEGIN
     RAISE EXCEPTION 'Cannot change model_type for a model that is referenced in system_settings';
   END IF;
 
-  -- An agent's own arbiter model has to stay a text model too
+  -- A model an agent named for itself has to stay a text model too
   IF EXISTS (
     SELECT 1 FROM public.agents
     WHERE skill_arbiter_model_id = NEW.id
+       OR intent_compaction_model_id = NEW.id
   ) THEN
-    RAISE EXCEPTION 'Cannot change model_type for a model that an agent uses as its skill arbiter';
+    RAISE EXCEPTION 'Cannot change model_type for a model that an agent asks for itself';
   END IF;
 
   -- Skill routing centroids only mean something under the model that computed them
@@ -316,26 +317,35 @@ CREATE POLICY "Allow all operations on skill_creation_leases"
 COMMENT ON TABLE skill_creation_leases IS 'Per-agent lease held by the request creating a skill, so concurrent requests do not each create one';
 
 -- ============================================================================
--- PART 7: Per-agent skill arbiter overrides
+-- PART 7: Per-agent overrides for the models asked on its behalf
 -- ============================================================================
 
--- An agent may choose its own arbiter model and timeout; NULL means the
--- system setting applies. A deleted model falls back rather than blocking
--- the delete, unlike the system settings, which RESTRICT.
+-- An agent may choose its own arbiter and compaction models, and a timeout
+-- for each; NULL means the system setting applies. A deleted model falls back
+-- rather than blocking the delete, unlike the system settings, which RESTRICT.
 ALTER TABLE agents
 ADD COLUMN IF NOT EXISTS skill_arbiter_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
-ADD COLUMN IF NOT EXISTS skill_arbiter_timeout_ms INTEGER CHECK (skill_arbiter_timeout_ms IS NULL OR skill_arbiter_timeout_ms > 0);
+ADD COLUMN IF NOT EXISTS skill_arbiter_timeout_ms INTEGER CHECK (skill_arbiter_timeout_ms IS NULL OR skill_arbiter_timeout_ms > 0),
+ADD COLUMN IF NOT EXISTS intent_compaction_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS intent_compaction_timeout_ms INTEGER CHECK (intent_compaction_timeout_ms IS NULL OR intent_compaction_timeout_ms > 0);
 
 CREATE INDEX IF NOT EXISTS idx_agents_skill_arbiter_model_id ON agents(skill_arbiter_model_id);
+CREATE INDEX IF NOT EXISTS idx_agents_intent_compaction_model_id ON agents(intent_compaction_model_id);
 
 COMMENT ON COLUMN agents.skill_arbiter_model_id IS 'The model the skill arbiter asks for this agent; NULL means the system setting';
 COMMENT ON COLUMN agents.skill_arbiter_timeout_ms IS 'How long one arbiter attempt may take for this agent, in milliseconds; NULL means the system setting';
+COMMENT ON COLUMN agents.intent_compaction_model_id IS 'The model that compacts an over-long system prompt before this agent routes by it; NULL means the system setting';
+COMMENT ON COLUMN agents.intent_compaction_timeout_ms IS 'How long one compaction attempt may take for this agent, in milliseconds; NULL means the system setting';
 
 CREATE OR REPLACE FUNCTION validate_agent_model_types()
 RETURNS TRIGGER AS $$
 BEGIN
   IF NOT public.check_model_type(NEW.skill_arbiter_model_id, 'text') THEN
     RAISE EXCEPTION 'skill_arbiter_model_id must reference a text model';
+  END IF;
+
+  IF NOT public.check_model_type(NEW.intent_compaction_model_id, 'text') THEN
+    RAISE EXCEPTION 'intent_compaction_model_id must reference a text model';
   END IF;
 
   RETURN NEW;

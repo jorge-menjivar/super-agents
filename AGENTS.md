@@ -195,7 +195,13 @@ renormalised when a half is missing, seeding a centroid from the skill's
 description the first time it meets one. A system prompt too long to embed
 whole is compacted first by the `compact-intent` internal skill
 (`utils/super-agents/intent-compaction.ts`, cached per distinct prompt,
-truncation as the fallback). When the agent has `auto_create_skills` on (the
+truncation as the fallback). Its model and per-attempt timeout are the
+system's (`intent_compaction_model_id`, the reflection model when unset, and
+`options.intent_compaction.timeout_ms`), which an agent overrides with its own
+`intent_compaction_model_id` and `intent_compaction_timeout_ms` columns, on the
+same terms as the arbiter's below: the routing request waits for this call, so
+the agent whose callers send the longest prompts is the one that needs its own
+answer. When the agent has `auto_create_skills` on (the
 default), a request scoring below the agent's `skill_match_threshold` goes to
 the arbiter -- the `route-or-create` internal skill
 (`utils/super-agents/skill-arbiter.ts`), because embeddings cannot tell a new
