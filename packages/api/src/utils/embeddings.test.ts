@@ -12,6 +12,7 @@ import { ChatCompletionMessageRole } from '@shared/types/api/routes/shared/messa
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
+  agentById: vi.fn().mockResolvedValue(null),
   resolveEmbeddingModelConfig: vi.fn(),
 }));
 

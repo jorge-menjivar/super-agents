@@ -3,8 +3,10 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
-import type { AgentUpdateParams } from '@shared/types/data';
+import type { Agent, AgentUpdateParams } from '@shared/types/data';
 import {
+  INTERNAL_ROLES,
+  type InternalRole,
   MAX_INTERNAL_TIMEOUT_MS,
   MIN_INTERNAL_TIMEOUT_MS,
 } from '@shared/types/data/system-settings';
@@ -75,6 +77,48 @@ const selectChange =
     onChange(value === none ? null : value);
   };
 
+/** One role's overrides, as the form holds them: seconds, not milliseconds. */
+const RoleFormSchema = z.object({
+  model_id: z.string().nullable(),
+  timeout_seconds: z
+    .number({ error: 'Enter a whole number of seconds, or leave it empty' })
+    .int('Must be a whole number of seconds')
+    .min(MIN_TIMEOUT_SECONDS, `Must be at least ${MIN_TIMEOUT_SECONDS}`)
+    .max(MAX_TIMEOUT_SECONDS, `Must be at most ${MAX_TIMEOUT_SECONDS}`)
+    .nullable(),
+  reasoning_effort: z.enum(ReasoningEffort).nullable(),
+});
+
+/** What each role is called on the page, and what it is for. */
+const ROLE_LABELS: Record<InternalRole, { name: string; detail: string }> = {
+  system_prompt_reflection: {
+    name: 'System prompts',
+    detail: "Writes and rewrites this agent's skills' system prompts.",
+  },
+  evaluation_generation: {
+    name: 'Evaluations',
+    detail: "Writes the evaluations that score this agent's skills.",
+  },
+  embedding: {
+    name: 'Embedding',
+    detail:
+      "Embeds this agent's requests for routing. Changing it re-seeds its skills' centroids.",
+  },
+  judge: {
+    name: 'Judge',
+    detail: "Scores this agent's answers against its evaluations.",
+  },
+  skill_arbiter: {
+    name: 'Arbiter',
+    detail: 'Decides whether an unfamiliar request is a new kind of job.',
+  },
+  intent_compaction: {
+    name: 'Compaction',
+    detail:
+      'Summarises a system prompt too long to route by. The request waits for it.',
+  },
+};
+
 const EditAgentFormSchema = z
   .object({
     description: z
@@ -90,22 +134,17 @@ const EditAgentFormSchema = z
       .number({ error: 'Enter a whole number' })
       .int('Must be a whole number')
       .min(0, 'Cannot be negative'),
-    // Null means the system setting applies.
-    skill_arbiter_model_id: z.string().nullable(),
-    skill_arbiter_timeout_seconds: z
-      .number({ error: 'Enter a whole number of seconds, or leave it empty' })
-      .int('Must be a whole number of seconds')
-      .min(MIN_TIMEOUT_SECONDS, `Must be at least ${MIN_TIMEOUT_SECONDS}`)
-      .max(MAX_TIMEOUT_SECONDS, `Must be at most ${MAX_TIMEOUT_SECONDS}`)
+    // Null anywhere here means the system setting applies.
+    roles: z.object(
+      Object.fromEntries(
+        INTERNAL_ROLES.map((role) => [role, RoleFormSchema]),
+      ) as Record<InternalRole, typeof RoleFormSchema>,
+    ),
+    judge_max_tokens: z
+      .number({ error: 'Enter a whole number of tokens, or leave it empty' })
+      .int('Must be a whole number')
+      .positive('Must be more than zero')
       .nullable(),
-    intent_compaction_model_id: z.string().nullable(),
-    intent_compaction_timeout_seconds: z
-      .number({ error: 'Enter a whole number of seconds, or leave it empty' })
-      .int('Must be a whole number of seconds')
-      .min(MIN_TIMEOUT_SECONDS, `Must be at least ${MIN_TIMEOUT_SECONDS}`)
-      .max(MAX_TIMEOUT_SECONDS, `Must be at most ${MAX_TIMEOUT_SECONDS}`)
-      .nullable(),
-    intent_compaction_reasoning_effort: z.enum(ReasoningEffort).nullable(),
     // Null means responses go unreviewed.
     reviewer_agent_id: z.string().nullable(),
     review_fail_closed: z.boolean(),
@@ -114,6 +153,63 @@ const EditAgentFormSchema = z
   .strict();
 
 type EditAgentFormData = z.infer<typeof EditAgentFormSchema>;
+
+/** Every role at "system default", before an agent has been loaded. */
+const blankRoles = (): EditAgentFormData['roles'] =>
+  Object.fromEntries(
+    INTERNAL_ROLES.map((role) => [
+      role,
+      { model_id: null, timeout_seconds: null, reasoning_effort: null },
+    ]),
+  ) as EditAgentFormData['roles'];
+
+/** The agent's overrides as the form holds them. */
+const rolesOf = (agent: Agent): EditAgentFormData['roles'] =>
+  Object.fromEntries(
+    INTERNAL_ROLES.map((role) => {
+      const options = agent.options[role];
+      return [
+        role,
+        {
+          model_id: agent[`${role}_model_id`],
+          timeout_seconds:
+            options.timeout_ms === null ? null : options.timeout_ms / 1000,
+          reasoning_effort:
+            'reasoning_effort' in options ? options.reasoning_effort : null,
+        },
+      ];
+    }),
+  ) as EditAgentFormData['roles'];
+
+/** The form's roles as the API takes them: model columns, and one patch. */
+function roleUpdates(data: EditAgentFormData): AgentUpdateParams {
+  const models = Object.fromEntries(
+    INTERNAL_ROLES.map((role) => [
+      `${role}_model_id`,
+      data.roles[role].model_id,
+    ]),
+  );
+  const options = Object.fromEntries(
+    INTERNAL_ROLES.map((role) => {
+      const { timeout_seconds, reasoning_effort } = data.roles[role];
+      const timeout_ms =
+        timeout_seconds === null ? null : timeout_seconds * 1000;
+      return [
+        role,
+        role === 'embedding'
+          ? { timeout_ms }
+          : role === 'judge'
+            ? {
+                timeout_ms,
+                reasoning_effort,
+                max_tokens: data.judge_max_tokens,
+              }
+            : { timeout_ms, reasoning_effort },
+      ];
+    }),
+  );
+  return { ...models, options } as AgentUpdateParams;
+}
 
 export function EditAgentView(): React.ReactElement {
   const { agents, selectedAgent, updateAgent, isUpdating } = useAgents();
@@ -128,11 +224,13 @@ export function EditAgentView(): React.ReactElement {
     setQueryParams({});
   }, [setQueryParams]);
 
-  const textModelOptions = React.useMemo(
-    () =>
+  // The database keeps an embedding model out of a text slot, so the form
+  // offers each slot only what it will take.
+  const modelOptionsOfType = React.useCallback(
+    (type: 'text' | 'embed') =>
       sortModels(
         models
-          .filter((model) => model.model_type === 'text')
+          .filter((model) => model.model_type === type)
           .map((model) => {
             const provider = aiProviderConfigs.find(
               (config) => config.id === model.ai_provider_id,
@@ -147,6 +245,14 @@ export function EditAgentView(): React.ReactElement {
           }),
       ),
     [models, aiProviderConfigs],
+  );
+  const textModelOptions = React.useMemo(
+    () => modelOptionsOfType('text'),
+    [modelOptionsOfType],
+  );
+  const embeddingModelOptions = React.useMemo(
+    () => modelOptionsOfType('embed'),
+    [modelOptionsOfType],
   );
 
   // Any other agent can review this one; the internal agent serves the
@@ -167,11 +273,8 @@ export function EditAgentView(): React.ReactElement {
       auto_create_skills: true,
       skill_match_threshold: 0.8,
       max_auto_created_skills: 10,
-      skill_arbiter_model_id: null,
-      skill_arbiter_timeout_seconds: null,
-      intent_compaction_model_id: null,
-      intent_compaction_timeout_seconds: null,
-      intent_compaction_reasoning_effort: null,
+      roles: blankRoles(),
+      judge_max_tokens: null,
       reviewer_agent_id: null,
       review_fail_closed: false,
       review_expose_reason: false,
@@ -186,18 +289,8 @@ export function EditAgentView(): React.ReactElement {
         auto_create_skills: selectedAgent.auto_create_skills,
         skill_match_threshold: selectedAgent.skill_match_threshold,
         max_auto_created_skills: selectedAgent.max_auto_created_skills,
-        skill_arbiter_model_id: selectedAgent.skill_arbiter_model_id,
-        skill_arbiter_timeout_seconds:
-          selectedAgent.skill_arbiter_timeout_ms === null
-            ? null
-            : selectedAgent.skill_arbiter_timeout_ms / 1000,
-        intent_compaction_model_id: selectedAgent.intent_compaction_model_id,
-        intent_compaction_timeout_seconds:
-          selectedAgent.intent_compaction_timeout_ms === null
-            ? null
-            : selectedAgent.intent_compaction_timeout_ms / 1000,
-        intent_compaction_reasoning_effort:
-          selectedAgent.intent_compaction_reasoning_effort,
+        roles: rolesOf(selectedAgent),
+        judge_max_tokens: selectedAgent.options.judge.max_tokens,
         reviewer_agent_id: selectedAgent.reviewer_agent_id,
         review_fail_closed: selectedAgent.review_fail_closed,
         review_expose_reason: selectedAgent.review_expose_reason,
@@ -217,18 +310,7 @@ export function EditAgentView(): React.ReactElement {
         auto_create_skills: data.auto_create_skills,
         skill_match_threshold: data.skill_match_threshold,
         max_auto_created_skills: data.max_auto_created_skills,
-        skill_arbiter_model_id: data.skill_arbiter_model_id,
-        skill_arbiter_timeout_ms:
-          data.skill_arbiter_timeout_seconds === null
-            ? null
-            : data.skill_arbiter_timeout_seconds * 1000,
-        intent_compaction_model_id: data.intent_compaction_model_id,
-        intent_compaction_timeout_ms:
-          data.intent_compaction_timeout_seconds === null
-            ? null
-            : data.intent_compaction_timeout_seconds * 1000,
-        intent_compaction_reasoning_effort:
-          data.intent_compaction_reasoning_effort,
+        ...roleUpdates(data),
         reviewer_agent_id: data.reviewer_agent_id,
         review_fail_closed: data.review_fail_closed,
         review_expose_reason: data.review_expose_reason,
@@ -448,205 +530,188 @@ export function EditAgentView(): React.ReactElement {
                       )}
                     />
                   </div>
+                </div>
 
-                  {/* The arbiter: the model asked when no skill matches closely */}
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <FormField
-                      control={form.control}
-                      name="skill_arbiter_model_id"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Arbiter model</FormLabel>
-                          <FormDescription>
-                            Decides whether an unfamiliar request is a new kind
-                            of job. Empty uses the system setting.
-                          </FormDescription>
-                          <Select
-                            value={field.value ?? SYSTEM_DEFAULT}
-                            onValueChange={selectChange(
-                              SYSTEM_DEFAULT,
-                              field.onChange,
-                            )}
-                            disabled={isUpdating}
-                          >
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value={SYSTEM_DEFAULT}>
-                                System default
-                              </SelectItem>
-                              {textModelOptions.map((model) => (
-                                <SelectItem key={model.id} value={model.id}>
-                                  {model.modelName}{' '}
-                                  <span className="text-muted-foreground">
-                                    ({model.providerName})
-                                  </span>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="skill_arbiter_timeout_seconds"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Arbiter timeout (seconds)</FormLabel>
-                          <FormDescription>
-                            Per attempt, retried once. Empty uses the system
-                            setting.
-                          </FormDescription>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              step="1"
-                              min={MIN_TIMEOUT_SECONDS}
-                              max={MAX_TIMEOUT_SECONDS}
-                              placeholder="System default"
-                              name={field.name}
-                              value={field.value ?? ''}
-                              onBlur={field.onBlur}
-                              onChange={(e) =>
-                                field.onChange(
-                                  e.target.value === ''
-                                    ? null
-                                    : e.target.valueAsNumber,
-                                )
-                              }
-                              disabled={isUpdating}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                {/* The models asked on this agent's behalf, one row each */}
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div>
+                    <h3 className="text-base font-medium">Models</h3>
+                    <p className="text-sm text-muted-foreground">
+                      The gateway asks a model for several things on this
+                      agent's behalf. Each can be this agent's own, with its own
+                      patience and its own appetite for thinking. Empty anywhere
+                      means the system setting applies.
+                    </p>
                   </div>
-
-                  {/* Compaction: the model that shortens an over-long system
-                      prompt so the request can be routed by it. Routing waits
-                      for this, so the agent whose callers send the longest
-                      prompts is the one that may want its own answer. */}
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <FormField
-                      control={form.control}
-                      name="intent_compaction_model_id"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Compaction model</FormLabel>
-                          <FormDescription>
-                            Summarises a system prompt too long to route by.
-                            Empty uses the system setting.
-                          </FormDescription>
-                          <Select
-                            value={field.value ?? SYSTEM_DEFAULT}
-                            onValueChange={selectChange(
-                              SYSTEM_DEFAULT,
-                              field.onChange,
-                            )}
-                            disabled={isUpdating}
-                          >
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value={SYSTEM_DEFAULT}>
-                                System default
-                              </SelectItem>
-                              {textModelOptions.map((model) => (
-                                <SelectItem key={model.id} value={model.id}>
-                                  {model.modelName}{' '}
-                                  <span className="text-muted-foreground">
-                                    ({model.providerName})
-                                  </span>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="intent_compaction_timeout_seconds"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Compaction timeout (seconds)</FormLabel>
-                          <FormDescription>
-                            The request waits for this, then routes on the head
-                            of the prompt. Empty uses the system setting.
-                          </FormDescription>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              step="1"
-                              min={MIN_TIMEOUT_SECONDS}
-                              max={MAX_TIMEOUT_SECONDS}
-                              placeholder="System default"
-                              name={field.name}
-                              value={field.value ?? ''}
-                              onBlur={field.onBlur}
-                              onChange={(e) =>
-                                field.onChange(
-                                  e.target.value === ''
-                                    ? null
-                                    : e.target.valueAsNumber,
-                                )
-                              }
+                  {INTERNAL_ROLES.map((role) => (
+                    <div
+                      key={role}
+                      className="grid gap-4 border-t pt-4 first:border-t-0 first:pt-0 sm:grid-cols-[1fr_1fr_10rem]"
+                    >
+                      <FormField
+                        control={form.control}
+                        name={`roles.${role}.model_id`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              {ROLE_LABELS[role].name} model
+                            </FormLabel>
+                            <FormDescription>
+                              {ROLE_LABELS[role].detail}
+                            </FormDescription>
+                            <Select
+                              value={field.value ?? SYSTEM_DEFAULT}
+                              onValueChange={selectChange(
+                                SYSTEM_DEFAULT,
+                                field.onChange,
+                              )}
                               disabled={isUpdating}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="intent_compaction_reasoning_effort"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Compaction reasoning</FormLabel>
-                          <FormDescription>
-                            Summarising is transcription, not deliberation.
-                            Empty uses the system setting.
-                          </FormDescription>
-                          <Select
-                            value={field.value ?? SYSTEM_DEFAULT}
-                            onValueChange={selectChange(
-                              SYSTEM_DEFAULT,
-                              field.onChange,
-                            )}
-                            disabled={isUpdating}
-                          >
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value={SYSTEM_DEFAULT}>
-                                System default
-                              </SelectItem>
-                              {Object.values(ReasoningEffort).map((effort) => (
-                                <SelectItem key={effort} value={effort}>
-                                  {effort}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value={SYSTEM_DEFAULT}>
+                                  System default
                                 </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
+                                {(role === 'embedding'
+                                  ? embeddingModelOptions
+                                  : textModelOptions
+                                ).map((model) => (
+                                  <SelectItem key={model.id} value={model.id}>
+                                    {model.modelName}{' '}
+                                    <span className="text-muted-foreground">
+                                      ({model.providerName})
+                                    </span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`roles.${role}.timeout_seconds`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              {ROLE_LABELS[role].name} timeout (seconds)
+                            </FormLabel>
+                            <FormDescription>
+                              Per attempt, retried once.
+                            </FormDescription>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="1"
+                                min={MIN_TIMEOUT_SECONDS}
+                                max={MAX_TIMEOUT_SECONDS}
+                                placeholder="System default"
+                                name={field.name}
+                                value={field.value ?? ''}
+                                onBlur={field.onBlur}
+                                onChange={(e) =>
+                                  field.onChange(
+                                    e.target.value === ''
+                                      ? null
+                                      : e.target.valueAsNumber,
+                                  )
+                                }
+                                disabled={isUpdating}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      {role === 'embedding' ? (
+                        // One forward pass: nothing to think about.
+                        <div />
+                      ) : (
+                        <FormField
+                          control={form.control}
+                          name={`roles.${role}.reasoning_effort`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                {ROLE_LABELS[role].name} reasoning
+                              </FormLabel>
+                              <FormDescription>
+                                How hard it thinks.
+                              </FormDescription>
+                              <Select
+                                value={field.value ?? SYSTEM_DEFAULT}
+                                onValueChange={selectChange(
+                                  SYSTEM_DEFAULT,
+                                  field.onChange,
+                                )}
+                                disabled={isUpdating}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value={SYSTEM_DEFAULT}>
+                                    System default
+                                  </SelectItem>
+                                  {Object.values(ReasoningEffort).map(
+                                    (effort) => (
+                                      <SelectItem key={effort} value={effort}>
+                                        {effort}
+                                      </SelectItem>
+                                    ),
+                                  )}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
                       )}
-                    />
-                  </div>
+                      {role === 'judge' && (
+                        <FormField
+                          control={form.control}
+                          name="judge_max_tokens"
+                          render={({ field }) => (
+                            <FormItem className="sm:col-span-3">
+                              <FormLabel>Judge token budget</FormLabel>
+                              <FormDescription>
+                                Completion tokens one judging attempt may spend.
+                                A thinking model spends these before it writes a
+                                word.
+                              </FormDescription>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="1"
+                                  min={1}
+                                  placeholder="System default"
+                                  name={field.name}
+                                  value={field.value ?? ''}
+                                  onBlur={field.onBlur}
+                                  onChange={(e) =>
+                                    field.onChange(
+                                      e.target.value === ''
+                                        ? null
+                                        : e.target.valueAsNumber,
+                                    )
+                                  }
+                                  disabled={isUpdating}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+                    </div>
+                  ))}
                 </div>
 
                 {/* Review: another agent sees every response before the client */}

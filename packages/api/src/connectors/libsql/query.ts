@@ -14,7 +14,7 @@ import { normaliseRow } from './rows';
 
 /** Columns stored as JSON text. Everything Postgres declared `JSONB`, plus the array columns. */
 const JSON_COLUMNS: Record<string, string[]> = {
-  agents: ['metadata'],
+  agents: ['metadata', 'options'],
   skills: ['metadata', 'allowed_template_variables'],
   skill_optimization_clusters: ['centroid'],
   skill_routing: ['centroid', 'conversation_centroid'],

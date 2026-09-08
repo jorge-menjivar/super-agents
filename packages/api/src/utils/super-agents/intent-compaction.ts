@@ -5,14 +5,9 @@ import {
 } from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
-import {
-  resolveModelById,
-  resolveSystemSettingsModel,
-} from '@api/utils/evaluation-model-resolver';
+import { resolveRoleModel } from '@api/utils/evaluation-model-resolver';
 import { warn } from '@shared/console-logging';
-import type { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import type { Agent } from '@shared/types/data/agent';
-import type { SystemSettings } from '@shared/types/data/system-settings';
 import { SYSTEM_PROMPT_BUDGET } from '@shared/utils/request-intent';
 import OpenAI from 'openai';
 
@@ -31,75 +26,29 @@ const COMPACTOR_SYSTEM_PROMPT = `You compact system prompts for an AI gateway th
 const cache = new Map<string, Promise<string>>();
 const MAX_ENTRIES = 64;
 
-/**
- * How long one compaction attempt may take for this agent.
- *
- * Routing waits for compaction, so this is time the caller spends before the
- * provider is asked anything -- and an agent whose callers send system
- * prompts of tens of kilobytes is exactly the one whose summary takes
- * longest. That is why the agent may answer for itself.
- */
-export function intentCompactionTimeoutMs(
-  agent: Agent,
-  settings: SystemSettings,
-): number {
-  return (
-    agent.intent_compaction_timeout_ms ??
-    settings.options.intent_compaction.timeout_ms
-  );
-}
-
-/**
- * How hard the compaction model may think, the agent's answer before the
- * system's.
- *
- * A model resolved by id carries no settings of its own, so this is resolved
- * beside the model rather than with it -- and it is a setting the agent may
- * answer because the two are chosen together: an agent that named a fast
- * model to stop waiting on routing wants that model's effort, not the one
- * that suits whatever the system compacts with.
- */
-export function intentCompactionReasoningEffort(
-  agent: Agent,
-  settings: SystemSettings,
-): ReasoningEffort | null {
-  return (
-    agent.intent_compaction_reasoning_effort ??
-    settings.options.intent_compaction.reasoning_effort
-  );
-}
-
 async function compactOnce(
   c: AppContext,
   connector: UserDataStorageConnector,
   agent: Agent,
   prompt: string,
 ): Promise<string> {
-  const settings = await connector.getSystemSettings(c);
-  const modelConfig = agent.intent_compaction_model_id
-    ? await resolveModelById(
-        c,
-        agent.intent_compaction_model_id,
-        connector,
-        'MODEL_RESOLVER_INTENT_COMPACTION',
-      )
-    : await resolveSystemSettingsModel(
-        c,
-        'intent_compaction',
-        connector,
-        settings,
-      );
+  // The agent's answers where it has them, the system's where it does not.
+  const modelConfig = await resolveRoleModel(
+    c,
+    'intent_compaction',
+    connector,
+    agent,
+  );
   if (!modelConfig) {
     throw new Error('No intent compaction model configured');
   }
-  const reasoningEffort = intentCompactionReasoningEffort(agent, settings);
 
   const client = new OpenAI({
     apiKey: getInternalApiKey(c),
     baseURL: `${getApiUrl(c)}/v1`,
     // One attempt; the client retries once, so the whole call takes at most
     // twice this.
-    timeout: intentCompactionTimeoutMs(agent, settings),
+    timeout: modelConfig.timeoutMs,
     maxRetries: 1,
   });
   const saConfig = {
@@ -125,7 +74,9 @@ async function compactOnce(
       ...SA_SKILL_REQUEST_PARAMS,
       // Only when the agent or the role names one: a model that takes no
       // such parameter is left at its own default.
-      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      ...(modelConfig.reasoningEffort
+        ? { reasoning_effort: modelConfig.reasoningEffort }
+        : {}),
       model: modelConfig.model,
       // Deterministic, so the summary -- and with it the identity embedding
       // -- stays put across restarts instead of drifting per process.

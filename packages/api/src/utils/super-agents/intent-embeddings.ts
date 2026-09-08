@@ -60,6 +60,7 @@ export function embedIntent(
   connector: UserDataStorageConnector,
   intent: string,
   modelId: string,
+  agent: Agent | null = null,
 ): Promise<CachedIntent> {
   const key = keyOf(modelId, intent);
   const hit = cache.get(key);
@@ -69,7 +70,7 @@ export function embedIntent(
     return hit;
   }
 
-  const pending = embedText(c, connector, intent).then(
+  const pending = embedText(c, connector, intent, agent).then(
     ({ embedding, modelId: usedModelId }): CachedIntent => {
       if (usedModelId !== modelId) {
         // Settings changed under the request; its centroids are for another
@@ -124,9 +125,9 @@ export async function embedRequestIntent(
   const identity = identityText(intent, compacted);
 
   const [identityEmbedding, conversationEmbedding] = await Promise.all([
-    identity ? embedIntent(c, connector, identity, modelId) : null,
+    identity ? embedIntent(c, connector, identity, modelId, agent) : null,
     intent.conversation
-      ? embedIntent(c, connector, intent.conversation, modelId)
+      ? embedIntent(c, connector, intent.conversation, modelId, agent)
       : null,
   ]);
   return {

@@ -36,6 +36,7 @@ vi.mock('@api/constants', async (importOriginal) => {
 
 // A keyless provider, so the judge call is made rather than skipped
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
+  agentOfSkill: vi.fn().mockResolvedValue(null),
   resolveEvaluationModelConfig: vi.fn().mockResolvedValue({
     model: 'judge-model',
     provider: 'ollama',

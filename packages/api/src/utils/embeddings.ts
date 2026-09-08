@@ -12,6 +12,7 @@ import {
 } from '@shared/types/api/request';
 import type { ChatCompletionMessage } from '@shared/types/api/routes/shared/messages';
 import { ChatCompletionMessageRole } from '@shared/types/api/routes/shared/messages';
+import type { Agent } from '@shared/types/data';
 import { nanoid } from 'nanoid';
 
 export class RequestEmbeddingError extends Error {
@@ -210,12 +211,12 @@ export function formatMessagesForEmbedding(
 
 export interface TextEmbedding {
   embedding: number[];
-  /** The model in system settings that produced it. */
+  /** The model that produced it, the agent's or the system's. */
   modelId: string;
 }
 
 /**
- * Embeds one text with the embedding model configured in system settings.
+ * Embeds one text with the embedding model, the agent's or the system's.
  *
  * Goes through this server's own `/v1/embeddings` as the internal `embedding`
  * skill, like every other internal call.
@@ -224,9 +225,13 @@ export async function embedText(
   c: AppContext,
   connector: UserDataStorageConnector,
   text: string,
+  agent: Agent | null = null,
 ): Promise<TextEmbedding> {
-  // Resolve embedding model from system settings (includes dimensions)
-  const embeddingConfig = await resolveEmbeddingModelConfig(c, connector);
+  const embeddingConfig = await resolveEmbeddingModelConfig(
+    c,
+    connector,
+    agent,
+  );
 
   if (!embeddingConfig) {
     warn('[EMBEDDING] No embedding model configured in system settings');

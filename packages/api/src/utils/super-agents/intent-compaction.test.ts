@@ -1,9 +1,6 @@
 import { createMockContext } from '@api/test-utils/mock-context';
 import type { UserDataStorageConnector } from '@api/types/connector';
-import {
-  resolveModelById,
-  resolveSystemSettingsModel,
-} from '@api/utils/evaluation-model-resolver';
+import { resolveRoleModel } from '@api/utils/evaluation-model-resolver';
 import {
   clearCompactedPrompts,
   compactSystemPrompt,
@@ -11,6 +8,7 @@ import {
 import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { AIProvider } from '@shared/types/constants';
 import type { Agent, SystemSettings } from '@shared/types/data';
+import { AgentOptions } from '@shared/types/data/agent';
 import { SystemSettingsOptions } from '@shared/types/data/system-settings';
 import { SYSTEM_PROMPT_BUDGET } from '@shared/utils/request-intent';
 import OpenAI from 'openai';
@@ -38,8 +36,7 @@ vi.mock('@api/constants', async (importOriginal) => ({
 }));
 
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
-  resolveModelById: vi.fn(),
-  resolveSystemSettingsModel: vi.fn(),
+  resolveRoleModel: vi.fn(),
 }));
 
 const settings = {
@@ -56,7 +53,7 @@ const agent = {
   id: 'agent-1',
   name: 'helper',
   intent_compaction_model_id: null,
-  intent_compaction_timeout_ms: null,
+  options: AgentOptions.parse({}),
 } as Agent;
 const longPrompt = `You are a coding CLI. ${'x'.repeat(9000)}`;
 
@@ -64,7 +61,7 @@ describe('compactSystemPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearCompactedPrompts();
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue({
+    vi.mocked(resolveRoleModel).mockResolvedValue({
       model: 'reflect-model',
       provider: AIProvider.OPENAI,
       apiKey: 'key',
@@ -90,16 +87,14 @@ describe('compactSystemPrompt', () => {
     );
   });
 
-  it('sends the compaction reasoning effort the settings chose', async () => {
-    vi.mocked(connector.getSystemSettings).mockResolvedValueOnce({
-      ...settings,
-      options: SystemSettingsOptions.parse({
-        intent_compaction: {
-          timeout_ms: 90_000,
-          reasoning_effort: ReasoningEffort.NONE,
-        },
-      }),
-    });
+  it('sends the reasoning effort the resolver settled on', async () => {
+    vi.mocked(resolveRoleModel).mockResolvedValue({
+      model: 'reflect-model',
+      provider: AIProvider.OPENAI,
+      apiKey: 'key',
+      timeoutMs: 90_000,
+      reasoningEffort: ReasoningEffort.NONE,
+    } as never);
 
     await compactSystemPrompt(
       createMockContext(),
@@ -115,7 +110,7 @@ describe('compactSystemPrompt', () => {
     });
   });
 
-  it('sends none when the role leaves the model to its default', async () => {
+  it('sends none when nothing named an effort', async () => {
     await compactSystemPrompt(
       createMockContext(),
       connector,
@@ -126,7 +121,7 @@ describe('compactSystemPrompt', () => {
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('reasoning_effort');
   });
 
-  it('waits as long as the configured compaction timeout allows', async () => {
+  it('waits as long as the resolved timeout allows, and asks for this agent', async () => {
     await compactSystemPrompt(
       createMockContext(),
       connector,
@@ -136,15 +131,14 @@ describe('compactSystemPrompt', () => {
 
     // The prompts that need compacting are long, so the wait is a setting
     // rather than a constant -- a slow model would otherwise never finish.
-    // It arrives with the model, from `options.intent_compaction.timeout_ms`.
     expect(vi.mocked(OpenAI).mock.calls[0][0]).toMatchObject({
       timeout: 90_000,
     });
-    expect(vi.mocked(resolveSystemSettingsModel)).toHaveBeenCalledWith(
+    expect(vi.mocked(resolveRoleModel)).toHaveBeenCalledWith(
       expect.anything(),
       'intent_compaction',
       connector,
-      settings,
+      agent,
     );
   });
 
@@ -162,7 +156,7 @@ describe('compactSystemPrompt', () => {
   });
 
   it('falls back when no model is configured', async () => {
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue(null);
+    vi.mocked(resolveRoleModel).mockResolvedValue(null);
 
     const fallback = await compactSystemPrompt(
       createMockContext(),
@@ -173,57 +167,6 @@ describe('compactSystemPrompt', () => {
 
     expect(fallback).toBe(longPrompt.slice(0, SYSTEM_PROMPT_BUDGET));
     expect(mockCreate).not.toHaveBeenCalled();
-  });
-
-  it('asks the model the agent named, not the system one', async () => {
-    vi.mocked(resolveModelById).mockResolvedValue({
-      model: 'fast-model',
-      provider: AIProvider.OPENAI,
-      apiKey: 'key',
-    } as never);
-
-    await compactSystemPrompt(
-      createMockContext(),
-      connector,
-      { ...agent, intent_compaction_model_id: 'fast-model-id' },
-      longPrompt,
-    );
-
-    // The agent whose callers send the longest prompts is the one that needs
-    // a model of its own; the system setting serves everyone else.
-    expect(vi.mocked(resolveModelById).mock.calls[0][1]).toBe('fast-model-id');
-    expect(vi.mocked(resolveSystemSettingsModel)).not.toHaveBeenCalled();
-    expect(JSON.stringify(mockCreate.mock.calls[0])).toContain('fast-model');
-  });
-
-  it('waits only as long as the agent allows, when it says', async () => {
-    await compactSystemPrompt(
-      createMockContext(),
-      connector,
-      { ...agent, intent_compaction_timeout_ms: 15_000 },
-      longPrompt,
-    );
-
-    // Routing waits for this, so an agent that would rather route on the
-    // head of the prompt than wait a minute and a half may say so.
-    expect(vi.mocked(OpenAI).mock.calls[0][0]).toMatchObject({
-      timeout: 15_000,
-    });
-  });
-
-  it('thinks as hard as the agent says, whoever chose the model', async () => {
-    await compactSystemPrompt(
-      createMockContext(),
-      connector,
-      { ...agent, intent_compaction_reasoning_effort: ReasoningEffort.NONE },
-      longPrompt,
-    );
-
-    // The effort belongs with the model, and an agent that named a fast one
-    // to stop waiting is answering for both.
-    expect(mockCreate.mock.calls[0][0]).toMatchObject({
-      reasoning_effort: 'none',
-    });
   });
 
   it('bounds even a rambling summary to the embedding budget', async () => {

@@ -5,7 +5,10 @@ import {
 } from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
-import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
+import {
+  agentById,
+  resolveRoleModel,
+} from '@api/utils/evaluation-model-resolver';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import { info, warn } from '@shared/console-logging';
 import type { Agent, Skill } from '@shared/types/data';
@@ -99,7 +102,7 @@ export function awaitingRealNaming(
 }
 
 function describerUserMessage(
-  agent: Pick<Agent, 'description'>,
+  agent: Pick<Agent, 'description'> | null,
   intent: string,
   takenNames: string[],
 ): string {
@@ -109,7 +112,7 @@ function describerUserMessage(
       : '';
   return `The agent is described as:
 
-${agent.description}
+${agent?.description ?? 'an AI gateway agent'}
 
 A client sent it a request with these instructions and tools:
 
@@ -128,17 +131,18 @@ ${intent}${taken}`;
 export async function describeSkillForRequest(
   c: AppContext,
   connector: UserDataStorageConnector,
-  agent: Pick<Agent, 'description'>,
+  agent: Agent | null,
   intent: string,
   takenNames: string[],
 ): Promise<SkillNaming> {
   const fallback = heuristicSkillNaming(intent);
 
   try {
-    const modelConfig = await resolveSystemSettingsModel(
+    const modelConfig = await resolveRoleModel(
       c,
       'system_prompt_reflection',
       connector,
+      agent,
     );
     if (!modelConfig) {
       warn(
@@ -271,10 +275,13 @@ export async function repairSkillNaming(
       .map((sibling) => sibling.name)
       .filter((name) => name !== skill.name);
 
+    const agent = await agentById(c, connector, skill.agent_id);
     const naming = await describeSkillForRequest(
       c,
       connector,
-      { description: agentDescription },
+      // The description is the caller's; the row carries the models the
+      // naming call is made with, where the agent is still there.
+      agent && { ...agent, description: agentDescription },
       intent,
       takenNames,
     );

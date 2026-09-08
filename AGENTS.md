@@ -216,15 +216,8 @@ an agent without skills, no arbiter asked -- becomes a new skill through
 (`agent_models`), and seeded with the caller's system prompt
 (`skills.seed_system_prompt`), which `handleGenerateArms` uses verbatim so the
 skill starts as a pass-through. `max_auto_created_skills` caps this per agent.
-The arbiter's model and per-attempt timeout are system settings
-(`skill_arbiter_model_id`, the reflection model when unset, and
-`options.skill_arbiter.timeout_ms`), which an agent overrides with its own
-`skill_arbiter_model_id` and `skill_arbiter_timeout_ms` columns; an agent that
-names its own model still arbitrates under the system's
-`options.skill_arbiter.reasoning_effort`, since it overrides which model
-answers rather than how hard it may think. The arbiter is asked under the
-skill-creation lease, so the lease stretches by twice the timeout to cover
-it.
+The arbiter is asked under the skill-creation lease, so the lease stretches
+by twice its timeout (`skillArbiterTimeoutMs`) to cover it.
 Creating happens under the agent's `skill_creation_leases` row
 (`withSkillCreationLease`), after a second look at the skills, so concurrent
 first requests produce one skill rather than one each. Intent embeddings are
@@ -651,6 +644,50 @@ The system uses special auto-generated skills in the `super-agents` agent (defin
 - `extract-task-and-outcome`: Task/outcome extraction
 - `embedding`: Text embedding generation
 - `describe-skill`: Name and description for a skill the gateway creates
+
+### Which model answers for an agent
+
+Every internal call the gateway makes -- routing a request, arbitrating a
+skill, compacting a prompt, writing a system prompt, generating evaluations,
+judging an answer -- is made on some agent's behalf, and what suits the work
+is a property of the work rather than of the deployment. So an agent answers
+for each of the six roles in `INTERNAL_ROLES`, and the system settings answer
+for whatever it leaves alone.
+
+The models are columns on `agents` -- `judge_model_id`,
+`embedding_model_id`, `system_prompt_reflection_model_id`,
+`evaluation_generation_model_id`, `skill_arbiter_model_id`,
+`intent_compaction_model_id` -- for the reason the system settings' are: the
+database does real work for them, keeping a named model from being deleted
+out from under an agent (`ON DELETE SET NULL`, where system settings
+`RESTRICT`) and keeping an embedding model out of a text slot. Everything
+else -- each role's timeout, its reasoning effort, and the judge's token
+budget -- means nothing to the database, so it lives in one `options` JSON
+column typed by `AgentOptions` in `@shared/types/data/agent`. **Null there
+means inherit**, not "send nothing": an agent with no opinion reads exactly
+as the settings say and keeps following them as they change, and a field
+added later reads as inherit on every row written before it. A PATCH sends
+the roles it changes and the connectors merge them over what is stored
+(`mergeAgentOptions`), so changing one timeout cannot clear an effort beside
+it.
+
+`resolveRoleModel` (`utils/evaluation-model-resolver.ts`) puts the three
+answers together for a call, and every caller goes through it;
+`resolveSystemSettingsModel` is the same thing with no agent, which is what
+the internal skills the gateway runs for itself use. The model and the
+timeout are resolved separately, so an agent can be impatient with a model it
+never chose. Callers that hold a skill rather than an agent -- judging,
+evaluation generation, cluster centroids -- get there through `agentOfSkill`
+or `agentById`; a lookup that fails leaves the call on the system settings
+rather than failing it.
+
+Two consequences worth knowing. An agent's own **embedding** model re-seeds
+its skills' centroids: `skill_routing` records which model computed each one,
+and a row under another model is re-seeded from the skill's description
+rather than compared across the two -- the same thing that already happens
+when the system setting changes. And an evaluation's own `params` still win
+over the agent's judge settings, as the more specific answer
+(`connectors/evaluations/judge-overrides.ts`).
 
 ### Latency
 

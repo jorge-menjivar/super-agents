@@ -6,6 +6,7 @@ import { warn } from '@shared/console-logging';
 import type { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import type { AIProvider } from '@shared/types/constants';
 import type {
+  Agent,
   Model,
   SkillOptimizationEvaluation,
   SystemSettings,
@@ -123,57 +124,136 @@ export async function resolveModelById(
  * @param settings - The system settings, when the caller already read them
  * @returns The model configuration or null if not configured
  */
-export async function resolveSystemSettingsModel(
+export function resolveSystemSettingsModel(
   c: AppContext,
   modelType: SystemSettingsModelType,
   connector: UserDataStorageConnector,
   settings?: SystemSettings,
 ): Promise<ResolvedModelConfig | null> {
-  const logPrefix = `MODEL_RESOLVER_${modelType.toUpperCase()}`;
+  return resolveRoleModel(c, modelType, connector, null, settings);
+}
+
+/**
+ * The agent a call is being made for, loaded from the skill it is about.
+ *
+ * Every internal call belongs to some agent's work, but most of the callers
+ * hold a skill rather than the agent -- so this is where the one becomes the
+ * other. Null when the skill or its agent has gone, which leaves the call on
+ * the system settings rather than failing it.
+ */
+export async function agentOfSkill(
+  c: AppContext,
+  connector: UserDataStorageConnector,
+  skillId: string,
+): Promise<Agent | null> {
+  const skills = await lookUp(() => connector.getSkills(c, { id: skillId }));
+  const agentId = skills[0]?.agent_id;
+  return agentId ? await agentById(c, connector, agentId) : null;
+}
+
+/** The agent, or null where it has been deleted under a running call. */
+export async function agentById(
+  c: AppContext,
+  connector: UserDataStorageConnector,
+  agentId: string,
+): Promise<Agent | null> {
+  const agents = await lookUp(() => connector.getAgents(c, { id: agentId }));
+  return agents[0] ?? null;
+}
+
+/**
+ * A read whose failure means "no agent" rather than a failed call.
+ *
+ * Every one of these is asking who to resolve a model for, and the answer to
+ * not knowing is the system settings -- which is exactly what a null agent
+ * gives. A judging run is not worth failing over a lookup.
+ */
+async function lookUp<T>(read: () => Promise<T[]> | T[]): Promise<T[]> {
+  try {
+    return (await read()) ?? [];
+  } catch (e) {
+    warn('[MODEL_RESOLVER] Could not read who this call is for:', e);
+    return [];
+  }
+}
+
+/** The model id an agent names for a role, where it names one. */
+export const agentModelId = (
+  agent: Agent | null,
+  role: SystemSettingsModelType,
+): string | null => (agent ? agent[`${role}_model_id`] : null);
+
+/**
+ * The model for one internal role, as this agent has it.
+ *
+ * Every one of these calls is made on some agent's behalf -- routing its
+ * requests, judging its answers, writing its skills' prompts -- and what
+ * suits the work is a property of the work, not of the deployment. So the
+ * agent answers first for each of the three things a call needs: which model,
+ * how long it may take, and how hard it may think. Anything it leaves null
+ * falls through to the system setting, which is where a deployment with no
+ * opinions stays.
+ *
+ * `agent` is null where the caller genuinely has none -- the internal skills
+ * the gateway runs for itself -- and then this is the system's answer alone.
+ */
+export async function resolveRoleModel(
+  c: AppContext,
+  role: SystemSettingsModelType,
+  connector: UserDataStorageConnector,
+  agent: Agent | null,
+  settings?: SystemSettings,
+): Promise<ResolvedModelConfig | null> {
+  const logPrefix = `MODEL_RESOLVER_${role.toUpperCase()}`;
   const systemSettings = settings ?? (await connector.getSystemSettings(c));
 
-  let modelId: string | null = null;
-  let configured = `${modelType}_model_id`;
-  // Each model setting has its bounds beside it, and they are resolved
-  // together so a caller cannot take one without the others.
-  const roleOptions = systemSettings.options[modelType];
-  const timeoutMs = roleOptions.timeout_ms;
+  const roleOptions = systemSettings.options[role];
+  const agentOptions = agent?.options[role];
+  const timeoutMs = agentOptions?.timeout_ms ?? roleOptions.timeout_ms;
   // Every role but embedding has an effort; an embedding has nothing to think
-  // about, so its options object carries none.
+  // about, so neither options object carries one.
   const reasoningEffort =
-    'reasoning_effort' in roleOptions ? roleOptions.reasoning_effort : null;
+    'reasoning_effort' in roleOptions
+      ? ((agentOptions && 'reasoning_effort' in agentOptions
+          ? agentOptions.reasoning_effort
+          : null) ?? roleOptions.reasoning_effort)
+      : null;
 
-  switch (modelType) {
-    case 'judge':
-      modelId = systemSettings.judge_model_id;
-      break;
-    case 'embedding':
-      modelId = systemSettings.embedding_model_id;
-      break;
-    case 'system_prompt_reflection':
-      modelId = systemSettings.system_prompt_reflection_model_id;
-      break;
-    case 'evaluation_generation':
-      modelId = systemSettings.evaluation_generation_model_id;
-      break;
-    case 'skill_arbiter':
-      // The arbiter has a model of its own only when one is chosen for it;
-      // otherwise it borrows the reflection model, as it always did.
-      modelId =
-        systemSettings.skill_arbiter_model_id ??
-        systemSettings.system_prompt_reflection_model_id;
-      configured =
-        'skill_arbiter_model_id or system_prompt_reflection_model_id';
-      break;
-    case 'intent_compaction':
-      // As with the arbiter: a model of its own only when one is chosen for
-      // it, and the reflection model otherwise.
-      modelId =
-        systemSettings.intent_compaction_model_id ??
-        systemSettings.system_prompt_reflection_model_id;
-      configured =
-        'intent_compaction_model_id or system_prompt_reflection_model_id';
-      break;
+  let modelId = agentModelId(agent, role);
+  let configured = `${role}_model_id`;
+  if (!modelId) {
+    switch (role) {
+      case 'judge':
+        modelId = systemSettings.judge_model_id;
+        break;
+      case 'embedding':
+        modelId = systemSettings.embedding_model_id;
+        break;
+      case 'system_prompt_reflection':
+        modelId = systemSettings.system_prompt_reflection_model_id;
+        break;
+      case 'evaluation_generation':
+        modelId = systemSettings.evaluation_generation_model_id;
+        break;
+      case 'skill_arbiter':
+        // The arbiter has a model of its own only when one is chosen for it;
+        // otherwise it borrows the reflection model, as it always did.
+        modelId =
+          systemSettings.skill_arbiter_model_id ??
+          systemSettings.system_prompt_reflection_model_id;
+        configured =
+          'skill_arbiter_model_id or system_prompt_reflection_model_id';
+        break;
+      case 'intent_compaction':
+        // As with the arbiter: a model of its own only when one is chosen for
+        // it, and the reflection model otherwise.
+        modelId =
+          systemSettings.intent_compaction_model_id ??
+          systemSettings.system_prompt_reflection_model_id;
+        configured =
+          'intent_compaction_model_id or system_prompt_reflection_model_id';
+        break;
+    }
   }
 
   if (!modelId) {
@@ -193,21 +273,25 @@ export async function resolveSystemSettingsModel(
 export async function resolveJudgeModelConfig(
   c: AppContext,
   connector: UserDataStorageConnector,
+  agent: Agent | null = null,
   settings?: SystemSettings,
 ): Promise<LLMJudgeModelConfig | null> {
   const systemSettings = settings ?? (await connector.getSystemSettings(c));
-  const resolved = await resolveSystemSettingsModel(
+  const resolved = await resolveRoleModel(
     c,
     'judge',
     connector,
+    agent,
     systemSettings,
   );
   // The effort arrives with the model, like every role's; only the budget is
-  // the judge's own.
+  // the judge's own -- and the agent answers for it on the same terms.
   return (
     resolved && {
       ...resolved,
-      maxTokens: systemSettings.options.judge.max_tokens,
+      maxTokens:
+        agent?.options.judge.max_tokens ??
+        systemSettings.options.judge.max_tokens,
     }
   );
 }
@@ -229,6 +313,9 @@ export async function resolveEvaluationModelConfig(
   connector: UserDataStorageConnector,
 ): Promise<LLMJudgeModelConfig | null> {
   const logPrefix = 'EVAL_MODEL_RESOLVER';
+  // Whose answers are being scored: the agent answers for the judge before
+  // the system does, and its evaluation before either.
+  const agent = await agentOfSkill(c, connector, evaluation.skill_id);
 
   // If evaluation has a model_id, use it. A model named by an evaluation has
   // no timeout or token budget of its own, so it is judged under the judge's.
@@ -243,16 +330,17 @@ export async function resolveEvaluationModelConfig(
       return null;
     }
     const { options } = await connector.getSystemSettings(c);
+    const own = agent?.options.judge;
     return {
       ...resolved,
-      timeoutMs: options.judge.timeout_ms,
-      maxTokens: options.judge.max_tokens,
-      reasoningEffort: options.judge.reasoning_effort,
+      timeoutMs: own?.timeout_ms ?? options.judge.timeout_ms,
+      maxTokens: own?.max_tokens ?? options.judge.max_tokens,
+      reasoningEffort: own?.reasoning_effort ?? options.judge.reasoning_effort,
     };
   }
 
-  // Fall back to system settings judge_model_id
-  return await resolveJudgeModelConfig(c, connector);
+  // Fall back to the judge model, the agent's or the system's.
+  return await resolveJudgeModelConfig(c, connector, agent);
 }
 
 /**
@@ -275,22 +363,25 @@ export interface EmbeddingModelConfig {
 export async function resolveEmbeddingModelConfig(
   c: AppContext,
   connector: UserDataStorageConnector,
+  agent: Agent | null = null,
 ): Promise<EmbeddingModelConfig | null> {
   const logPrefix = 'EMBEDDING_MODEL_RESOLVER';
   const systemSettings = await connector.getSystemSettings(c);
 
-  if (!systemSettings.embedding_model_id) {
+  // An agent embeds with the model it names. Its skills' routing centroids
+  // record which model computed them, so a skill whose centroids were built
+  // under another model is re-seeded rather than compared across the two --
+  // the same thing that happens when the system setting changes.
+  const modelId =
+    agent?.embedding_model_id ?? systemSettings.embedding_model_id;
+  if (!modelId) {
     warn(`[${logPrefix}] No embedding_model_id configured in system settings`);
     return null;
   }
 
-  const models = await connector.getModels(c, {
-    id: systemSettings.embedding_model_id,
-  });
+  const models = await connector.getModels(c, { id: modelId });
   if (models.length === 0) {
-    warn(
-      `[${logPrefix}] Embedding model not found: ${systemSettings.embedding_model_id}`,
-    );
+    warn(`[${logPrefix}] Embedding model not found: ${modelId}`);
     return null;
   }
 
@@ -307,6 +398,8 @@ export async function resolveEmbeddingModelConfig(
     modelId: model.id,
     model,
     dimensions: model.embedding_dimensions,
-    timeoutMs: systemSettings.options.embedding.timeout_ms,
+    timeoutMs:
+      agent?.options.embedding.timeout_ms ??
+      systemSettings.options.embedding.timeout_ms,
   };
 }

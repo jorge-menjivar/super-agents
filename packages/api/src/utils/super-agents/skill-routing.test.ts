@@ -16,6 +16,7 @@ import {
 import { FunctionName } from '@shared/types/api/request';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import type { Agent, Skill, SkillRouting } from '@shared/types/data';
+import { AgentOptions } from '@shared/types/data/agent';
 import { SystemSettingsOptions } from '@shared/types/data/system-settings';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
@@ -24,6 +25,7 @@ vi.mock('@api/utils/embeddings', async (importOriginal) => ({
   embedText: vi.fn(),
 }));
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
+  agentById: vi.fn().mockResolvedValue(null),
   resolveEmbeddingModelConfig: vi.fn(),
 }));
 vi.mock('@api/utils/super-agents/skill-creation', () => ({
@@ -46,6 +48,7 @@ const manual = {
   auto_create_skills: false,
   skill_match_threshold: 0.8,
   max_auto_created_skills: 10,
+  options: AgentOptions.parse({}),
 } as Agent;
 /** An agent that grows skills as requests arrive. */
 const growing = { ...manual, auto_create_skills: true } as Agent;
@@ -434,7 +437,10 @@ describe('routeRequestToSkill', () => {
     it('holds the lease long enough for the arbiter to answer', async () => {
       connector.getSkills.mockResolvedValue([skill('s1', 'translate')]);
       // The agent's own arbiter timeout wins over the system's 15 seconds.
-      const patient = { ...growing, skill_arbiter_timeout_ms: 30_000 } as Agent;
+      const patient = {
+        ...growing,
+        options: AgentOptions.parse({ skill_arbiter: { timeout_ms: 30_000 } }),
+      } as Agent;
 
       await route(patient, chat('Draw a picture of a cat.'));
 

@@ -15,6 +15,7 @@ vi.mock('@api/utils/embeddings', () => ({
   generateEmbeddingForRequest: vi.fn(),
 }));
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
+  agentById: vi.fn().mockResolvedValue(null),
   resolveEmbeddingModelConfig: vi.fn(),
 }));
 vi.mock('@api/optimization/skill-optimizations', () => ({

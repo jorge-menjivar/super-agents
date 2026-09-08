@@ -174,10 +174,14 @@ BEGIN
     RAISE EXCEPTION 'Cannot change model_type for a model that is referenced in system_settings';
   END IF;
 
-  -- A model an agent named for itself has to stay a text model too
+  -- A model an agent named for itself has to keep its type too
   IF EXISTS (
     SELECT 1 FROM public.agents
-    WHERE skill_arbiter_model_id = NEW.id
+    WHERE system_prompt_reflection_model_id = NEW.id
+       OR evaluation_generation_model_id = NEW.id
+       OR embedding_model_id = NEW.id
+       OR judge_model_id = NEW.id
+       OR skill_arbiter_model_id = NEW.id
        OR intent_compaction_model_id = NEW.id
   ) THEN
     RAISE EXCEPTION 'Cannot change model_type for a model that an agent asks for itself';
@@ -317,37 +321,64 @@ CREATE POLICY "Allow all operations on skill_creation_leases"
 COMMENT ON TABLE skill_creation_leases IS 'Per-agent lease held by the request creating a skill, so concurrent requests do not each create one';
 
 -- ============================================================================
--- PART 7: Per-agent overrides for the models asked on its behalf
+-- PART 7: Per-agent overrides for every model asked on its behalf
 -- ============================================================================
 
--- An agent may choose its own arbiter and compaction models, and a timeout
--- for each; NULL means the system setting applies. A deleted model falls back
--- rather than blocking the delete, unlike the system settings, which RESTRICT.
+-- An agent may name its own model for every role the gateway asks one for,
+-- and answer for each one's timeout, effort and budget in `options`; NULL --
+-- or a missing key -- means the system setting applies. A deleted model falls
+-- back rather than blocking the delete, unlike the system settings, which
+-- RESTRICT. The models are columns for what the database does with them: the
+-- fallback above, and the type guard below.
 ALTER TABLE agents
+ADD COLUMN IF NOT EXISTS system_prompt_reflection_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS evaluation_generation_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS judge_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
 ADD COLUMN IF NOT EXISTS skill_arbiter_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
-ADD COLUMN IF NOT EXISTS skill_arbiter_timeout_ms INTEGER CHECK (skill_arbiter_timeout_ms IS NULL OR skill_arbiter_timeout_ms > 0),
 ADD COLUMN IF NOT EXISTS intent_compaction_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
-ADD COLUMN IF NOT EXISTS intent_compaction_timeout_ms INTEGER CHECK (intent_compaction_timeout_ms IS NULL OR intent_compaction_timeout_ms > 0),
-ADD COLUMN IF NOT EXISTS intent_compaction_reasoning_effort TEXT CHECK (intent_compaction_reasoning_effort IS NULL OR intent_compaction_reasoning_effort IN ('none', 'minimal', 'low', 'medium', 'high'));
+ADD COLUMN IF NOT EXISTS embedding_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+CREATE INDEX IF NOT EXISTS idx_agents_system_prompt_reflection_model_id ON agents(system_prompt_reflection_model_id);
+CREATE INDEX IF NOT EXISTS idx_agents_evaluation_generation_model_id ON agents(evaluation_generation_model_id);
+CREATE INDEX IF NOT EXISTS idx_agents_judge_model_id ON agents(judge_model_id);
 CREATE INDEX IF NOT EXISTS idx_agents_skill_arbiter_model_id ON agents(skill_arbiter_model_id);
 CREATE INDEX IF NOT EXISTS idx_agents_intent_compaction_model_id ON agents(intent_compaction_model_id);
+CREATE INDEX IF NOT EXISTS idx_agents_embedding_model_id ON agents(embedding_model_id);
 
+COMMENT ON COLUMN agents.system_prompt_reflection_model_id IS 'The model that writes and reflects on the system prompts of this agent''s skills; NULL means the system setting';
+COMMENT ON COLUMN agents.evaluation_generation_model_id IS 'The model that generates the evaluations of this agent''s skills; NULL means the system setting';
+COMMENT ON COLUMN agents.judge_model_id IS 'The model that scores this agent''s answers; NULL means the system setting';
 COMMENT ON COLUMN agents.skill_arbiter_model_id IS 'The model the skill arbiter asks for this agent; NULL means the system setting';
-COMMENT ON COLUMN agents.skill_arbiter_timeout_ms IS 'How long one arbiter attempt may take for this agent, in milliseconds; NULL means the system setting';
 COMMENT ON COLUMN agents.intent_compaction_model_id IS 'The model that compacts an over-long system prompt before this agent routes by it; NULL means the system setting';
-COMMENT ON COLUMN agents.intent_compaction_timeout_ms IS 'How long one compaction attempt may take for this agent, in milliseconds; NULL means the system setting';
-COMMENT ON COLUMN agents.intent_compaction_reasoning_effort IS 'How hard the compaction model may think for this agent; NULL means the system setting';
+COMMENT ON COLUMN agents.embedding_model_id IS 'The model that embeds this agent''s requests for routing; NULL means the system setting';
+COMMENT ON COLUMN agents.options IS 'Per-role timeouts, reasoning efforts and the judge''s token budget for this agent; a missing value means the system setting';
 
 CREATE OR REPLACE FUNCTION validate_agent_model_types()
 RETURNS TRIGGER AS $$
 BEGIN
+  IF NOT public.check_model_type(NEW.system_prompt_reflection_model_id, 'text') THEN
+    RAISE EXCEPTION 'system_prompt_reflection_model_id must reference a text model';
+  END IF;
+
+  IF NOT public.check_model_type(NEW.evaluation_generation_model_id, 'text') THEN
+    RAISE EXCEPTION 'evaluation_generation_model_id must reference a text model';
+  END IF;
+
+  IF NOT public.check_model_type(NEW.judge_model_id, 'text') THEN
+    RAISE EXCEPTION 'judge_model_id must reference a text model';
+  END IF;
+
   IF NOT public.check_model_type(NEW.skill_arbiter_model_id, 'text') THEN
     RAISE EXCEPTION 'skill_arbiter_model_id must reference a text model';
   END IF;
 
   IF NOT public.check_model_type(NEW.intent_compaction_model_id, 'text') THEN
     RAISE EXCEPTION 'intent_compaction_model_id must reference a text model';
+  END IF;
+
+  IF NOT public.check_model_type(NEW.embedding_model_id, 'embed') THEN
+    RAISE EXCEPTION 'embedding_model_id must reference an embed model';
   END IF;
 
   RETURN NEW;

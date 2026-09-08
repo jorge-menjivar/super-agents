@@ -251,7 +251,11 @@ async function tryEmbedIntent(
   intent: RequestIntent,
 ): Promise<RequestIntentEmbedding | null> {
   try {
-    const embeddingConfig = await resolveEmbeddingModelConfig(c, connector);
+    const embeddingConfig = await resolveEmbeddingModelConfig(
+      c,
+      connector,
+      agent,
+    );
     if (!embeddingConfig) {
       return null;
     }
@@ -363,7 +367,11 @@ async function routeOnce(
     return fallback();
   }
 
-  const embeddingConfig = await resolveEmbeddingModelConfig(c, connector);
+  const embeddingConfig = await resolveEmbeddingModelConfig(
+    c,
+    connector,
+    agent,
+  );
   if (!embeddingConfig) {
     if (skills.length === 1) {
       return onlySkill();
@@ -394,6 +402,7 @@ async function routeOnce(
             connector,
             seedText(skill),
             embeddingConfig.modelId,
+            agent,
           );
           const routing = await connector.upsertSkillRouting(c, {
             skill_id: skill.id,
@@ -639,7 +648,11 @@ export async function learnSkillIntent(
     if (!settings.embedding_model_id) {
       return;
     }
-    const embeddingConfig = await resolveEmbeddingModelConfig(c, connector);
+    const embeddingConfig = await resolveEmbeddingModelConfig(
+      c,
+      connector,
+      agent,
+    );
     if (!embeddingConfig) {
       return;
     }

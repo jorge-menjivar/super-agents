@@ -205,6 +205,7 @@ export async function handleGenerateArms(
         undefined,
         undefined,
         skill.seed_system_prompt,
+        agent,
       );
     } else {
       systemPrompt = await seedSystemPrompt(c, skill, userStorageConnector);

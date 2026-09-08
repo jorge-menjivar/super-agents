@@ -5,10 +5,13 @@ import {
 } from '@api/constants';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
-import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
+import {
+  agentById,
+  resolveRoleModel,
+} from '@api/utils/evaluation-model-resolver';
 import { warn } from '@shared/console-logging';
 import type { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
-import type { Skill } from '@shared/types/data';
+import type { Agent, Skill } from '@shared/types/data';
 import OpenAI from 'openai';
 import type { ParsedChatCompletion } from 'openai/resources/chat/completions.mjs';
 import z from 'zod';
@@ -81,12 +84,15 @@ async function createSystemPromptClient(
   c: AppContext,
   skillName: string,
   connector: UserDataStorageConnector,
+  agent: Agent | null = null,
 ) {
-  // Resolve system prompt reflection model from system settings
-  const modelConfig = await resolveSystemSettingsModel(
+  // The agent whose skill this prompt is for answers for the model, its
+  // timeout and its effort; the system settings answer for the rest.
+  const modelConfig = await resolveRoleModel(
     c,
     'system_prompt_reflection',
     connector,
+    agent,
   );
 
   if (!modelConfig) {
@@ -269,7 +275,12 @@ export async function generateSeedSystemPromptForSkill(
   connector: UserDataStorageConnector,
 ) {
   const { client, saConfig, model, reasoningEffort } =
-    await createSystemPromptClient(c, 'system-prompt-seeding', connector);
+    await createSystemPromptClient(
+      c,
+      'system-prompt-seeding',
+      connector,
+      await agentById(c, connector, skill.agent_id),
+    );
 
   const systemPrompt = getSeederSystemPrompt();
   const userMessage = getSeederFirstMessage(skill.description);
@@ -293,12 +304,15 @@ export async function generateSeedSystemPromptWithContext(
   responseFormat?: unknown,
   allowedTemplateVariables?: string[],
   seedSystemPrompt?: string | null,
+  /** Whose skill this prompt is for, when the caller knows. */
+  agent: Agent | null = null,
 ) {
   const { client, saConfig, model, reasoningEffort } =
     await createSystemPromptClient(
       c,
       'system-prompt-seeding-with-context',
       connector,
+      agent,
     );
 
   const systemPrompt = getSeederSystemPrompt();
@@ -393,9 +407,16 @@ export async function generateReflectiveSystemPromptForSkill(
   skillDescription: string,
   allowedTemplateVariables: string[],
   connector: UserDataStorageConnector,
+  /** Whose skill is being reflected on, when the caller knows. */
+  agent: Agent | null = null,
 ) {
   const { client, saConfig, model, reasoningEffort } =
-    await createSystemPromptClient(c, 'system-prompt-reflection', connector);
+    await createSystemPromptClient(
+      c,
+      'system-prompt-reflection',
+      connector,
+      agent,
+    );
 
   const systemPrompt = getReflectorSystemPrompt();
   const userMessage = getReflectorFirstMessage(

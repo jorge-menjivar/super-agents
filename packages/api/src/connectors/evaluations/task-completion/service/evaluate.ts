@@ -10,7 +10,10 @@ import type {
 } from '@api/types/connector';
 import type { LLMJudge } from '@api/types/evaluations/llm-judge';
 import type { AppContext } from '@api/types/hono';
-import { resolveEvaluationModelConfig } from '@api/utils/evaluation-model-resolver';
+import {
+  agentOfSkill,
+  resolveEvaluationModelConfig,
+} from '@api/utils/evaluation-model-resolver';
 import {
   extractSystemPromptFromMessages,
   formatMessagesForExtraction,
@@ -115,6 +118,7 @@ async function getTaskAndOutcome(
     input,
     output,
     connector,
+    log.skill_id ? await agentOfSkill(c, connector, log.skill_id) : null,
   );
   return {
     task: params.task || task,

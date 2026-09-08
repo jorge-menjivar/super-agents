@@ -12,6 +12,7 @@ import type {
   UserDataStorageConnector,
 } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
+import { agentById } from '@api/utils/evaluation-model-resolver';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import { judgeLogsWithoutRuns } from '@api/utils/super-agents/judge-backlog';
 import { FunctionName } from '@shared/types/api/request';
@@ -231,6 +232,7 @@ export async function checkAndRegenerateEvaluationsEarly(
       responseFormat,
       skill.allowed_template_variables,
       skill.seed_system_prompt,
+      await agentById(c, userDataStorageConnector, skill.agent_id),
     );
 
     // Get existing evaluations to know which methods to regenerate. A skill

@@ -9,7 +9,7 @@ import {
 } from '@api/optimization/utils/describe-skill';
 import { createMockContext } from '@api/test-utils/mock-context';
 import type { UserDataStorageConnector } from '@api/types/connector';
-import { resolveSystemSettingsModel } from '@api/utils/evaluation-model-resolver';
+import { resolveRoleModel } from '@api/utils/evaluation-model-resolver';
 import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { AIProvider } from '@shared/types/constants';
 import type { Agent, Skill } from '@shared/types/data';
@@ -32,7 +32,8 @@ vi.mock('@api/constants', async (importOriginal) => ({
 }));
 
 vi.mock('@api/utils/evaluation-model-resolver', () => ({
-  resolveSystemSettingsModel: vi.fn(),
+  agentById: vi.fn().mockResolvedValue(null),
+  resolveRoleModel: vi.fn(),
 }));
 
 vi.mock('@api/utils/sse-event-manager', () => ({ emitSSEEvent: vi.fn() }));
@@ -104,7 +105,7 @@ describe('describeSkillForRequest', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue({
+    vi.mocked(resolveRoleModel).mockResolvedValue({
       model: 'gpt-5-mini',
       provider: AIProvider.OPENAI,
       apiKey: 'sk-test',
@@ -136,7 +137,7 @@ describe('describeSkillForRequest', () => {
   it("sends the naming call's reasoning effort", async () => {
     // Naming happens on the request path, so the setting is what keeps the
     // model from thinking its way past the caller's patience.
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue({
+    vi.mocked(resolveRoleModel).mockResolvedValue({
       model: 'gpt-5-mini',
       provider: AIProvider.OPENAI,
       apiKey: 'sk-test',
@@ -160,7 +161,7 @@ describe('describeSkillForRequest', () => {
   });
 
   it('names the skill from the request when no model is configured', async () => {
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue(null);
+    vi.mocked(resolveRoleModel).mockResolvedValue(null);
 
     const naming = await describeSkillForRequest(
       c,
@@ -267,7 +268,7 @@ describe('repairSkillNaming', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue({
+    vi.mocked(resolveRoleModel).mockResolvedValue({
       model: 'gpt-5-mini',
       provider: AIProvider.OPENAI,
       apiKey: 'sk-test',
@@ -335,7 +336,7 @@ describe('repairSkillNaming', () => {
   });
 
   it('keeps the fallback when the describer falls back again', async () => {
-    vi.mocked(resolveSystemSettingsModel).mockResolvedValue(null);
+    vi.mocked(resolveRoleModel).mockResolvedValue(null);
     const connector = repairConnector();
 
     const naming = await repairSkillNaming(
