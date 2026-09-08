@@ -4,7 +4,7 @@ import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
 import { EvaluationMethodName } from '@shared/types/evaluations';
 import { Badge } from '@web/components/ui/badge';
 import { cn } from '@web/utils/ui/utils';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { type ReactElement, useState } from 'react';
 
 /** The score an answer has to reach to read as a good one. */
@@ -63,7 +63,7 @@ export function EvaluationResults({
         const judge = judgeOf(evaluation);
         const good = evaluation.score >= GOOD_SCORE;
         return (
-          <div key={key} className="py-2 first:pt-0 last:pb-0">
+          <div key={key} className="py-1 first:pt-0 last:pb-0">
             <button
               type="button"
               aria-expanded={isOpen}
@@ -74,13 +74,21 @@ export function EvaluationResults({
                   return next;
                 })
               }
-              className="flex w-full flex-row flex-wrap items-center gap-x-2 gap-y-1 rounded-sm text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {isOpen ? (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              className={cn(
+                '-mx-2 flex w-full flex-row flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-2 py-1.5 text-left text-xs',
+                'transition-colors hover:bg-muted/60 motion-reduce:transition-none',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
               )}
+            >
+              {/* One chevron that turns, rather than two that swap: the
+                  quarter turn is what says the row is opening. */}
+              <ChevronRight
+                className={cn(
+                  'h-3.5 w-3.5 shrink-0 text-muted-foreground',
+                  'transition-transform duration-150 motion-reduce:transition-none',
+                  isOpen && 'rotate-90',
+                )}
+              />
               <span className="font-medium">
                 {METHOD_NAMES[evaluation.method] || evaluation.method}
               </span>

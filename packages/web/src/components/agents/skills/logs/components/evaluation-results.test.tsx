@@ -40,6 +40,26 @@ describe('EvaluationResults', () => {
     expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
   });
 
+  it('answers the pointer, and turns its chevron rather than swapping it', () => {
+    render(<EvaluationResults evaluations={[evaluation()]} />);
+
+    const row = screen.getByRole('button');
+    expect(row.className).toContain('hover:bg-muted/60');
+    // One chevron that turns: the quarter turn is what says it is opening,
+    // and it is dropped for a reader who asked for less motion.
+    const chevron = row.querySelector('svg') as SVGElement;
+    expect(chevron.getAttribute('class')).toContain('transition-transform');
+    expect(chevron.getAttribute('class')).toContain(
+      'motion-reduce:transition-none',
+    );
+    expect(chevron.getAttribute('class')).not.toContain('rotate-90');
+
+    fireEvent.click(row);
+    expect(
+      (row.querySelector('svg') as SVGElement).getAttribute('class'),
+    ).toContain('rotate-90');
+  });
+
   it('colours a weak score apart from a good one', () => {
     render(
       <EvaluationResults

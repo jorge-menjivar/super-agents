@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@web/utils/ui/utils';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { type ReactElement, type ReactNode, useId, useState } from 'react';
 
 /**
@@ -40,14 +40,18 @@ export function LogStrip({
         onClick={() => setIsOpen((open) => !open)}
         className={cn(
           'flex w-full flex-row items-center gap-2 px-4 py-2 text-left text-xs',
-          'hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+          'transition-colors hover:bg-muted/60 motion-reduce:transition-none',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
         )}
       >
-        {isOpen ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        )}
+        {/* The same quarter turn the rows inside it use. */}
+        <ChevronRight
+          className={cn(
+            'h-3.5 w-3.5 shrink-0 text-muted-foreground',
+            'transition-transform duration-150 motion-reduce:transition-none',
+            isOpen && 'rotate-90',
+          )}
+        />
         {/* The name alone labels the region, so it is reachable by it. */}
         <span id={headingId} className="w-24 shrink-0 font-medium">
           {name}
