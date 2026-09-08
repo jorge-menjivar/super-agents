@@ -72,6 +72,25 @@ describe('placeStages', () => {
     expect(placeStages(lopsided).map((stage) => stage.row)).toEqual([0, 0, 1]);
   });
 
+  it('lays the names out against the width the card actually has', () => {
+    // The same three names that share a line on a wide card cannot on a
+    // narrow one, where the review no longer clears the provider.
+    expect(placeStages(stages, 900).map((stage) => stage.row)).toEqual([
+      0, 0, 1,
+    ]);
+    expect(placeStages(stages, 900).map((stage) => stage.atEnd)).toEqual([
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  it('gives every name a row of its own when none of them can share', () => {
+    expect(placeStages(stages, 150).map((stage) => stage.row)).toEqual([
+      0, 1, 2,
+    ]);
+  });
+
   it('pulls a name back to the end when it would run off it', () => {
     expect(placeStages(lopsided).map((stage) => stage.atEnd)).toEqual([
       false,

@@ -115,6 +115,28 @@ const HeaderDot = (): ReactElement => (
   </span>
 );
 
+/**
+ * One fact on the header line, with the dot that separates it from the fact
+ * before. It wraps as a whole: on a card too narrow to hold the line, a
+ * label never parts from its value and a separator never lands at the head
+ * of a line on its own, looking like a bullet.
+ */
+function HeaderFact({
+  label,
+  children,
+}: {
+  label?: ReactNode;
+  children: ReactNode;
+}): ReactElement {
+  return (
+    <span className="flex items-center gap-x-2.5 whitespace-nowrap">
+      <HeaderDot />
+      {label !== undefined && <HeaderLabel>{label}</HeaderLabel>}
+      {children}
+    </span>
+  );
+}
+
 /** The lamp beside the page's title: the request's outcome, as a colour. */
 const OUTCOME_LAMP: Record<string, string> = {
   failed: 'bg-red-500',
@@ -492,19 +514,20 @@ export function LogDetailsView(): ReactElement {
             {/* What the request was, as one line: every fact is a child of
                 the same flex, so one gap sets the spacing throughout. */}
             <div className="flex flex-row flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs">
-              <HeaderLabel>Status:</HeaderLabel>
-              <span
-                title={outcome.title ?? outcome.label}
-                className={cn(
-                  'font-mono font-medium',
-                  OUTCOME_TEXT[outcome.tone],
-                )}
-              >
-                {selectedLog.status ?? '\u2014'}
+              <span className="flex items-center gap-x-2.5 whitespace-nowrap">
+                <HeaderLabel>Status:</HeaderLabel>
+                <span
+                  title={outcome.title ?? outcome.label}
+                  className={cn(
+                    'font-mono font-medium',
+                    OUTCOME_TEXT[outcome.tone],
+                  )}
+                >
+                  {selectedLog.status ?? '\u2014'}
+                </span>
               </span>
               {selectedAgent && (
-                <>
-                  <HeaderDot />
+                <HeaderFact>
                   <HeaderEntity
                     avatar={createAgentAvatar(selectedAgent.name)}
                     name={selectedAgent.name}
@@ -525,30 +548,27 @@ export function LogDetailsView(): ReactElement {
                       />
                     </>
                   )}
-                </>
+                </HeaderFact>
               )}
-              <HeaderDot />
-              <span className="font-mono">
-                {selectedLog.ai_provider
-                  ? (PrettyAIProvider[selectedLog.ai_provider] ??
-                    selectedLog.ai_provider)
-                  : '\u2014'}
-                /{selectedLog.model ?? '\u2014'}
-              </span>
+              <HeaderFact>
+                <span className="font-mono">
+                  {selectedLog.ai_provider
+                    ? (PrettyAIProvider[selectedLog.ai_provider] ??
+                      selectedLog.ai_provider)
+                    : '\u2014'}
+                  /{selectedLog.model ?? '\u2014'}
+                </span>
+              </HeaderFact>
               {clusterName && logSkillName && (
-                <>
-                  <HeaderDot />
-                  <HeaderLabel>partition</HeaderLabel>
+                <HeaderFact label="partition">
                   <HeaderEntity
                     avatar={createClusterAvatar(logSkillName, clusterName)}
                     name={clusterName}
                   />
-                </>
+                </HeaderFact>
               )}
               {servedConfiguration && clusterName && logSkillName && (
-                <>
-                  <HeaderDot />
-                  <HeaderLabel>config</HeaderLabel>
+                <HeaderFact label="config">
                   <HeaderEntity
                     avatar={createArmAvatar(
                       logSkillName,
@@ -557,28 +577,22 @@ export function LogDetailsView(): ReactElement {
                     )}
                     name={servedConfiguration.name}
                   />
-                </>
+                </HeaderFact>
               )}
               {temperature !== null && (
-                <>
-                  <HeaderDot />
-                  <HeaderLabel>temp</HeaderLabel>
+                <HeaderFact label="temp">
                   <span className="font-mono">{temperature.toFixed(2)}</span>
-                </>
+                </HeaderFact>
               )}
               {thinkingEffort && (
-                <>
-                  <HeaderDot />
-                  <HeaderLabel>thinking</HeaderLabel>
+                <HeaderFact label="thinking">
                   <span className="font-mono">{thinkingEffort}</span>
-                </>
+                </HeaderFact>
               )}
               {selectedLog.span_name && (
-                <>
-                  <HeaderDot />
-                  <HeaderLabel>span</HeaderLabel>
+                <HeaderFact label="span">
                   <span className="font-mono">{selectedLog.span_name}</span>
-                </>
+                </HeaderFact>
               )}
             </div>
           </CardHeader>
