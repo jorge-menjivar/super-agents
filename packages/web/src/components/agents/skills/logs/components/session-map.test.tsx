@@ -1,9 +1,6 @@
 import type { Log } from '@shared/types/data/log';
 import { fireEvent, render, screen } from '@testing-library/react';
-import {
-  formatDuration,
-  SessionMap,
-} from '@web/components/agents/skills/logs/components/session-map';
+import { SessionMap } from '@web/components/agents/skills/logs/components/session-map';
 import { describe, expect, it, vi } from 'vitest';
 
 const log = (id: string, start_time: number, extra: Partial<Log> = {}): Log =>
@@ -115,15 +112,5 @@ describe('SessionMap', () => {
     expect(screen.getByText('3+ requests')).toBeInTheDocument();
     // With the window cut, a position would be a guess
     expect(screen.queryByText(/of 3/)).not.toBeInTheDocument();
-  });
-});
-
-describe('formatDuration', () => {
-  it('reads as a request, or as a whole session', () => {
-    expect(formatDuration(320)).toBe('320ms');
-    expect(formatDuration(16_771)).toBe('16.8s');
-    expect(formatDuration(252_000)).toBe('4m 12s');
-    expect(formatDuration(240_000)).toBe('4m');
-    expect(formatDuration(5_400_000)).toBe('1h 30m');
   });
 });

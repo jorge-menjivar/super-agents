@@ -1136,6 +1136,71 @@ test.describe('response review', () => {
     expect(body.choices?.[0].message.content).toBe('I cannot share that.');
   });
 
+  test('keeps what the model wrote on the log when the reviewer withholds or replaces it', async ({
+    request,
+  }) => {
+    // The provider log records what the client was given -- the 446, or the
+    // replacement -- so the answer the reviewer objected to is kept on the
+    // reviewer's own hook log, which is where the dashboard reads it.
+    await stubReply(request, reviewerModel, deny);
+    const denied = await ask(request, 'keep the withheld answer');
+    expect(denied.status()).toBe(446);
+
+    await expect
+      .poll(() =>
+        logMentioning(request, reviewedSkillId, 'keep the withheld answer'),
+      )
+      .toBeDefined();
+    const withheld = await logMentioning(
+      request,
+      reviewedSkillId,
+      'keep the withheld answer',
+    );
+    expect(withheld?.hook_logs).toHaveLength(1);
+    expect(withheld?.hook_logs?.[0].result.deny_request).toBe(true);
+    expect(withheld?.hook_logs?.[0].result.reason).toBe('Leaks a credential.');
+    expect(
+      withheld?.hook_logs?.[0].response_body?.choices?.[0].message.content,
+    ).toBe('echo: keep the withheld answer');
+
+    await stubReply(request, reviewerModel, replace);
+    const replaced = await ask(request, 'keep the replaced answer');
+    expect(replaced.status()).toBe(200);
+
+    await expect
+      .poll(() =>
+        logMentioning(request, reviewedSkillId, 'keep the replaced answer'),
+      )
+      .toBeDefined();
+    const kept = await logMentioning(
+      request,
+      reviewedSkillId,
+      'keep the replaced answer',
+    );
+    expect(
+      kept?.hook_logs?.[0].response_body?.choices?.[0].message.content,
+    ).toBe('echo: keep the replaced answer');
+    expect(
+      kept?.hook_logs?.[0].result.response_body_override?.choices?.[0].message
+        .content,
+    ).toBe('I cannot share that.');
+
+    // An allowed answer is on the provider log already, and not kept twice.
+    await stubReply(request, reviewerModel, allow);
+    const allowed = await ask(request, 'keep nothing twice');
+    expect(allowed.status()).toBe(200);
+    await expect
+      .poll(() => logMentioning(request, reviewedSkillId, 'keep nothing twice'))
+      .toBeDefined();
+    const plain = await logMentioning(
+      request,
+      reviewedSkillId,
+      'keep nothing twice',
+    );
+    expect(plain?.hook_logs?.[0].result.deny_request).toBe(false);
+    expect(plain?.hook_logs?.[0].response_body).toBeUndefined();
+  });
+
   test('holds a stream until the review is done', async ({ request }) => {
     await stubReply(request, reviewerModel, allow);
 

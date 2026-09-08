@@ -2,25 +2,11 @@
 
 import type { Log } from '@shared/types/data/log';
 import { Button } from '@web/components/ui/button';
-import { formatClockTime } from '@web/utils/time';
+import { formatClockTime, formatDuration } from '@web/utils/time';
 import { cn } from '@web/utils/ui/utils';
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { useEffect, useRef } from 'react';
-
-/** A length of time, in the unit a reader would say: a request's, or a session's */
-export function formatDuration(ms: number): string {
-  if (ms < 1_000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`;
-  if (ms < 3_600_000) {
-    const minutes = Math.floor(ms / 60_000);
-    const seconds = Math.round((ms % 60_000) / 1_000);
-    return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  }
-  const hours = Math.floor(ms / 3_600_000);
-  const minutes = Math.floor((ms % 3_600_000) / 60_000);
-  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
-}
 
 /** The score a request has to reach to count as good; the logs table's line too */
 const GOOD_SCORE = 0.7;

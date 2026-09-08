@@ -274,6 +274,61 @@ test.describe('live updates', () => {
 });
 
 test.describe('log page', () => {
+  test('shows every hook that judged the request, and the answer one withheld', async ({
+    page,
+    request,
+  }) => {
+    // A hook whose reviewer does not exist cannot run; failing closed, it
+    // withholds the answer. The page has to say so, and show the answer
+    // the model wrote, which the client never received.
+    const name = uniqueAgentName('hooked-page');
+    const agent = await createAgent(request, name);
+    const model = uniqueModelName('hooked');
+
+    try {
+      await createSkill(request, agent.id, 'gateway_skill');
+      const config = {
+        ...(JSON.parse(saConfig(name, 'gateway_skill', { model })) as Record<
+          string,
+          unknown
+        >),
+        hooks: [
+          {
+            id: 'reviewer:absent',
+            type: 'output',
+            hook_provider: 'agent',
+            config: { agent_name: `${name}-absent` },
+            fail_closed: true,
+          },
+        ],
+      };
+      const withheld = await request.post(CHAT_COMPLETIONS_PATH, {
+        headers: { 'sa-config': JSON.stringify(config) },
+        data: chatBody('say something withheld'),
+      });
+      expect(withheld.status()).toBe(446);
+
+      await page.goto(`/agents/${name}/logs`);
+      await page.getByText('Chat Complete').first().click();
+      await expect(page).toHaveURL(/\/logs\/[0-9a-f-]+$/);
+
+      const hooks = page.getByRole('region', { name: 'Hooks' });
+      await expect(hooks.getByText('reviewer:absent')).toBeVisible();
+      await expect(hooks.getByText('Denied', { exact: true })).toBeVisible();
+      await expect(hooks.getByText(/fails closed/)).toBeVisible();
+      await expect(
+        page.getByText('What the model wrote, withheld from the client'),
+      ).toBeVisible();
+      await expect(
+        page.getByText('echo: say something withheld').first(),
+      ).toBeVisible();
+      await expect(page.getByText('446', { exact: true })).toBeVisible();
+    } finally {
+      await stubReset(request, model);
+      await deleteAgent(request, agent.id);
+    }
+  });
+
   test('survives back and forward, which restore it around a destroyed editor', async ({
     page,
     request,

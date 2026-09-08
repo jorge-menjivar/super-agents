@@ -45,6 +45,14 @@ export const HookLog = z.object({
   hook: Hook,
   result: HookResult,
   request_body: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * The response an output hook judged, kept when the client was not given
+   * it: denied, or replaced with the hook's own text (which is
+   * `result.response_body_override`). The provider log records what the
+   * client received, so this is where what the model actually wrote
+   * survives. Absent when the hook allowed the response, which is on the
+   * provider log already.
+   */
   response_body: z.record(z.string(), z.unknown()).optional(),
   start_time: z.number(),
   end_time: z.number(),

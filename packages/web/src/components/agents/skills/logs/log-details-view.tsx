@@ -4,10 +4,16 @@ import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
 import type { Log } from '@shared/types/data/log';
 import { EvaluationMethodName } from '@shared/types/evaluations';
+import { HOOK_DENIED_STATUS } from '@shared/types/middleware/hooks';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
+import { LogStatusBadge } from '@web/components/agents/log-cells';
 import { CompletionViewer } from '@web/components/agents/skills/logs/components/completion-viewer';
 import { GenericViewer } from '@web/components/agents/skills/logs/components/generic-viewer';
+import {
+  describeHookLog,
+  HookResults,
+} from '@web/components/agents/skills/logs/components/hook-results';
 import { MessagesView } from '@web/components/agents/skills/logs/components/messages-view';
 import { SessionMap } from '@web/components/agents/skills/logs/components/session-map';
 import { LogFeedback } from '@web/components/agents/skills/logs/log-feedback';
@@ -36,7 +42,7 @@ import {
   describeSystemPromptOrigin,
   readServedConfiguration,
 } from '@web/utils/system-prompt-origin';
-import { formatLogTimestamp } from '@web/utils/time';
+import { formatDuration, formatLogTimestamp } from '@web/utils/time';
 import {
   AlertTriangle,
   ArrowLeftIcon,
@@ -228,6 +234,45 @@ export function LogDetailsView(): ReactElement {
     }
   }, [selectedLog]);
 
+  // How long the provider itself took, when the gateway recorded it: the
+  // rest of the request's time was routing, hooks and review.
+  const providerSpan = useMemo(() => {
+    const provider = selectedLog?.ai_provider_request_log;
+    return provider?.start_time !== undefined && provider.end_time !== undefined
+      ? formatDuration(provider.end_time - provider.start_time)
+      : null;
+  }, [selectedLog?.ai_provider_request_log]);
+
+  // What the model wrote when the client did not receive it. A hook keeps
+  // the response it withheld or replaced on its own log, since the provider
+  // log records what the client was given; drawn with the conversation, as
+  // the answer it was.
+  const judgedResponses = useMemo(() => {
+    const provider = selectedLog?.ai_provider_request_log;
+    if (!selectedLog || !provider) return [];
+    return selectedLog.hook_logs.flatMap((hookLog) => {
+      if (!hookLog.response_body) return [];
+      try {
+        return [
+          {
+            hookLog,
+            outcome: describeHookLog(hookLog),
+            saRequestData: produceSuperAgentsRequestData(
+              provider.method,
+              provider.request_url,
+              {},
+              provider.request_body,
+              hookLog.response_body,
+            ),
+          },
+        ];
+      } catch (error) {
+        console.error('Failed to parse the response a hook judged:', error);
+        return [];
+      }
+    });
+  }, [selectedLog]);
+
   // The prompt the client sent. Only worth a panel of its own when it differs
   // from what reached the provider; otherwise it is the system message below.
   const originalSystemPrompt = useMemo(() => {
@@ -376,6 +421,39 @@ export function LogDetailsView(): ReactElement {
                   {formatLogTimestamp(selectedLog.start_time)}
                 </span>
               </HeaderItem>
+              <HeaderSeparator />
+              <HeaderItem
+                label="Status:"
+                title={
+                  selectedLog.status === HOOK_DENIED_STATUS
+                    ? 'The response was withheld by a hook'
+                    : undefined
+                }
+              >
+                <LogStatusBadge log={selectedLog} />
+              </HeaderItem>
+              {selectedLog.duration !== null && (
+                <>
+                  <HeaderSeparator />
+                  <HeaderItem
+                    label="Took:"
+                    title={
+                      providerSpan
+                        ? `The provider itself took ${providerSpan}; the rest was routing, hooks and review`
+                        : undefined
+                    }
+                  >
+                    <span className="font-mono tabular-nums">
+                      {formatDuration(selectedLog.duration)}
+                    </span>
+                    {providerSpan && (
+                      <span className="text-muted-foreground">
+                        (provider {providerSpan})
+                      </span>
+                    )}
+                  </HeaderItem>
+                </>
+              )}
               {logSkillName && selectedAgent && (
                 <>
                   <HeaderSeparator />
@@ -622,6 +700,9 @@ export function LogDetailsView(): ReactElement {
               })}
             </div>
           )}
+          {selectedLog.hook_logs.length > 0 && (
+            <HookResults hookLogs={selectedLog.hook_logs} />
+          )}
           <CardContent className="flex flex-row p-0 h-full relative overflow-hidden">
             {selectedLog.trace_id && session.logs.length > 1 && (
               <SessionMap
@@ -687,6 +768,38 @@ export function LogDetailsView(): ReactElement {
                     }
                   />
                 )}
+                {selectedLog &&
+                  judgedResponses.map(
+                    ({ hookLog, outcome, saRequestData: judged }) => (
+                      <div
+                        key={`${hookLog.hook.id}-${hookLog.start_time}`}
+                        className="flex flex-col gap-2"
+                        data-testid="judged-response"
+                      >
+                        <div className="flex flex-row flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
+                          <span>
+                            {outcome.verdict === 'replaced'
+                              ? 'What the model wrote, before the hook replaced it'
+                              : 'What the model wrote, withheld from the client'}
+                          </span>
+                          <Badge
+                            variant={
+                              outcome.verdict === 'replaced'
+                                ? 'secondary'
+                                : 'destructive'
+                            }
+                            className={HEADER_BADGE}
+                          >
+                            {outcome.label} by {hookLog.hook.id}
+                          </Badge>
+                        </div>
+                        <CompletionViewer
+                          logId={`${selectedLog.id}-${hookLog.hook.id}`}
+                          saRequestData={judged}
+                        />
+                      </div>
+                    ),
+                  )}
                 {selectedLog &&
                   saRequestData &&
                   selectedLog.ai_provider_request_log?.response_body &&

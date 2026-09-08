@@ -103,6 +103,17 @@ export const HookResult = z.object({
 export type HookResult = z.infer<typeof HookResult>;
 
 /**
+ * The status a denial is answered with. Not a registered HTTP status: it is
+ * the convention of the gateways this one descends from, chosen over 403 or
+ * 400 because SDKs read those as a key without permission or a malformed
+ * request, neither of which is true, while an unregistered 4xx is treated
+ * as a generic client error -- surfaced, not retried -- and can be named in
+ * `retry.on_status_codes` without also retrying real bad requests. A 200
+ * would be parsed as an answer, and an agent would act on the error text.
+ */
+export const HOOK_DENIED_STATUS = 446;
+
+/**
  * The body of the 446 a denial becomes. Its `error` is shaped like every
  * other gateway error, so a client SDK surfaces `message` as it would any
  * failure. The hook's own account of why appears -- in `reason`, and at the

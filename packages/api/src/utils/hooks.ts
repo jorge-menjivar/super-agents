@@ -7,6 +7,7 @@ import type { SuperAgentsResponseBody } from '@shared/types/api/response/body';
 import type { HookLog } from '@shared/types/data';
 
 import {
+  HOOK_DENIED_STATUS,
   type HookDenialResponseBody,
   HookType,
 } from '@shared/types/middleware/hooks';
@@ -59,7 +60,7 @@ export function hookDenialBody(denial: HookLog): HookDenialResponseBody {
 
 const denialResponse = (denial: HookLog): Response =>
   new Response(JSON.stringify(hookDenialBody(denial)), {
-    status: 446,
+    status: HOOK_DENIED_STATUS,
     headers: { 'content-type': 'application/json' },
   });
 
