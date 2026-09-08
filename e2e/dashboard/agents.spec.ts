@@ -312,17 +312,38 @@ test.describe('log page', () => {
       await page.getByText('Chat Complete').first().click();
       await expect(page).toHaveURL(/\/logs\/[0-9a-f-]+$/);
 
+      // How the request ended is the page's title, and the hook that withheld
+      // it says so in full, with nothing to open first.
+      await expect(
+        page.getByRole('heading', { name: 'Withheld' }),
+      ).toBeVisible();
+      await expect(
+        page.getByText('reviewer:absent withheld the response'),
+      ).toBeVisible();
+      await expect(page.getByText(/^446 ·/)).toBeVisible();
+
+      // The request is drawn to scale, so the model's own time is apart from
+      // everything the gateway did around it.
+      await expect(page.getByRole('region', { name: 'Timing' })).toBeVisible();
+
+      // The hooks are shut, showing only what they decided between them.
+      await expect(
+        page.getByText('1 ran · Denied by reviewer:absent'),
+      ).toBeVisible();
+      await expect(page.getByRole('region', { name: 'Hooks' })).toHaveCount(0);
+
+      await page.getByRole('button', { name: /^Hooks/ }).click();
       const hooks = page.getByRole('region', { name: 'Hooks' });
-      await expect(hooks.getByText('reviewer:absent')).toBeVisible();
       await expect(hooks.getByText('Denied', { exact: true })).toBeVisible();
       await expect(hooks.getByText(/fails closed/)).toBeVisible();
+
+      // What the model wrote is still drawn with the conversation.
       await expect(
         page.getByText('What the model wrote, withheld from the client'),
       ).toBeVisible();
       await expect(
         page.getByText('echo: say something withheld').first(),
       ).toBeVisible();
-      await expect(page.getByText('446', { exact: true })).toBeVisible();
     } finally {
       await stubReset(request, model);
       await deleteAgent(request, agent.id);

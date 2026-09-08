@@ -4,17 +4,15 @@ import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
 import type { Log } from '@shared/types/data/log';
 import { EvaluationMethodName } from '@shared/types/evaluations';
-import { HOOK_DENIED_STATUS } from '@shared/types/middleware/hooks';
+import { HookType } from '@shared/types/middleware/hooks';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
-import { LogStatusBadge } from '@web/components/agents/log-cells';
 import { CompletionViewer } from '@web/components/agents/skills/logs/components/completion-viewer';
 import { GenericViewer } from '@web/components/agents/skills/logs/components/generic-viewer';
-import {
-  describeHookLog,
-  HookResults,
-} from '@web/components/agents/skills/logs/components/hook-results';
+import { HookResults } from '@web/components/agents/skills/logs/components/hook-results';
+import { LogStrip } from '@web/components/agents/skills/logs/components/log-strip';
 import { MessagesView } from '@web/components/agents/skills/logs/components/messages-view';
+import { RequestTrace } from '@web/components/agents/skills/logs/components/request-trace';
 import { SessionMap } from '@web/components/agents/skills/logs/components/session-map';
 import { LogFeedback } from '@web/components/agents/skills/logs/log-feedback';
 import { LogNavigation } from '@web/components/agents/skills/logs/log-navigation';
@@ -35,6 +33,13 @@ import { useSkillOptimizationClusters } from '@web/providers/skill-optimization-
 import { useSkillOptimizationEvaluationRuns } from '@web/providers/skill-optimization-evaluation-runs';
 import { useSkills } from '@web/providers/skills';
 import { createSkillAvatar } from '@web/utils/avatars';
+import {
+  denyingHook,
+  describeHookLog,
+  summariseHooks,
+} from '@web/utils/hook-outcome';
+import { outcomeOf } from '@web/utils/log-outcome';
+import { traceOf } from '@web/utils/log-trace';
 import { reviewOf } from '@web/utils/reviews';
 import {
   describeSkillRouting,
@@ -45,13 +50,12 @@ import {
   readServedConfiguration,
 } from '@web/utils/system-prompt-origin';
 import { formatDuration, formatLogTimestamp } from '@web/utils/time';
+import { cn } from '@web/utils/ui/utils';
 import {
   AlertTriangle,
   ArrowLeftIcon,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
-  XCircle,
 } from 'lucide-react';
 import type { ReactElement, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -93,9 +97,30 @@ function HeaderItem({
 /** A badge sized to the header's items, whatever its variant */
 const HEADER_BADGE = 'h-5 px-2 py-0 text-xs';
 
+/** The score an answer has to reach to read as a good one. */
+const GOOD_SCORE = 0.7;
+
 const HeaderSeparator = (): ReactElement => (
   <Separator orientation="vertical" className="h-4" />
 );
+
+/** The lamp beside the page's title: the request's outcome, as a colour. */
+const OUTCOME_LAMP: Record<string, string> = {
+  failed: 'bg-red-500',
+  unreviewed: 'bg-amber-500',
+  served: 'bg-green-500',
+  running: 'bg-blue-500 animate-pulse',
+};
+
+/** The verdict word in a shut strip takes the colour of what it decided. */
+const SUMMARY_TONE: Record<string, string> = {
+  denied: 'text-red-500',
+  failed: 'text-amber-500',
+  replaced: 'text-foreground',
+  rewrote: 'text-foreground',
+  allowed: 'text-green-600 dark:text-green-500',
+  skipped: 'text-muted-foreground',
+};
 
 export function LogDetailsView(): ReactElement {
   const { selectedAgent } = useAgents();
@@ -115,7 +140,6 @@ export function LogDetailsView(): ReactElement {
     setLogId: setEvalLogId,
   } = useSkillOptimizationEvaluationRuns();
   const smartBack = useSmartBack();
-  const [showEvaluationDetails, setShowEvaluationDetails] = useState(false);
   const [expandedEvaluations, setExpandedEvaluations] = useState<Set<string>>(
     new Set(),
   );
@@ -239,15 +263,6 @@ export function LogDetailsView(): ReactElement {
     }
   }, [selectedLog]);
 
-  // How long the provider itself took, when the gateway recorded it: the
-  // rest of the request's time was routing, hooks and review.
-  const providerSpan = useMemo(() => {
-    const provider = selectedLog?.ai_provider_request_log;
-    return provider?.start_time !== undefined && provider.end_time !== undefined
-      ? formatDuration(provider.end_time - provider.start_time)
-      : null;
-  }, [selectedLog?.ai_provider_request_log]);
-
   // What the model wrote when the client did not receive it. A hook keeps
   // the response it withheld or replaced on its own log, since the provider
   // log records what the client was given; drawn with the conversation, as
@@ -277,6 +292,13 @@ export function LogDetailsView(): ReactElement {
       }
     });
   }, [selectedLog]);
+
+  // The request drawn to scale. Its stages come off marks the row already
+  // carries, so no log had to be written differently to be read this way.
+  const trace = useMemo(
+    () => (selectedLog ? traceOf(selectedLog) : null),
+    [selectedLog],
+  );
 
   // The prompt the client sent. Only worth a panel of its own when it differs
   // from what reached the provider; otherwise it is the system message below.
@@ -397,11 +419,34 @@ export function LogDetailsView(): ReactElement {
     );
   }
 
+  // How the request ended is the page's title: on a withheld request it is
+  // the first thing worth knowing, and it used to be a badge among eleven
+  // others. The hook that withheld it says so in full under the header.
+  const outcome = outcomeOf(selectedLog);
+  const hookSummary = summariseHooks(selectedLog.hook_logs);
+  const denial = denyingHook(selectedLog.hook_logs);
+
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       <PageHeader
-        title="Log Details"
-        description={formatLogTimestamp(selectedLog.start_time)}
+        title={
+          <span className="flex items-center gap-2" title={outcome.title}>
+            <span
+              aria-hidden="true"
+              className={cn('h-2 w-2 rounded-full', OUTCOME_LAMP[outcome.tone])}
+            />
+            {outcome.label}
+          </span>
+        }
+        description={[
+          selectedLog.status !== null ? String(selectedLog.status) : null,
+          formatLogTimestamp(selectedLog.start_time),
+          selectedLog.duration !== null
+            ? formatDuration(selectedLog.duration)
+            : null,
+        ]
+          .filter((part): part is string => part !== null)
+          .join(' \u00b7 ')}
         showBackButton
         onBack={handleBack}
         actions={
@@ -421,47 +466,8 @@ export function LogDetailsView(): ReactElement {
         <Card className="flex flex-col h-full overflow-hidden">
           <CardHeader className="flex flex-row justify-between items-center p-4 bg-card-header border-b">
             <div className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
-              <HeaderItem>
-                <span className="text-sm">
-                  {formatLogTimestamp(selectedLog.start_time)}
-                </span>
-              </HeaderItem>
-              <HeaderSeparator />
-              <HeaderItem
-                label="Status:"
-                title={
-                  selectedLog.status === HOOK_DENIED_STATUS
-                    ? 'The response was withheld by a hook'
-                    : undefined
-                }
-              >
-                <LogStatusBadge log={selectedLog} />
-              </HeaderItem>
-              {selectedLog.duration !== null && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem
-                    label="Took:"
-                    title={
-                      providerSpan
-                        ? `The provider itself took ${providerSpan}; the rest was routing, hooks and review`
-                        : undefined
-                    }
-                  >
-                    <span className="font-mono tabular-nums">
-                      {formatDuration(selectedLog.duration)}
-                    </span>
-                    {providerSpan && (
-                      <span className="text-muted-foreground">
-                        (provider {providerSpan})
-                      </span>
-                    )}
-                  </HeaderItem>
-                </>
-              )}
               {logSkillName && selectedAgent && (
                 <>
-                  <HeaderSeparator />
                   <HeaderItem label="Skill:">
                     <button
                       type="button"
@@ -486,26 +492,18 @@ export function LogDetailsView(): ReactElement {
                       </Badge>
                     </button>
                   </HeaderItem>
+                  <HeaderSeparator />
                 </>
               )}
-              <HeaderSeparator />
               <HeaderItem label="Model:">
                 <span className="font-mono">
                   {selectedLog.ai_provider
                     ? (PrettyAIProvider[selectedLog.ai_provider] ??
                       selectedLog.ai_provider)
-                    : '—'}
-                  /{selectedLog.model ?? '—'}
+                    : '\u2014'}
+                  /{selectedLog.model ?? '\u2014'}
                 </span>
               </HeaderItem>
-              {selectedLog.span_name && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem>
-                    <span>{selectedLog.span_name}</span>
-                  </HeaderItem>
-                </>
-              )}
               {clusterName && (
                 <>
                   <HeaderSeparator />
@@ -516,21 +514,6 @@ export function LogDetailsView(): ReactElement {
                     >
                       {clusterName}
                     </Badge>
-                  </HeaderItem>
-                </>
-              )}
-              {skillRouting && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Routed:" title={skillRouting.title}>
-                    <Badge variant="outline" className={HEADER_BADGE}>
-                      {skillRouting.label}
-                    </Badge>
-                    {skillRouting.detail && (
-                      <span className="font-mono text-muted-foreground">
-                        {skillRouting.detail}
-                      </span>
-                    )}
                   </HeaderItem>
                 </>
               )}
@@ -552,167 +535,203 @@ export function LogDetailsView(): ReactElement {
                   </HeaderItem>
                 </>
               )}
-              {averageScore !== null && (
+              {selectedLog.span_name && (
                 <>
                   <HeaderSeparator />
-                  <HeaderItem label="Weighted Eval Score:">
-                    {averageScore >= 0.7 ? (
-                      <CheckCircle2 className="h-3 w-3 text-green-500" />
-                    ) : (
-                      <XCircle className="h-3 w-3 text-red-500" />
-                    )}
-                    <span className="font-mono font-medium">
-                      {(averageScore * 100).toFixed(0)}%
-                    </span>
-                  </HeaderItem>
-                </>
-              )}
-              {evaluationDetails.length > 0 && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem>
-                    <Badge variant="outline" className={HEADER_BADGE}>
-                      {evaluationDetails.length} eval
-                      {evaluationDetails.length > 1 ? 's' : ''}
-                    </Badge>
-                  </HeaderItem>
-                  <HeaderSeparator />
-                  <HeaderItem>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setShowEvaluationDetails(!showEvaluationDetails)
-                      }
-                      className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {showEvaluationDetails ? (
-                        <>
-                          <ChevronDown className="h-3 w-3" />
-                          <span>Hide Details</span>
-                        </>
-                      ) : (
-                        <>
-                          <ChevronRight className="h-3 w-3" />
-                          <span>Show Details ({evaluationDetails.length})</span>
-                        </>
-                      )}
-                    </button>
+                  <HeaderItem label="Span:">
+                    <span>{selectedLog.span_name}</span>
                   </HeaderItem>
                 </>
               )}
             </div>
           </CardHeader>
-          {showEvaluationDetails && evaluationDetails.length > 0 && (
-            <div className="px-4 py-4 space-y-2 bg-muted/30 border-b">
-              {evaluationDetails.map((evaluation, evalIdx) => {
-                const evalKey = `${evaluation.method}-${evalIdx}`;
-                const isEvalExpanded = expandedEvaluations.has(evalKey);
-                const prettyName =
-                  EvaluationMethodNames[evaluation.method] || evaluation.method;
-
-                return (
-                  <div
-                    key={evalKey}
-                    className="bg-background rounded-md border overflow-hidden"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setExpandedEvaluations((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(evalKey)) {
-                            next.delete(evalKey);
-                          } else {
-                            next.add(evalKey);
-                          }
-                          return next;
-                        });
-                      }}
-                      className="w-full flex items-center justify-between px-3 py-2 bg-muted/50 hover:bg-muted transition-colors text-left"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">
-                          {prettyName}
-                        </Badge>
-                        <Badge variant="outline" className="text-xs">
-                          {(evaluation.score * 100).toFixed(1)}%
-                        </Badge>
-                        {evaluation.judgeModelName && (
-                          <Badge
-                            variant="secondary"
-                            className="text-xs text-muted-foreground"
-                          >
-                            {evaluation.judgeModelProvider
-                              ? `${PrettyAIProvider[evaluation.judgeModelProvider as AIProvider] || evaluation.judgeModelProvider}/${evaluation.judgeModelName}`
-                              : evaluation.judgeModelName}
-                          </Badge>
-                        )}
-                      </div>
-                      {isEvalExpanded ? (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </button>
-                    {isEvalExpanded && (
-                      <div className="border-t">
-                        {evaluation.sections.map((section, sectionIdx) => {
-                          const sectionKey = `${evalKey}-${sectionIdx}`;
-                          const isSectionExpanded =
-                            expandedSections.has(sectionKey);
-
-                          return (
-                            <div
-                              key={sectionKey}
-                              className="border-b last:border-b-0"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setExpandedSections((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(sectionKey)) {
-                                      next.delete(sectionKey);
-                                    } else {
-                                      next.add(sectionKey);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                className="w-full flex items-center justify-between px-3 py-2 bg-muted/20 hover:bg-muted/40 transition-colors text-left"
-                              >
-                                <span className="text-xs font-medium">
-                                  {section.label}
-                                </span>
-                                {isSectionExpanded ? (
-                                  <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                                ) : (
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                                )}
-                              </button>
-                              {isSectionExpanded && (
-                                <div className="p-3 text-sm whitespace-pre-wrap leading-relaxed bg-background">
-                                  {section.content}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+          {denial && (
+            <div className="flex flex-row gap-3 border-b bg-destructive/5 px-4 py-3">
+              <span
+                aria-hidden="true"
+                className="w-[3px] shrink-0 rounded-full bg-destructive"
+              />
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">
+                  {denial.hook.id} withheld the{' '}
+                  {denial.hook.type === HookType.INPUT_HOOK
+                    ? 'request'
+                    : 'response'}
+                </div>
+                {(denial.result.reason ?? denial.result.error) && (
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+                    {denial.result.reason ?? denial.result.error}
+                  </p>
+                )}
+              </div>
             </div>
           )}
+          {trace !== null && selectedLog.duration !== null && (
+            <RequestTrace stages={trace} total={selectedLog.duration} />
+          )}
           {selectedLog.hook_logs.length > 0 && (
-            <HookResults
-              hookLogs={selectedLog.hook_logs}
-              reviewOf={(hookLog) => reviewOf(hookLog, reviews)}
-              onOpenReview={(review, reviewer) =>
-                navigateToLogDetail(reviewer, review.id)
+            <LogStrip
+              name="Hooks"
+              note={
+                <span className={SUMMARY_TONE[hookSummary.verdict]}>
+                  {hookSummary.text}
+                </span>
               }
-            />
+            >
+              <HookResults
+                hookLogs={selectedLog.hook_logs}
+                reviewOf={(hookLog) => reviewOf(hookLog, reviews)}
+                onOpenReview={(review, reviewer) =>
+                  navigateToLogDetail(reviewer, review.id)
+                }
+              />
+            </LogStrip>
+          )}
+          {skillRouting && (
+            <LogStrip
+              name="Routing"
+              note={
+                <>
+                  {skillRouting.label}
+                  {skillRouting.detail && ` \u00b7 ${skillRouting.detail}`}
+                </>
+              }
+            >
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {skillRouting.title}
+              </p>
+            </LogStrip>
+          )}
+          {(evaluationDetails.length > 0 || averageScore !== null) && (
+            <LogStrip
+              name="Evaluations"
+              note={
+                <>
+                  {evaluationDetails.length > 0
+                    ? `${evaluationDetails.length} ran`
+                    : 'None ran'}
+                  {averageScore !== null && (
+                    <>
+                      {' \u00b7 '}
+                      <span
+                        className={cn(
+                          'font-mono font-medium',
+                          averageScore >= GOOD_SCORE
+                            ? 'text-green-600 dark:text-green-500'
+                            : 'text-amber-500',
+                        )}
+                      >
+                        {(averageScore * 100).toFixed(0)}%
+                      </span>
+                      {' weighted'}
+                    </>
+                  )}
+                </>
+              }
+            >
+              <div className="space-y-2">
+                {evaluationDetails.map((evaluation, evalIdx) => {
+                  const evalKey = `${evaluation.method}-${evalIdx}`;
+                  const isEvalExpanded = expandedEvaluations.has(evalKey);
+                  const prettyName =
+                    EvaluationMethodNames[evaluation.method] ||
+                    evaluation.method;
+
+                  return (
+                    <div
+                      key={evalKey}
+                      className="bg-background rounded-md border overflow-hidden"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedEvaluations((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(evalKey)) {
+                              next.delete(evalKey);
+                            } else {
+                              next.add(evalKey);
+                            }
+                            return next;
+                          });
+                        }}
+                        className="w-full flex items-center justify-between px-3 py-2 bg-muted/50 hover:bg-muted transition-colors text-left"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs">
+                            {prettyName}
+                          </Badge>
+                          <Badge variant="outline" className="text-xs">
+                            {(evaluation.score * 100).toFixed(1)}%
+                          </Badge>
+                          {evaluation.judgeModelName && (
+                            <Badge
+                              variant="secondary"
+                              className="text-xs text-muted-foreground"
+                            >
+                              {evaluation.judgeModelProvider
+                                ? `${PrettyAIProvider[evaluation.judgeModelProvider as AIProvider] || evaluation.judgeModelProvider}/${evaluation.judgeModelName}`
+                                : evaluation.judgeModelName}
+                            </Badge>
+                          )}
+                        </div>
+                        {isEvalExpanded ? (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </button>
+                      {isEvalExpanded && (
+                        <div className="border-t">
+                          {evaluation.sections.map((section, sectionIdx) => {
+                            const sectionKey = `${evalKey}-${sectionIdx}`;
+                            const isSectionExpanded =
+                              expandedSections.has(sectionKey);
+
+                            return (
+                              <div
+                                key={sectionKey}
+                                className="border-b last:border-b-0"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setExpandedSections((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(sectionKey)) {
+                                        next.delete(sectionKey);
+                                      } else {
+                                        next.add(sectionKey);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                  className="w-full flex items-center justify-between px-3 py-2 bg-muted/20 hover:bg-muted/40 transition-colors text-left"
+                                >
+                                  <span className="text-xs font-medium">
+                                    {section.label}
+                                  </span>
+                                  {isSectionExpanded ? (
+                                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                                  )}
+                                </button>
+                                {isSectionExpanded && (
+                                  <div className="p-3 text-sm whitespace-pre-wrap leading-relaxed bg-background">
+                                    {section.content}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </LogStrip>
           )}
           <CardContent className="flex flex-row p-0 h-full relative overflow-hidden">
             {selectedLog.trace_id && session.logs.length > 1 && (

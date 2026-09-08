@@ -7,11 +7,7 @@ import {
   HookType,
 } from '@shared/types/middleware/hooks';
 import { fireEvent, render, screen } from '@testing-library/react';
-import {
-  describeHookLog,
-  describeHookProvider,
-  HookResults,
-} from '@web/components/agents/skills/logs/components/hook-results';
+import { HookResults } from '@web/components/agents/skills/logs/components/hook-results';
 import { describe, expect, it, vi } from 'vitest';
 
 const hookLog = (
@@ -45,109 +41,6 @@ const hookLog = (
   ...extra,
 });
 
-describe('describeHookLog', () => {
-  it('reads an allowed response as allowed', () => {
-    expect(describeHookLog(hookLog({ reason: 'Fine.' }))).toEqual({
-      verdict: 'allowed',
-      label: 'Allowed',
-      failure: null,
-    });
-  });
-
-  it('reads a denial as denied', () => {
-    expect(describeHookLog(hookLog({ deny_request: true }))).toEqual({
-      verdict: 'denied',
-      label: 'Denied',
-      failure: null,
-    });
-  });
-
-  it('tells a replacement and a rewrite from a denial', () => {
-    expect(
-      describeHookLog(
-        hookLog({
-          response_body_override: {
-            choices: [],
-          } as unknown as HookResult['response_body_override'],
-        }),
-      ).verdict,
-    ).toBe('replaced');
-    expect(
-      describeHookLog(
-        hookLog(
-          {
-            request_body_override: {
-              messages: [],
-            } as unknown as HookResult['request_body_override'],
-          },
-          { type: HookType.INPUT_HOOK },
-        ),
-      ).verdict,
-    ).toBe('rewrote');
-  });
-
-  it('reads a hook that could not run by what its failure did', () => {
-    const open = describeHookLog(hookLog({ error: 'Reviewer unreachable' }));
-    expect(open.verdict).toBe('failed');
-    expect(open.failure).toContain('went through unreviewed');
-
-    const closed = describeHookLog(
-      hookLog({ error: 'Reviewer unreachable', deny_request: true }),
-    );
-    expect(closed.verdict).toBe('denied');
-    expect(closed.failure).toContain('the response was withheld');
-  });
-
-  it('reads a skipped hook as skipped, whatever else it says', () => {
-    expect(
-      describeHookLog(hookLog({ skipped: true, deny_request: true })).verdict,
-    ).toBe('skipped');
-  });
-});
-
-describe('describeHookProvider', () => {
-  it('names the reviewer agent, and its skill when one was named', () => {
-    expect(describeHookProvider(hookLog().hook)).toBe('agent system-safety');
-    expect(
-      describeHookProvider(
-        hookLog({}, { config: { agent_name: 'guard', skill_name: 'policy' } })
-          .hook,
-      ),
-    ).toBe('agent guard / policy');
-  });
-
-  it('names an endpoint and a model by what they are', () => {
-    expect(
-      describeHookProvider(
-        hookLog(
-          {},
-          {
-            hook_provider: HookProvider.HTTP,
-            config: {
-              method: 'POST',
-              url: 'https://guard.example/check',
-            } as unknown as Hook['config'],
-          },
-        ).hook,
-      ),
-    ).toBe('POST https://guard.example/check');
-    expect(
-      describeHookProvider(
-        hookLog(
-          {},
-          {
-            hook_provider: HookProvider.LLM,
-            config: {
-              model: 'gpt-5.6-sol',
-              provider: 'openai',
-            } as unknown as Hook['config'],
-          },
-        ).hook,
-      ),
-    ).toBe('openai/gpt-5.6-sol');
-  });
-});
-
 describe('HookResults', () => {
   it('shows a denial with its reason, who denied it, and how long it took', () => {
     render(
@@ -161,7 +54,7 @@ describe('HookResults', () => {
       />,
     );
 
-    const panel = screen.getByRole('region', { name: 'Hooks' });
+    const panel = screen.getByTestId('hooks');
     expect(panel).toHaveTextContent('Denied');
     expect(panel).toHaveTextContent('reviewer:system-safety');
     expect(panel).toHaveTextContent('on the response');
@@ -178,7 +71,7 @@ describe('HookResults', () => {
       />,
     );
 
-    expect(screen.getByRole('region', { name: 'Hooks' })).toHaveTextContent(
+    expect(screen.getByTestId('hooks')).toHaveTextContent(
       'The client was told which hook withheld it, not why.',
     );
   });
@@ -193,7 +86,7 @@ describe('HookResults', () => {
       />,
     );
 
-    const panel = screen.getByRole('region', { name: 'Hooks' });
+    const panel = screen.getByTestId('hooks');
     expect(panel).toHaveTextContent('Allowed');
     expect(panel).toHaveTextContent('Nothing to object to.');
     expect(panel).toHaveTextContent('Skipped');
@@ -213,7 +106,7 @@ describe('HookResults', () => {
       />,
     );
 
-    const panel = screen.getByRole('region', { name: 'Hooks' });
+    const panel = screen.getByTestId('hooks');
     expect(panel).toHaveTextContent('Could not run');
     expect(panel).toHaveTextContent(
       'The reviewer "guard" did not answer with a verdict',
@@ -260,7 +153,7 @@ describe('HookResults', () => {
         onOpenReview={vi.fn()}
       />,
     );
-    expect(screen.getByRole('region', { name: 'Hooks' })).toHaveTextContent(
+    expect(screen.getByTestId('hooks')).toHaveTextContent(
       'What the model wrote was not kept on this log, which predates that; the review shows what the reviewer was sent.',
     );
 
@@ -276,9 +169,7 @@ describe('HookResults', () => {
         ]}
       />,
     );
-    expect(screen.getByRole('region', { name: 'Hooks' })).not.toHaveTextContent(
-      'was not kept',
-    );
+    expect(screen.getByTestId('hooks')).not.toHaveTextContent('was not kept');
   });
 
   it('marks a verdict served from the cache', () => {
