@@ -571,7 +571,11 @@ hook's reason, and is read from the log row. A hook that sets
 received, so a hook that withholds or replaces the response keeps the
 response it judged on its own hook log (`response_body`): that is where
 what the model actually wrote survives, and the log page shows it under
-the hook's verdict, beside the verdict of every hook that ran. A reviewer
+the hook's verdict, beside the verdict of every hook that ran. Those
+verdicts sit in a strip that is shut by default (`log-strip.tsx`, which
+routing and the evaluations share), summarised by whichever verdict
+decided the request; a denial is the exception, and prints its reason
+under the header, since it is the one thing a withheld request is about. A reviewer
 hook there links to the review its verdict came from -- found among the
 trace's logs by the reviewer's name and the hook's own span
 (`utils/reviews.ts`) -- which is also where the answer a log written
@@ -652,6 +656,17 @@ answer otherwise. A held stream is unstreamed at the provider, so it is
 measured to its whole answer, and the review it then waits for is not
 counted. A log written before the gateway recorded the provider's timing is
 measured across the whole request instead.
+
+The log page reads those same marks as a shape rather than a set of
+numbers. `utils/log-trace.ts` splits the request at every mark the row
+carries -- when it arrived, when the provider was asked and answered, when
+each hook ran -- and the page draws the stages to scale, so the gateway's
+own time sits beside the provider's and the reviewer's instead of summed
+with them. A gap shorter than 50ms is the cost of moving between two
+stages rather than a stage, and is not named. Nothing had to be recorded
+differently for this: a row written before the page existed draws the same
+way, and one that reached neither a provider nor a hook draws nothing,
+since a single undivided bar says nothing.
 
 ## Development Workflow
 

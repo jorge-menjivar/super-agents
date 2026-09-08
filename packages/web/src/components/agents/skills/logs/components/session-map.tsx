@@ -2,43 +2,36 @@
 
 import type { Log } from '@shared/types/data/log';
 import { Button } from '@web/components/ui/button';
+import { type LogOutcomeTone, outcomeOf } from '@web/utils/log-outcome';
 import { formatClockTime, formatDuration } from '@web/utils/time';
 import { cn } from '@web/utils/ui/utils';
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { useEffect, useRef } from 'react';
 
-/** The score a request has to reach to count as good; the logs table's line too */
-const GOOD_SCORE = 0.7;
-
-type Tone = 'failed' | 'good' | 'poor' | 'unscored';
-
 /**
- * The colour a request is read by: red when it failed, green or amber by
- * its score, none until it has been judged or while it is still running. A
- * weak answer and a failed request are different news, so they are different
- * colours.
+ * The colour a request is read by, answering one question: did something go
+ * wrong. Red for a request that failed or was withheld, amber for one that
+ * was served without a check that was meant to run, green for one that came
+ * through clean, and nothing while it is still going.
+ *
+ * How *good* the answer was is the score beside it, which is a number and
+ * reads as one. Colouring by the two at once is what used to make a weak
+ * answer and a failed request look alike, and it cost the rail the status
+ * of every request it had scored.
  */
-function toneOf(log: Log): Tone {
-  if (log.status === null) return 'unscored';
-  if (log.status >= 400) return 'failed';
-  const score = log.avg_eval_score;
-  if (score === null || score === undefined) return 'unscored';
-  return score >= GOOD_SCORE ? 'good' : 'poor';
-}
-
-const TEXT_TONE: Record<Tone, string> = {
+const TEXT_TONE: Record<LogOutcomeTone, string> = {
   failed: 'text-red-500',
-  good: 'text-green-500',
-  poor: 'text-amber-500',
-  unscored: 'text-muted-foreground',
+  unreviewed: 'text-amber-500',
+  served: 'text-green-500',
+  running: 'text-muted-foreground',
 };
 
-const BAR_TONE: Record<Tone, string> = {
+const BAR_TONE: Record<LogOutcomeTone, string> = {
   failed: 'bg-red-500',
-  good: 'bg-green-500',
-  poor: 'bg-amber-500',
-  unscored: 'bg-muted-foreground/40',
+  unreviewed: 'bg-amber-500',
+  served: 'bg-green-500',
+  running: 'bg-muted-foreground/40',
 };
 
 interface SessionMapProps {
@@ -56,10 +49,11 @@ interface SessionMapProps {
 }
 
 /**
- * A session's requests as a rail beside the one being read: each a time, a
- * score or failing status in its colour, and a bar as long as the request
- * took, its length written at the tip so it cannot be read as a score. The
- * rail carries its own arrows, so stepping through the session is never
+ * A session's requests as a rail beside the one being read: each a time,
+ * the score it was judged at, and a bar as long as the request took, its
+ * length written at the tip so it cannot be read as a score. Colour says
+ * whether the request went wrong; the score says how good the answer was.
+ * The rail carries its own arrows, so stepping through the session is never
  * confused with the page's arrows, which step through the list.
  */
 export function SessionMap({
@@ -167,13 +161,16 @@ export function SessionMap({
         )}
         {logs.map((log) => {
           const current = log.id === currentId;
-          const tone = toneOf(log);
+          const outcome = outcomeOf(log);
+          const tone = outcome.tone;
           const score = log.avg_eval_score;
           const label = labelOf(log);
           const time = formatClockTime(log.start_time);
           const running = log.duration === null;
           const duration =
             log.duration === null ? 'running' : formatDuration(log.duration);
+          // The status lives here rather than in the row, which shows the
+          // score instead; the colour is what carries the outcome now.
           const tooltip = [
             running ? 'still running' : `HTTP ${log.status}`,
             duration,
@@ -182,8 +179,9 @@ export function SessionMap({
             .concat(
               score !== null && score !== undefined
                 ? [`scored ${Math.round(score * 100)}%`]
-                : [],
+                : ['not scored'],
             )
+            .concat(tone === 'unreviewed' ? ['went unreviewed'] : [])
             .join(' · ');
           return (
             <li key={log.id}>
@@ -209,18 +207,14 @@ export function SessionMap({
                   >
                     {time}
                   </span>
-                  {tone === 'failed' ? (
-                    <span className={cn('font-medium', TEXT_TONE.failed)}>
-                      {log.status}
-                    </span>
-                  ) : (
-                    score !== null &&
-                    score !== undefined && (
-                      <span className={cn('font-medium', TEXT_TONE[tone])}>
-                        {Math.round(score * 100)}%
-                      </span>
-                    )
-                  )}
+                  <span
+                    className={cn('font-medium', TEXT_TONE[tone])}
+                    title={outcome.title ?? outcome.label}
+                  >
+                    {score === null || score === undefined
+                      ? '—'
+                      : `${Math.round(score * 100)}%`}
+                  </span>
                 </div>
                 {label && (
                   <div className="truncate text-[10px] text-muted-foreground">

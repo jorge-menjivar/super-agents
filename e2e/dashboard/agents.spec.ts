@@ -312,17 +312,38 @@ test.describe('log page', () => {
       await page.getByText('Chat Complete').first().click();
       await expect(page).toHaveURL(/\/logs\/[0-9a-f-]+$/);
 
+      // How the request ended is the page's title, and which hook decided it
+      // is the Hooks strip's own summary; the reason is inside, with every
+      // other verdict, rather than in a panel of its own.
+      await expect(
+        page.getByRole('heading', { name: 'Withheld by review' }),
+      ).toBeVisible();
+      await expect(page.getByText('446', { exact: true })).toBeVisible();
+
+      // The request is drawn to scale, so the model's own time is apart from
+      // everything the gateway did around it.
+      await expect(page.getByRole('region', { name: 'Timing' })).toBeVisible();
+
+      // A denial is the one verdict worth reading without asking for it, so
+      // the Hooks strip opens on arrival with the reason already in it.
+      await expect(
+        page.getByText('1 ran · Denied by reviewer:absent'),
+      ).toBeVisible();
       const hooks = page.getByRole('region', { name: 'Hooks' });
-      await expect(hooks.getByText('reviewer:absent')).toBeVisible();
       await expect(hooks.getByText('Denied', { exact: true })).toBeVisible();
       await expect(hooks.getByText(/fails closed/)).toBeVisible();
+
+      // It still shuts on its summary, like every other strip.
+      await page.getByRole('button', { name: /^Hooks/ }).click();
+      await expect(page.getByRole('region', { name: 'Hooks' })).toHaveCount(0);
+
+      // What the model wrote is still drawn with the conversation.
       await expect(
         page.getByText('What the model wrote, withheld from the client'),
       ).toBeVisible();
       await expect(
         page.getByText('echo: say something withheld').first(),
       ).toBeVisible();
-      await expect(page.getByText('446', { exact: true })).toBeVisible();
     } finally {
       await stubReset(request, model);
       await deleteAgent(request, agent.id);

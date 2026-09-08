@@ -31,15 +31,17 @@ describe('readSkillRouting', () => {
 });
 
 describe('describeSkillRouting', () => {
-  it('shows the similarity against the threshold', () => {
+  it('says how close the match was, against the bar it had to clear', () => {
     const description = describeSkillRouting({
       method: 'embedding',
       similarity: 0.93,
       threshold: 0.8,
       candidates: 2,
     });
-    expect(description.label).toBe('closest skill');
-    expect(description.detail).toBe('0.93 \u2265 0.80 \u00b7 2 candidates');
+    expect(description.label).toBe('sent to the closest match');
+    expect(description.detail).toBe(
+      '93% match, needs 80% \u00b7 from 2 skills',
+    );
   });
 
   it('shows why a skill was created', () => {
@@ -49,8 +51,8 @@ describe('describeSkillRouting', () => {
       threshold: 0.8,
       candidates: 1,
     });
-    expect(description.label).toBe('new skill');
-    expect(description.detail).toBe('0.41 < 0.80 \u00b7 1 candidate');
+    expect(description.label).toBe('started a new skill');
+    expect(description.detail).toBe('41% match, needs 80% \u00b7 from 1 skill');
   });
 
   it('has nothing to add for the only skill', () => {
@@ -61,7 +63,7 @@ describe('describeSkillRouting', () => {
         threshold: null,
         candidates: 1,
       }),
-    ).toMatchObject({ label: 'only skill', detail: '1 candidate' });
+    ).toMatchObject({ label: 'the agent had one skill', detail: null });
     expect(
       describeSkillRouting({
         method: 'created',

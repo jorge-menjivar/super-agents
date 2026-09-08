@@ -1,20 +1,21 @@
 'use client';
 
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
-import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
+import { PrettyAIProvider } from '@shared/types/constants';
 import type { Log } from '@shared/types/data/log';
-import { EvaluationMethodName } from '@shared/types/evaluations';
-import { HOOK_DENIED_STATUS } from '@shared/types/middleware/hooks';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
-import { LogStatusBadge } from '@web/components/agents/log-cells';
 import { CompletionViewer } from '@web/components/agents/skills/logs/components/completion-viewer';
-import { GenericViewer } from '@web/components/agents/skills/logs/components/generic-viewer';
 import {
-  describeHookLog,
-  HookResults,
-} from '@web/components/agents/skills/logs/components/hook-results';
+  type EvaluationDetail,
+  EvaluationResults,
+  GOOD_SCORE,
+} from '@web/components/agents/skills/logs/components/evaluation-results';
+import { GenericViewer } from '@web/components/agents/skills/logs/components/generic-viewer';
+import { HookResults } from '@web/components/agents/skills/logs/components/hook-results';
+import { LogStrip } from '@web/components/agents/skills/logs/components/log-strip';
 import { MessagesView } from '@web/components/agents/skills/logs/components/messages-view';
+import { RequestTrace } from '@web/components/agents/skills/logs/components/request-trace';
 import { SessionMap } from '@web/components/agents/skills/logs/components/session-map';
 import { LogFeedback } from '@web/components/agents/skills/logs/log-feedback';
 import { LogNavigation } from '@web/components/agents/skills/logs/log-navigation';
@@ -34,7 +35,15 @@ import { useNavigation } from '@web/providers/navigation';
 import { useSkillOptimizationClusters } from '@web/providers/skill-optimization-clusters';
 import { useSkillOptimizationEvaluationRuns } from '@web/providers/skill-optimization-evaluation-runs';
 import { useSkills } from '@web/providers/skills';
-import { createSkillAvatar } from '@web/utils/avatars';
+import {
+  createAgentAvatar,
+  createArmAvatar,
+  createClusterAvatar,
+  createSkillAvatar,
+} from '@web/utils/avatars';
+import { describeHookLog, summariseHooks } from '@web/utils/hook-outcome';
+import { outcomeOf } from '@web/utils/log-outcome';
+import { traceOf } from '@web/utils/log-trace';
 import { reviewOf } from '@web/utils/reviews';
 import {
   describeSkillRouting,
@@ -45,57 +54,114 @@ import {
   readServedConfiguration,
 } from '@web/utils/system-prompt-origin';
 import { formatDuration, formatLogTimestamp } from '@web/utils/time';
-import {
-  AlertTriangle,
-  ArrowLeftIcon,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  XCircle,
-} from 'lucide-react';
+import { cn } from '@web/utils/ui/utils';
+import { AlertTriangle, ArrowLeftIcon } from 'lucide-react';
 import type { ReactElement, ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
-
-// Pretty names for evaluation methods
-const EvaluationMethodNames: Record<EvaluationMethodName, string> = {
-  [EvaluationMethodName.TASK_COMPLETION]: 'Task Completion',
-  [EvaluationMethodName.ARGUMENT_CORRECTNESS]: 'Argument Correctness',
-  [EvaluationMethodName.ROLE_ADHERENCE]: 'Role Adherence',
-  [EvaluationMethodName.TURN_RELEVANCY]: 'Turn Relevancy',
-  [EvaluationMethodName.TOOL_CORRECTNESS]: 'Tool Correctness',
-  [EvaluationMethodName.KNOWLEDGE_RETENTION]: 'Knowledge Retention',
-  [EvaluationMethodName.CONVERSATION_COMPLETENESS]: 'Conversation Completeness',
-  [EvaluationMethodName.LATENCY]: 'Latency',
-};
+import { useEffect, useMemo } from 'react';
 
 /**
- * One fact about the log in its header. Every item is the same height, so
- * however the row wraps each line is as tall as the next and text, badges
- * and icons sit on one centre line.
+ * A named thing on the log's header line, wearing the face the rest of the
+ * dashboard gives it. The avatars are how an agent, a skill, a partition and
+ * a configuration are recognised everywhere else, so the line that says which
+ * ones served this request shows the same ones.
  */
-function HeaderItem({
-  label,
+function HeaderEntity({
+  avatar,
+  name,
   title,
-  children,
+  onClick,
 }: {
-  label?: string;
+  avatar: string;
+  name: string;
   title?: string;
-  children: ReactNode;
+  onClick?: () => void;
 }): ReactElement {
-  return (
-    <div className="flex h-6 items-center gap-1.5" title={title}>
-      {label && <span className="text-muted-foreground">{label}</span>}
-      {children}
-    </div>
+  const body = (
+    <span className="flex items-center gap-1.5">
+      <img src={avatar} alt="" className="h-3.5 w-3.5 shrink-0 rounded-sm" />
+      <span className="font-medium">{name}</span>
+    </span>
   );
+  if (!onClick) {
+    return (
+      <span title={title} className="flex items-center">
+        {body}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className="flex items-center rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {body}
+    </button>
+  );
+}
+
+/** What a value on the header line is, where the value cannot say itself. */
+function HeaderLabel({ children }: { children: ReactNode }): ReactElement {
+  return <span className="text-muted-foreground">{children}</span>;
 }
 
 /** A badge sized to the header's items, whatever its variant */
 const HEADER_BADGE = 'h-5 px-2 py-0 text-xs';
 
-const HeaderSeparator = (): ReactElement => (
-  <Separator orientation="vertical" className="h-4" />
+const HeaderDot = (): ReactElement => (
+  <span aria-hidden="true" className="text-muted-foreground/60">
+    ·
+  </span>
 );
+
+/**
+ * One fact on the header line, with the dot that separates it from the fact
+ * before. It wraps as a whole: on a card too narrow to hold the line, a
+ * label never parts from its value and a separator never lands at the head
+ * of a line on its own, looking like a bullet.
+ */
+function HeaderFact({
+  label,
+  children,
+}: {
+  label?: ReactNode;
+  children: ReactNode;
+}): ReactElement {
+  return (
+    <span className="flex items-center gap-x-2.5 whitespace-nowrap">
+      <HeaderDot />
+      {label !== undefined && <HeaderLabel>{label}</HeaderLabel>}
+      {children}
+    </span>
+  );
+}
+
+/** The lamp beside the page's title: the request's outcome, as a colour. */
+const OUTCOME_LAMP: Record<string, string> = {
+  failed: 'bg-red-500',
+  unreviewed: 'bg-amber-500',
+  served: 'bg-green-500',
+  running: 'bg-blue-500 animate-pulse',
+};
+
+/** The status code beside the request's other facts, in its outcome's colour. */
+const OUTCOME_TEXT: Record<string, string> = {
+  failed: 'text-red-500',
+  unreviewed: 'text-amber-500',
+  served: 'text-foreground',
+  running: 'text-muted-foreground',
+};
+
+/** The verdict word in a shut strip takes the colour of what it decided. */
+const SUMMARY_TONE: Record<string, string> = {
+  denied: 'text-red-500',
+  failed: 'text-amber-500',
+  replaced: 'text-foreground',
+  rewrote: 'text-foreground',
+  allowed: 'text-green-600 dark:text-green-500',
+  skipped: 'text-muted-foreground',
+};
 
 export function LogDetailsView(): ReactElement {
   const { selectedAgent } = useAgents();
@@ -115,14 +181,6 @@ export function LogDetailsView(): ReactElement {
     setLogId: setEvalLogId,
   } = useSkillOptimizationEvaluationRuns();
   const smartBack = useSmartBack();
-  const [showEvaluationDetails, setShowEvaluationDetails] = useState(false);
-  const [expandedEvaluations, setExpandedEvaluations] = useState<Set<string>>(
-    new Set(),
-  );
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    new Set(),
-  );
-
   // A log lives under its agent; its skill is a fact about the log, not
   // part of its address. The agent's skills are loaded to name it.
   useEffect(() => {
@@ -239,15 +297,6 @@ export function LogDetailsView(): ReactElement {
     }
   }, [selectedLog]);
 
-  // How long the provider itself took, when the gateway recorded it: the
-  // rest of the request's time was routing, hooks and review.
-  const providerSpan = useMemo(() => {
-    const provider = selectedLog?.ai_provider_request_log;
-    return provider?.start_time !== undefined && provider.end_time !== undefined
-      ? formatDuration(provider.end_time - provider.start_time)
-      : null;
-  }, [selectedLog?.ai_provider_request_log]);
-
   // What the model wrote when the client did not receive it. A hook keeps
   // the response it withheld or replaced on its own log, since the provider
   // log records what the client was given; drawn with the conversation, as
@@ -278,6 +327,13 @@ export function LogDetailsView(): ReactElement {
     });
   }, [selectedLog]);
 
+  // The request drawn to scale. Its stages come off marks the row already
+  // carries, so no log had to be written differently to be read this way.
+  const trace = useMemo(
+    () => (selectedLog ? traceOf(selectedLog) : null),
+    [selectedLog],
+  );
+
   // The prompt the client sent. Only worth a panel of its own when it differs
   // from what reached the provider; otherwise it is the system message below.
   const originalSystemPrompt = useMemo(() => {
@@ -285,6 +341,13 @@ export function LogDetailsView(): ReactElement {
     if (!original || !saRequestData) return null;
     return original === extractSystemPrompt(saRequestData) ? null : original;
   }, [selectedLog?.original_system_prompt, saRequestData]);
+
+  // The configuration that served the request, named on the header line
+  // beside its partition.
+  const servedConfiguration = useMemo(
+    () => (selectedLog ? readServedConfiguration(selectedLog.metadata) : null),
+    [selectedLog],
+  );
 
   // Where the prompt that reached the provider came from: the configuration
   // the optimizer pulled, or the client, when the skill substituted nothing.
@@ -306,13 +369,7 @@ export function LogDetailsView(): ReactElement {
 
   // Get all evaluation details from evaluation runs using display_info
   const evaluationDetails = useMemo(() => {
-    const allDetails: Array<{
-      method: EvaluationMethodName;
-      score: number;
-      sections: Array<{ label: string; content: string }>;
-      judgeModelName: string | null;
-      judgeModelProvider: string | null;
-    }> = [];
+    const allDetails: EvaluationDetail[] = [];
 
     evaluationRuns.forEach((run) => {
       run.results.forEach((result) => {
@@ -327,6 +384,14 @@ export function LogDetailsView(): ReactElement {
     });
     return allDetails;
   }, [evaluationRuns]);
+
+  // Nothing to separate from the conversation when no strip has anything to
+  // say, and an empty band would draw a line under nothing.
+  const hasStrips =
+    (selectedLog?.hook_logs.length ?? 0) > 0 ||
+    skillRouting !== null ||
+    evaluationDetails.length > 0 ||
+    averageScore !== null;
 
   const skillNameOf = (log: Log): string | null =>
     skills.find((skill) => skill.id === log.skill_id)?.name ?? null;
@@ -397,15 +462,41 @@ export function LogDetailsView(): ReactElement {
     );
   }
 
+  // How the request ended is the page's title: on a withheld request it is
+  // the first thing worth knowing, and it used to be a badge among eleven
+  // others. Which hook withheld it is the Hooks strip's summary, and why is
+  // inside it, with every other verdict rather than in a panel of its own.
+  const outcome = outcomeOf(selectedLog);
+  const hookSummary = summariseHooks(selectedLog.hook_logs);
+
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       <PageHeader
-        title="Log Details"
-        description={formatLogTimestamp(selectedLog.start_time)}
+        title={
+          <span className="flex items-center gap-2" title={outcome.title}>
+            <span
+              aria-hidden="true"
+              className={cn('h-2 w-2 rounded-full', OUTCOME_LAMP[outcome.tone])}
+            />
+            {outcome.label}
+          </span>
+        }
         showBackButton
         onBack={handleBack}
         actions={
           <>
+            {/* When it happened sits opposite the outcome, not beside it. */}
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {[
+                formatLogTimestamp(selectedLog.start_time),
+                selectedLog.duration !== null
+                  ? formatDuration(selectedLog.duration)
+                  : null,
+              ]
+                .filter((part): part is string => part !== null)
+                .join(' \u00b7 ')}
+            </span>
+            <Separator orientation="vertical" className="h-6" />
             <LogNavigation
               newerLog={newerLog}
               olderLog={olderLog}
@@ -419,302 +510,172 @@ export function LogDetailsView(): ReactElement {
       <div className="flex-1 overflow-hidden p-6">
         {/* Log Detail Card */}
         <Card className="flex flex-col h-full overflow-hidden">
-          <CardHeader className="flex flex-row justify-between items-center p-4 bg-card-header border-b">
-            <div className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
-              <HeaderItem>
-                <span className="text-sm">
-                  {formatLogTimestamp(selectedLog.start_time)}
+          <CardHeader className="flex flex-row justify-between items-center px-4 py-2 bg-card-header border-b">
+            {/* What the request was, as one line: every fact is a child of
+                the same flex, so one gap sets the spacing throughout. */}
+            <div className="flex flex-row flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs">
+              <span className="flex items-center gap-x-2.5 whitespace-nowrap">
+                <HeaderLabel>Status:</HeaderLabel>
+                <span
+                  title={outcome.title ?? outcome.label}
+                  className={cn(
+                    'font-mono font-medium',
+                    OUTCOME_TEXT[outcome.tone],
+                  )}
+                >
+                  {selectedLog.status ?? '\u2014'}
                 </span>
-              </HeaderItem>
-              <HeaderSeparator />
-              <HeaderItem
-                label="Status:"
-                title={
-                  selectedLog.status === HOOK_DENIED_STATUS
-                    ? 'The response was withheld by a hook'
-                    : undefined
-                }
-              >
-                <LogStatusBadge log={selectedLog} />
-              </HeaderItem>
-              {selectedLog.duration !== null && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem
-                    label="Took:"
-                    title={
-                      providerSpan
-                        ? `The provider itself took ${providerSpan}; the rest was routing, hooks and review`
-                        : undefined
-                    }
-                  >
-                    <span className="font-mono tabular-nums">
-                      {formatDuration(selectedLog.duration)}
-                    </span>
-                    {providerSpan && (
-                      <span className="text-muted-foreground">
-                        (provider {providerSpan})
-                      </span>
-                    )}
-                  </HeaderItem>
-                </>
+              </span>
+              {selectedAgent && (
+                <HeaderFact>
+                  <HeaderEntity
+                    avatar={createAgentAvatar(selectedAgent.name)}
+                    name={selectedAgent.name}
+                  />
+                  {logSkillName && (
+                    <>
+                      <HeaderLabel>/</HeaderLabel>
+                      <HeaderEntity
+                        avatar={createSkillAvatar(logSkillName)}
+                        name={logSkillName}
+                        title={`Open the ${logSkillName} skill`}
+                        onClick={() =>
+                          navigateToSkillDashboard(
+                            selectedAgent.name,
+                            logSkillName,
+                          )
+                        }
+                      />
+                    </>
+                  )}
+                </HeaderFact>
               )}
-              {logSkillName && selectedAgent && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Skill:">
-                    <button
-                      type="button"
-                      className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={() =>
-                        navigateToSkillDashboard(
-                          selectedAgent.name,
-                          logSkillName,
-                        )
-                      }
-                    >
-                      <Badge
-                        variant="outline"
-                        className={`${HEADER_BADGE} gap-1.5 hover:bg-accent`}
-                      >
-                        <img
-                          src={createSkillAvatar(logSkillName)}
-                          alt=""
-                          className="h-3.5 w-3.5 rounded-sm"
-                        />
-                        {logSkillName}
-                      </Badge>
-                    </button>
-                  </HeaderItem>
-                </>
-              )}
-              <HeaderSeparator />
-              <HeaderItem label="Model:">
+              <HeaderFact>
                 <span className="font-mono">
                   {selectedLog.ai_provider
                     ? (PrettyAIProvider[selectedLog.ai_provider] ??
                       selectedLog.ai_provider)
-                    : '—'}
-                  /{selectedLog.model ?? '—'}
+                    : '\u2014'}
+                  /{selectedLog.model ?? '\u2014'}
                 </span>
-              </HeaderItem>
-              {selectedLog.span_name && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem>
-                    <span>{selectedLog.span_name}</span>
-                  </HeaderItem>
-                </>
+              </HeaderFact>
+              {clusterName && logSkillName && (
+                <HeaderFact label="partition">
+                  <HeaderEntity
+                    avatar={createClusterAvatar(logSkillName, clusterName)}
+                    name={clusterName}
+                  />
+                </HeaderFact>
               )}
-              {clusterName && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Partition:">
-                    <Badge
-                      variant="outline"
-                      className={`${HEADER_BADGE} font-mono`}
-                    >
-                      {clusterName}
-                    </Badge>
-                  </HeaderItem>
-                </>
-              )}
-              {skillRouting && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Routed:" title={skillRouting.title}>
-                    <Badge variant="outline" className={HEADER_BADGE}>
-                      {skillRouting.label}
-                    </Badge>
-                    {skillRouting.detail && (
-                      <span className="font-mono text-muted-foreground">
-                        {skillRouting.detail}
-                      </span>
+              {servedConfiguration && clusterName && logSkillName && (
+                <HeaderFact label="config">
+                  <HeaderEntity
+                    avatar={createArmAvatar(
+                      logSkillName,
+                      clusterName,
+                      servedConfiguration.name,
                     )}
-                  </HeaderItem>
-                </>
+                    name={servedConfiguration.name}
+                  />
+                </HeaderFact>
               )}
               {temperature !== null && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Temp:">
-                    <span className="font-mono">{temperature.toFixed(2)}</span>
-                  </HeaderItem>
-                </>
+                <HeaderFact label="temp">
+                  <span className="font-mono">{temperature.toFixed(2)}</span>
+                </HeaderFact>
               )}
               {thinkingEffort && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Thinking:">
-                    <Badge variant="secondary" className={HEADER_BADGE}>
-                      {thinkingEffort}
-                    </Badge>
-                  </HeaderItem>
-                </>
+                <HeaderFact label="thinking">
+                  <span className="font-mono">{thinkingEffort}</span>
+                </HeaderFact>
               )}
-              {averageScore !== null && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem label="Weighted Eval Score:">
-                    {averageScore >= 0.7 ? (
-                      <CheckCircle2 className="h-3 w-3 text-green-500" />
-                    ) : (
-                      <XCircle className="h-3 w-3 text-red-500" />
-                    )}
-                    <span className="font-mono font-medium">
-                      {(averageScore * 100).toFixed(0)}%
-                    </span>
-                  </HeaderItem>
-                </>
-              )}
-              {evaluationDetails.length > 0 && (
-                <>
-                  <HeaderSeparator />
-                  <HeaderItem>
-                    <Badge variant="outline" className={HEADER_BADGE}>
-                      {evaluationDetails.length} eval
-                      {evaluationDetails.length > 1 ? 's' : ''}
-                    </Badge>
-                  </HeaderItem>
-                  <HeaderSeparator />
-                  <HeaderItem>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setShowEvaluationDetails(!showEvaluationDetails)
-                      }
-                      className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {showEvaluationDetails ? (
-                        <>
-                          <ChevronDown className="h-3 w-3" />
-                          <span>Hide Details</span>
-                        </>
-                      ) : (
-                        <>
-                          <ChevronRight className="h-3 w-3" />
-                          <span>Show Details ({evaluationDetails.length})</span>
-                        </>
-                      )}
-                    </button>
-                  </HeaderItem>
-                </>
+              {selectedLog.span_name && (
+                <HeaderFact label="span">
+                  <span className="font-mono">{selectedLog.span_name}</span>
+                </HeaderFact>
               )}
             </div>
           </CardHeader>
-          {showEvaluationDetails && evaluationDetails.length > 0 && (
-            <div className="px-4 py-4 space-y-2 bg-muted/30 border-b">
-              {evaluationDetails.map((evaluation, evalIdx) => {
-                const evalKey = `${evaluation.method}-${evalIdx}`;
-                const isEvalExpanded = expandedEvaluations.has(evalKey);
-                const prettyName =
-                  EvaluationMethodNames[evaluation.method] || evaluation.method;
-
-                return (
-                  <div
-                    key={evalKey}
-                    className="bg-background rounded-md border overflow-hidden"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setExpandedEvaluations((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(evalKey)) {
-                            next.delete(evalKey);
-                          } else {
-                            next.add(evalKey);
-                          }
-                          return next;
-                        });
-                      }}
-                      className="w-full flex items-center justify-between px-3 py-2 bg-muted/50 hover:bg-muted transition-colors text-left"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">
-                          {prettyName}
-                        </Badge>
-                        <Badge variant="outline" className="text-xs">
-                          {(evaluation.score * 100).toFixed(1)}%
-                        </Badge>
-                        {evaluation.judgeModelName && (
-                          <Badge
-                            variant="secondary"
-                            className="text-xs text-muted-foreground"
-                          >
-                            {evaluation.judgeModelProvider
-                              ? `${PrettyAIProvider[evaluation.judgeModelProvider as AIProvider] || evaluation.judgeModelProvider}/${evaluation.judgeModelName}`
-                              : evaluation.judgeModelName}
-                          </Badge>
-                        )}
-                      </div>
-                      {isEvalExpanded ? (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </button>
-                    {isEvalExpanded && (
-                      <div className="border-t">
-                        {evaluation.sections.map((section, sectionIdx) => {
-                          const sectionKey = `${evalKey}-${sectionIdx}`;
-                          const isSectionExpanded =
-                            expandedSections.has(sectionKey);
-
-                          return (
-                            <div
-                              key={sectionKey}
-                              className="border-b last:border-b-0"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setExpandedSections((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(sectionKey)) {
-                                      next.delete(sectionKey);
-                                    } else {
-                                      next.add(sectionKey);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                className="w-full flex items-center justify-between px-3 py-2 bg-muted/20 hover:bg-muted/40 transition-colors text-left"
-                              >
-                                <span className="text-xs font-medium">
-                                  {section.label}
-                                </span>
-                                {isSectionExpanded ? (
-                                  <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                                ) : (
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                                )}
-                              </button>
-                              {isSectionExpanded && (
-                                <div className="p-3 text-sm whitespace-pre-wrap leading-relaxed bg-background">
-                                  {section.content}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
+          {trace !== null && selectedLog.duration !== null && (
+            <RequestTrace stages={trace} total={selectedLog.duration} />
+          )}
+          {/* However much is opened here, the strips take at most half the
+              card and scroll inside it: the conversation below them is what
+              the reader came for, and it may not be pushed off the page. */}
+          <div
+            className={cn(
+              'max-h-[50vh] shrink-0 divide-y overflow-y-auto',
+              // Drawn on the band itself, so it stays at the boundary with
+              // the conversation instead of scrolling away with the strips.
+              hasStrips && 'border-b',
+            )}
+          >
+            {selectedLog.hook_logs.length > 0 && (
+              <LogStrip
+                name="Hooks"
+                defaultOpen={hookSummary.verdict === 'denied'}
+                note={
+                  <span className={SUMMARY_TONE[hookSummary.verdict]}>
+                    {hookSummary.text}
+                  </span>
+                }
+              >
+                <HookResults
+                  hookLogs={selectedLog.hook_logs}
+                  reviewOf={(hookLog) => reviewOf(hookLog, reviews)}
+                  onOpenReview={(review, reviewer) =>
+                    navigateToLogDetail(reviewer, review.id)
+                  }
+                />
+              </LogStrip>
+            )}
+            {skillRouting && (
+              <LogStrip
+                name="Routing"
+                note={
+                  <>
+                    {skillRouting.label}
+                    {skillRouting.detail && ` \u00b7 ${skillRouting.detail}`}
+                  </>
+                }
+              >
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {skillRouting.title}
+                </p>
+              </LogStrip>
+            )}
+            {(evaluationDetails.length > 0 || averageScore !== null) && (
+              <LogStrip
+                name="Evaluations"
+                note={
+                  <>
+                    {evaluationDetails.length > 0
+                      ? `${evaluationDetails.length} ran`
+                      : 'None ran'}
+                    {averageScore !== null && (
+                      <>
+                        {' \u00b7 '}
+                        <span
+                          className={cn(
+                            'font-mono font-medium',
+                            averageScore >= GOOD_SCORE
+                              ? 'text-green-600 dark:text-green-500'
+                              : 'text-amber-500',
+                          )}
+                        >
+                          {(averageScore * 100).toFixed(0)}%
+                        </span>
+                        {' overall'}
+                      </>
                     )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {selectedLog.hook_logs.length > 0 && (
-            <HookResults
-              hookLogs={selectedLog.hook_logs}
-              reviewOf={(hookLog) => reviewOf(hookLog, reviews)}
-              onOpenReview={(review, reviewer) =>
-                navigateToLogDetail(reviewer, review.id)
-              }
-            />
-          )}
-          <CardContent className="flex flex-row p-0 h-full relative overflow-hidden">
+                  </>
+                }
+              >
+                <EvaluationResults evaluations={evaluationDetails} />
+              </LogStrip>
+            )}
+          </div>
+          <CardContent className="flex flex-1 min-h-0 flex-row p-0 relative overflow-hidden">
             {selectedLog.trace_id && session.logs.length > 1 && (
               <SessionMap
                 logs={session.logs}
