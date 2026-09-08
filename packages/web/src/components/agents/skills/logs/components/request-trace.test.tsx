@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import {
   describeTrace,
+  placeStages,
   RequestTrace,
 } from '@web/components/agents/skills/logs/components/request-trace';
 import type { TraceStage } from '@web/utils/log-trace';
@@ -39,8 +40,19 @@ describe('describeTrace', () => {
   });
 });
 
+describe('placeStages', () => {
+  it('puts each stage at the middle of its own share of the request', () => {
+    // routing spans 0-87.9% of the request, provider 87.9-94.2%, review
+    // 94.2-100%, so each middle is the centre of its own share.
+    const middles = placeStages(stages).map((stage) => stage.middle);
+    expect(middles[0]).toBeCloseTo(0.439, 3);
+    expect(middles[1]).toBeCloseTo(0.911, 3);
+    expect(middles[2]).toBeCloseTo(0.971, 3);
+  });
+});
+
 describe('RequestTrace', () => {
-  it('names every stage with its own duration, and the request with its total', () => {
+  it('names every stage with its own duration', () => {
     render(<RequestTrace stages={stages} total={123_959} />);
 
     const timing = screen.getByRole('region', { name: 'Timing' });
@@ -50,8 +62,6 @@ describe('RequestTrace', () => {
     expect(timing).toHaveTextContent('7.9s');
     expect(timing).toHaveTextContent('review');
     expect(timing).toHaveTextContent('7.1s');
-    expect(timing).toHaveTextContent('total');
-    expect(timing).toHaveTextContent('2m 4s');
   });
 
   it('draws each stage as long as it took', () => {
@@ -76,5 +86,42 @@ describe('RequestTrace', () => {
     expect(gateway.className).toContain('bg-muted-foreground/40');
     expect(provider.className).toContain('bg-teal-500');
     expect(hook.className).toContain('bg-amber-500');
+  });
+
+  it('sets each label over its own stage, not in a row beside the bar', () => {
+    render(<RequestTrace stages={stages} total={123_959} />);
+
+    const routing = screen.getByText('routing').parentElement as HTMLElement;
+    const provider = screen.getByText('provider').parentElement as HTMLElement;
+    const review = screen.getByText('review').parentElement as HTMLElement;
+
+    // The long stage is named over its own middle, not beside the bar.
+    expect(Number.parseFloat(routing.style.left)).toBeCloseTo(43.9, 1);
+    expect(routing.style.transform).toBe('translateX(-50%)');
+
+    // The two short ones end at the right, so their labels anchor there
+    // rather than overflowing the bar. Their risers still point at them.
+    expect(provider.style.right).toBe('0px');
+    expect(review.style.right).toBe('0px');
+  });
+
+  it('alternates rows so neighbouring labels cannot overlap', () => {
+    render(<RequestTrace stages={stages} total={123_959} />);
+
+    const tops = ['routing', 'provider', 'review'].map(
+      (label) =>
+        (screen.getByText(label).parentElement as HTMLElement).style.top,
+    );
+    expect(tops).toEqual(['7px', '24px', '7px']);
+  });
+
+  it('keeps two stages on one row, since they cannot collide', () => {
+    render(<RequestTrace stages={stages.slice(0, 2)} total={116_817} />);
+
+    const tops = ['routing', 'provider'].map(
+      (label) =>
+        (screen.getByText(label).parentElement as HTMLElement).style.top,
+    );
+    expect(tops).toEqual(['7px', '7px']);
   });
 });

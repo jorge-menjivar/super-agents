@@ -444,7 +444,7 @@ export function LogDetailsView(): ReactElement {
         }
         description={[
           formatLogTimestamp(selectedLog.start_time),
-          trace === null && selectedLog.duration !== null
+          selectedLog.duration !== null
             ? formatDuration(selectedLog.duration)
             : null,
         ]
