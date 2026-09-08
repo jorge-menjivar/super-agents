@@ -4,7 +4,6 @@ import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
 import type { Log } from '@shared/types/data/log';
 import { EvaluationMethodName } from '@shared/types/evaluations';
-import { HookType } from '@shared/types/middleware/hooks';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
 import { CompletionViewer } from '@web/components/agents/skills/logs/components/completion-viewer';
@@ -33,11 +32,7 @@ import { useSkillOptimizationClusters } from '@web/providers/skill-optimization-
 import { useSkillOptimizationEvaluationRuns } from '@web/providers/skill-optimization-evaluation-runs';
 import { useSkills } from '@web/providers/skills';
 import { createSkillAvatar } from '@web/utils/avatars';
-import {
-  denyingHook,
-  describeHookLog,
-  summariseHooks,
-} from '@web/utils/hook-outcome';
+import { describeHookLog, summariseHooks } from '@web/utils/hook-outcome';
 import { outcomeOf } from '@web/utils/log-outcome';
 import { traceOf } from '@web/utils/log-trace';
 import { reviewOf } from '@web/utils/reviews';
@@ -429,10 +424,10 @@ export function LogDetailsView(): ReactElement {
 
   // How the request ended is the page's title: on a withheld request it is
   // the first thing worth knowing, and it used to be a badge among eleven
-  // others. The hook that withheld it says so in full under the header.
+  // others. Which hook withheld it is the Hooks strip's summary, and why is
+  // inside it, with every other verdict rather than in a panel of its own.
   const outcome = outcomeOf(selectedLog);
   const hookSummary = summariseHooks(selectedLog.hook_logs);
-  const denial = denyingHook(selectedLog.hook_logs);
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -558,27 +553,6 @@ export function LogDetailsView(): ReactElement {
               )}
             </div>
           </CardHeader>
-          {denial && (
-            <div className="flex flex-row gap-3 border-b bg-destructive/5 px-4 py-3">
-              <span
-                aria-hidden="true"
-                className="w-[3px] shrink-0 rounded-full bg-destructive"
-              />
-              <div className="min-w-0 space-y-1">
-                <div className="text-sm font-medium">
-                  {denial.hook.id} withheld the{' '}
-                  {denial.hook.type === HookType.INPUT_HOOK
-                    ? 'request'
-                    : 'response'}
-                </div>
-                {(denial.result.reason ?? denial.result.error) && (
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-                    {denial.result.reason ?? denial.result.error}
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
           {trace !== null && selectedLog.duration !== null && (
             <RequestTrace stages={trace} total={selectedLog.duration} />
           )}

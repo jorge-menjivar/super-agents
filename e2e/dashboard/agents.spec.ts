@@ -312,13 +312,11 @@ test.describe('log page', () => {
       await page.getByText('Chat Complete').first().click();
       await expect(page).toHaveURL(/\/logs\/[0-9a-f-]+$/);
 
-      // How the request ended is the page's title, and the hook that withheld
-      // it says so in full, with nothing to open first.
+      // How the request ended is the page's title, and which hook decided it
+      // is the Hooks strip's own summary; the reason is inside, with every
+      // other verdict, rather than in a panel of its own.
       await expect(
-        page.getByRole('heading', { name: 'Withheld' }),
-      ).toBeVisible();
-      await expect(
-        page.getByText('reviewer:absent withheld the response'),
+        page.getByRole('heading', { name: 'Withheld by review' }),
       ).toBeVisible();
       await expect(page.getByText('446', { exact: true })).toBeVisible();
 

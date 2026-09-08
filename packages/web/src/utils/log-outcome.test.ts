@@ -53,10 +53,19 @@ describe('outcomeOf', () => {
     });
   });
 
-  it('calls a hook denial withheld, not failed', () => {
-    const outcome = outcomeOf(log({ status: 446 }));
+  it('calls a reviewer denial withheld by review, and names the hook', () => {
+    const outcome = outcomeOf(
+      log({ status: 446, hook_logs: [hookLog({ deny_request: true })] }),
+    );
     expect(outcome.tone).toBe('failed');
-    expect(outcome.label).toBe('Withheld');
+    expect(outcome.label).toBe('Withheld by review');
+    expect(outcome.title).toContain('reviewer:system-safety');
+    expect(outcome.title).toContain('withheld the response');
+  });
+
+  it('calls any other denial withheld by a hook', () => {
+    // Nothing recorded the denial, so there is no reviewer to name.
+    expect(outcomeOf(log({ status: 446 })).label).toBe('Withheld by a hook');
   });
 
   it('calls any other error a failure, and says which', () => {

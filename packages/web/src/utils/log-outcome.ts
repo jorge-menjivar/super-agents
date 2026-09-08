@@ -1,6 +1,10 @@
 import type { Log } from '@shared/types/data/log';
-import { HOOK_DENIED_STATUS } from '@shared/types/middleware/hooks';
-import { wentUnreviewed } from '@web/utils/hook-outcome';
+import {
+  HOOK_DENIED_STATUS,
+  HookProvider,
+  HookType,
+} from '@shared/types/middleware/hooks';
+import { denyingHook, wentUnreviewed } from '@web/utils/hook-outcome';
 
 /**
  * How a request ended, in the one word the page is titled by.
@@ -25,10 +29,22 @@ export function outcomeOf(log: Log): LogOutcome {
     return { tone: 'running', label: 'Running' };
   }
   if (log.status === HOOK_DENIED_STATUS) {
+    const denial = denyingHook(log.hook_logs);
+    // Named by what withheld it, since the page no longer carries a panel
+    // saying so: an agent judging the answer is a review, and anything
+    // else -- an endpoint, a check before the provider -- is a hook.
+    const byReview =
+      denial !== undefined &&
+      denial.hook.hook_provider === HookProvider.AGENT &&
+      denial.hook.type === HookType.OUTPUT_HOOK;
+    const subject =
+      denial?.hook.type === HookType.INPUT_HOOK ? 'request' : 'response';
     return {
       tone: 'failed',
-      label: 'Withheld',
-      title: 'A hook withheld the response, and the client was given an error',
+      label: byReview ? 'Withheld by review' : 'Withheld by a hook',
+      title: denial
+        ? `The "${denial.hook.id}" hook withheld the ${subject}, and the client was given an error`
+        : 'A hook withheld the response, and the client was given an error',
     };
   }
   if (log.status >= 400) {
