@@ -31,6 +31,12 @@ import { useNavigation } from '@web/providers/navigation';
 import { useSkillOptimizationClusters } from '@web/providers/skill-optimization-clusters';
 import { useSkillOptimizationEvaluationRuns } from '@web/providers/skill-optimization-evaluation-runs';
 import { useSkills } from '@web/providers/skills';
+import {
+  createAgentAvatar,
+  createArmAvatar,
+  createClusterAvatar,
+  createSkillAvatar,
+} from '@web/utils/avatars';
 import { describeHookLog, summariseHooks } from '@web/utils/hook-outcome';
 import { outcomeOf } from '@web/utils/log-outcome';
 import { traceOf } from '@web/utils/log-trace';
@@ -67,25 +73,50 @@ const EvaluationMethodNames: Record<EvaluationMethodName, string> = {
 };
 
 /**
- * One fact about the log in its header. Every item is the same height, so
- * however the row wraps each line is as tall as the next and text, badges
- * and icons sit on one centre line.
+ * A named thing on the log's header line, wearing the face the rest of the
+ * dashboard gives it. The avatars are how an agent, a skill, a partition and
+ * a configuration are recognised everywhere else, so the line that says which
+ * ones served this request shows the same ones.
  */
-function HeaderItem({
-  label,
+function HeaderEntity({
+  avatar,
+  name,
   title,
-  children,
+  onClick,
 }: {
-  label?: string;
+  avatar: string;
+  name: string;
   title?: string;
-  children: ReactNode;
+  onClick?: () => void;
 }): ReactElement {
-  return (
-    <div className="flex h-6 items-center gap-1.5" title={title}>
-      {label && <span className="text-muted-foreground">{label}</span>}
-      {children}
-    </div>
+  const body = (
+    <span className="flex items-center gap-1.5">
+      <img src={avatar} alt="" className="h-3.5 w-3.5 shrink-0 rounded-sm" />
+      <span className="font-medium">{name}</span>
+    </span>
   );
+  if (!onClick) {
+    return (
+      <span title={title} className="flex items-center">
+        {body}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className="flex items-center rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {body}
+    </button>
+  );
+}
+
+/** What a value on the header line is, where the value cannot say itself. */
+function HeaderLabel({ children }: { children: ReactNode }): ReactElement {
+  return <span className="text-muted-foreground">{children}</span>;
 }
 
 /** A badge sized to the header's items, whatever its variant */
@@ -312,6 +343,13 @@ export function LogDetailsView(): ReactElement {
     return original === extractSystemPrompt(saRequestData) ? null : original;
   }, [selectedLog?.original_system_prompt, saRequestData]);
 
+  // The configuration that served the request, named on the header line
+  // beside its partition.
+  const servedConfiguration = useMemo(
+    () => (selectedLog ? readServedConfiguration(selectedLog.metadata) : null),
+    [selectedLog],
+  );
+
   // Where the prompt that reached the provider came from: the configuration
   // the optimizer pulled, or the client, when the skill substituted nothing.
   const systemPromptOrigin = useMemo(() => {
@@ -468,84 +506,95 @@ export function LogDetailsView(): ReactElement {
         {/* Log Detail Card */}
         <Card className="flex flex-col h-full overflow-hidden">
           <CardHeader className="flex flex-row justify-between items-center p-4 bg-card-header border-b">
-            {/* What the request was, as one line: only the facts that need
-                naming carry a word, and the values do the rest. */}
-            <div className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
-              <HeaderItem label="Status:" title={outcome.title}>
-                <span
-                  className={cn(
-                    'font-mono font-medium',
-                    OUTCOME_TEXT[outcome.tone],
-                  )}
-                >
-                  {selectedLog.status ?? '\u2014'}
-                </span>
-              </HeaderItem>
+            {/* What the request was, as one line: every fact is a child of
+                the same flex, so one gap sets the spacing throughout. */}
+            <div className="flex flex-row flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs">
+              <HeaderLabel>Status:</HeaderLabel>
+              <span
+                title={outcome.title ?? outcome.label}
+                className={cn(
+                  'font-mono font-medium',
+                  OUTCOME_TEXT[outcome.tone],
+                )}
+              >
+                {selectedLog.status ?? '\u2014'}
+              </span>
               {selectedAgent && (
                 <>
                   <HeaderDot />
-                  <HeaderItem>
-                    <span className="font-medium">{selectedAgent.name}</span>
-                    {logSkillName && (
-                      <>
-                        <span className="text-muted-foreground">/</span>
-                        <button
-                          type="button"
-                          className="rounded-sm font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          onClick={() =>
-                            navigateToSkillDashboard(
-                              selectedAgent.name,
-                              logSkillName,
-                            )
-                          }
-                        >
-                          {logSkillName}
-                        </button>
-                      </>
-                    )}
-                  </HeaderItem>
+                  <HeaderEntity
+                    avatar={createAgentAvatar(selectedAgent.name)}
+                    name={selectedAgent.name}
+                  />
+                  {logSkillName && (
+                    <>
+                      <HeaderLabel>/</HeaderLabel>
+                      <HeaderEntity
+                        avatar={createSkillAvatar(logSkillName)}
+                        name={logSkillName}
+                        title={`Open the ${logSkillName} skill`}
+                        onClick={() =>
+                          navigateToSkillDashboard(
+                            selectedAgent.name,
+                            logSkillName,
+                          )
+                        }
+                      />
+                    </>
+                  )}
                 </>
               )}
               <HeaderDot />
-              <HeaderItem>
-                <span className="font-mono">
-                  {selectedLog.ai_provider
-                    ? (PrettyAIProvider[selectedLog.ai_provider] ??
-                      selectedLog.ai_provider)
-                    : '\u2014'}
-                  /{selectedLog.model ?? '\u2014'}
-                </span>
-              </HeaderItem>
-              {clusterName && (
+              <span className="font-mono">
+                {selectedLog.ai_provider
+                  ? (PrettyAIProvider[selectedLog.ai_provider] ??
+                    selectedLog.ai_provider)
+                  : '\u2014'}
+                /{selectedLog.model ?? '\u2014'}
+              </span>
+              {clusterName && logSkillName && (
                 <>
                   <HeaderDot />
-                  <HeaderItem label="partition">
-                    <span className="font-mono">{clusterName}</span>
-                  </HeaderItem>
+                  <HeaderLabel>partition</HeaderLabel>
+                  <HeaderEntity
+                    avatar={createClusterAvatar(logSkillName, clusterName)}
+                    name={clusterName}
+                  />
+                </>
+              )}
+              {servedConfiguration && clusterName && logSkillName && (
+                <>
+                  <HeaderDot />
+                  <HeaderLabel>config</HeaderLabel>
+                  <HeaderEntity
+                    avatar={createArmAvatar(
+                      logSkillName,
+                      clusterName,
+                      servedConfiguration.name,
+                    )}
+                    name={servedConfiguration.name}
+                  />
                 </>
               )}
               {temperature !== null && (
                 <>
                   <HeaderDot />
-                  <HeaderItem label="temp">
-                    <span className="font-mono">{temperature.toFixed(2)}</span>
-                  </HeaderItem>
+                  <HeaderLabel>temp</HeaderLabel>
+                  <span className="font-mono">{temperature.toFixed(2)}</span>
                 </>
               )}
               {thinkingEffort && (
                 <>
                   <HeaderDot />
-                  <HeaderItem label="thinking">
-                    <span className="font-mono">{thinkingEffort}</span>
-                  </HeaderItem>
+                  <HeaderLabel>thinking</HeaderLabel>
+                  <span className="font-mono">{thinkingEffort}</span>
                 </>
               )}
               {selectedLog.span_name && (
                 <>
                   <HeaderDot />
-                  <HeaderItem label="span">
-                    <span className="font-mono">{selectedLog.span_name}</span>
-                  </HeaderItem>
+                  <HeaderLabel>span</HeaderLabel>
+                  <span className="font-mono">{selectedLog.span_name}</span>
                 </>
               )}
             </div>

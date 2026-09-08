@@ -1,4 +1,4 @@
-import { identicon, rings, shapes } from '@dicebear/collection';
+import { botttsNeutral, identicon, rings, shapes } from '@dicebear/collection';
 import { createAvatar } from '@dicebear/core';
 
 const BACKGROUNDS = [
@@ -33,6 +33,10 @@ const createEntityAvatar = (style: AvatarStyle, seed: string): string => {
   }).toString();
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 };
+
+/** An agent's avatar, drawn from its name, as an image URL. */
+export const createAgentAvatar = (agentName: string): string =>
+  createEntityAvatar(botttsNeutral, agentName);
 
 /** A skill's avatar, drawn from its name, as an image URL. */
 export const createSkillAvatar = (skillName: string): string =>
