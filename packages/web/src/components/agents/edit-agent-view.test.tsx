@@ -719,6 +719,69 @@ describe('EditAgentView', () => {
       });
     });
 
+    it('cannot set the review timeout without a reviewer', () => {
+      renderEditAgentView();
+      expect(screen.getByLabelText('Review timeout (seconds)')).toBeDisabled();
+    });
+
+    it('saves how long the client waits for the verdict', async () => {
+      vi.mocked(useAgents).mockReturnValue({
+        ...vi.mocked(useAgents)(),
+        agents: [mockAgent, guard],
+        selectedAgent: {
+          ...mockAgent,
+          reviewer_agent_id: 'agent-2',
+          options: AgentOptions.parse({ review: { timeout_ms: 90_000 } }),
+        },
+      });
+      renderEditAgentView();
+
+      // Milliseconds on the row, seconds on the page.
+      const timeout = screen.getByLabelText('Review timeout (seconds)');
+      expect(timeout).toHaveValue(90);
+
+      fireEvent.change(timeout, { target: { value: '180' } });
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          'agent-1',
+          expect.objectContaining({
+            options: expect.objectContaining({
+              review: { timeout_ms: 180_000 },
+            }),
+          }),
+        );
+      });
+    });
+
+    it('leaves the review to its default when the field is empty', async () => {
+      vi.mocked(useAgents).mockReturnValue({
+        ...vi.mocked(useAgents)(),
+        agents: [mockAgent, guard],
+        selectedAgent: {
+          ...mockAgent,
+          reviewer_agent_id: 'agent-2',
+          options: AgentOptions.parse({ review: { timeout_ms: 90_000 } }),
+        },
+      });
+      renderEditAgentView();
+
+      fireEvent.change(screen.getByLabelText('Review timeout (seconds)'), {
+        target: { value: '' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          'agent-1',
+          expect.objectContaining({
+            options: expect.objectContaining({ review: { timeout_ms: null } }),
+          }),
+        );
+      });
+    });
+
     it('saves the choice to explain denials', async () => {
       vi.mocked(useAgents).mockReturnValue({
         ...vi.mocked(useAgents)(),

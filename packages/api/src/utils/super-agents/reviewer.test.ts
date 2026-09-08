@@ -1,6 +1,7 @@
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { reviewerHookFor } from '@api/utils/super-agents/reviewer';
+import { AgentOptions } from '@shared/types/data';
 import { HookProvider, HookType } from '@shared/types/middleware/hooks';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,6 +17,7 @@ const agent = {
   reviewer_agent_id: 'agent-2',
   review_fail_closed: false,
   review_expose_reason: false,
+  options: AgentOptions.parse({}),
 };
 const guard = { id: 'agent-2', name: 'guard' };
 
@@ -33,6 +35,19 @@ describe('reviewerHookFor', () => {
       fail_closed: false,
       expose_reason: false,
     });
+  });
+
+  it('bounds the review by the agent timeout when it has one', async () => {
+    const hook = await reviewerHookFor(
+      c,
+      connector([guard]),
+      {
+        ...agent,
+        options: AgentOptions.parse({ review: { timeout_ms: 5000 } }),
+      },
+      {},
+    );
+    expect(hook?.config).toEqual({ agent_name: 'guard', timeout_ms: 5000 });
   });
 
   it('carries the agent choice to fail closed', async () => {

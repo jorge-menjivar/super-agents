@@ -733,6 +733,26 @@ describe('automatic skill settings', () => {
     ).toBe(30_000);
   });
 
+  it('carries the reviewer timeout beside the roles, and inherits by default', () => {
+    // The reviewer is another agent, so the only thing to say about it here
+    // is how long the client waits for its verdict.
+    expect(AgentOptions.parse({}).review.timeout_ms).toBeNull();
+
+    const merged = mergeAgentOptions(
+      AgentOptions.parse({ review: { timeout_ms: 120_000 } }),
+      { judge: { timeout_ms: 45_000 } },
+    );
+    expect(merged.review.timeout_ms).toBe(120_000);
+    expect(
+      mergeAgentOptions(merged, { review: { timeout_ms: null } }).review
+        .timeout_ms,
+    ).toBeNull();
+
+    expect(() =>
+      AgentUpdateParams.parse({ options: { review: { timeout_ms: 500 } } }),
+    ).toThrow();
+  });
+
   it('keep the threshold between 0 and 1 and the cap a whole, non-negative number', () => {
     expect(() =>
       AgentCreateParams.parse({ ...minimal, skill_match_threshold: 1.5 }),
