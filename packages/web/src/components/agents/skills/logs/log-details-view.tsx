@@ -1,13 +1,17 @@
 'use client';
 
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
-import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
+import { PrettyAIProvider } from '@shared/types/constants';
 import type { Log } from '@shared/types/data/log';
-import { EvaluationMethodName } from '@shared/types/evaluations';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
 import { CompletionViewer } from '@web/components/agents/skills/logs/components/completion-viewer';
 import { EmbeddingFingerprint } from '@web/components/agents/skills/logs/components/embedding-fingerprint';
+import {
+  type EvaluationDetail,
+  EvaluationResults,
+  GOOD_SCORE,
+} from '@web/components/agents/skills/logs/components/evaluation-results';
 import { GenericViewer } from '@web/components/agents/skills/logs/components/generic-viewer';
 import { HookResults } from '@web/components/agents/skills/logs/components/hook-results';
 import { LogStrip } from '@web/components/agents/skills/logs/components/log-strip';
@@ -52,26 +56,9 @@ import {
 } from '@web/utils/system-prompt-origin';
 import { formatDuration, formatLogTimestamp } from '@web/utils/time';
 import { cn } from '@web/utils/ui/utils';
-import {
-  AlertTriangle,
-  ArrowLeftIcon,
-  ChevronDown,
-  ChevronRight,
-} from 'lucide-react';
+import { AlertTriangle, ArrowLeftIcon } from 'lucide-react';
 import type { ReactElement, ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
-
-// Pretty names for evaluation methods
-const EvaluationMethodNames: Record<EvaluationMethodName, string> = {
-  [EvaluationMethodName.TASK_COMPLETION]: 'Task Completion',
-  [EvaluationMethodName.ARGUMENT_CORRECTNESS]: 'Argument Correctness',
-  [EvaluationMethodName.ROLE_ADHERENCE]: 'Role Adherence',
-  [EvaluationMethodName.TURN_RELEVANCY]: 'Turn Relevancy',
-  [EvaluationMethodName.TOOL_CORRECTNESS]: 'Tool Correctness',
-  [EvaluationMethodName.KNOWLEDGE_RETENTION]: 'Knowledge Retention',
-  [EvaluationMethodName.CONVERSATION_COMPLETENESS]: 'Conversation Completeness',
-  [EvaluationMethodName.LATENCY]: 'Latency',
-};
+import { useEffect, useMemo } from 'react';
 
 /**
  * A named thing on the log's header line, wearing the face the rest of the
@@ -123,9 +110,6 @@ function HeaderLabel({ children }: { children: ReactNode }): ReactElement {
 /** A badge sized to the header's items, whatever its variant */
 const HEADER_BADGE = 'h-5 px-2 py-0 text-xs';
 
-/** The score an answer has to reach to read as a good one. */
-const GOOD_SCORE = 0.7;
-
 const HeaderDot = (): ReactElement => (
   <span aria-hidden="true" className="text-muted-foreground/60">
     ·
@@ -176,13 +160,6 @@ export function LogDetailsView(): ReactElement {
     setLogId: setEvalLogId,
   } = useSkillOptimizationEvaluationRuns();
   const smartBack = useSmartBack();
-  const [expandedEvaluations, setExpandedEvaluations] = useState<Set<string>>(
-    new Set(),
-  );
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    new Set(),
-  );
-
   // A log lives under its agent; its skill is a fact about the log, not
   // part of its address. The agent's skills are loaded to name it.
   useEffect(() => {
@@ -371,13 +348,7 @@ export function LogDetailsView(): ReactElement {
 
   // Get all evaluation details from evaluation runs using display_info
   const evaluationDetails = useMemo(() => {
-    const allDetails: Array<{
-      method: EvaluationMethodName;
-      score: number;
-      sections: Array<{ label: string; content: string }>;
-      judgeModelName: string | null;
-      judgeModelProvider: string | null;
-    }> = [];
+    const allDetails: EvaluationDetail[] = [];
 
     evaluationRuns.forEach((run) => {
       run.results.forEach((result) => {
@@ -673,108 +644,7 @@ export function LogDetailsView(): ReactElement {
                 </>
               }
             >
-              <div className="space-y-2">
-                {evaluationDetails.map((evaluation, evalIdx) => {
-                  const evalKey = `${evaluation.method}-${evalIdx}`;
-                  const isEvalExpanded = expandedEvaluations.has(evalKey);
-                  const prettyName =
-                    EvaluationMethodNames[evaluation.method] ||
-                    evaluation.method;
-
-                  return (
-                    <div
-                      key={evalKey}
-                      className="bg-background rounded-md border overflow-hidden"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExpandedEvaluations((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(evalKey)) {
-                              next.delete(evalKey);
-                            } else {
-                              next.add(evalKey);
-                            }
-                            return next;
-                          });
-                        }}
-                        className="w-full flex items-center justify-between px-3 py-2 bg-muted/50 hover:bg-muted transition-colors text-left"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-xs">
-                            {prettyName}
-                          </Badge>
-                          <Badge variant="outline" className="text-xs">
-                            {(evaluation.score * 100).toFixed(1)}%
-                          </Badge>
-                          {evaluation.judgeModelName && (
-                            <Badge
-                              variant="secondary"
-                              className="text-xs text-muted-foreground"
-                            >
-                              {evaluation.judgeModelProvider
-                                ? `${PrettyAIProvider[evaluation.judgeModelProvider as AIProvider] || evaluation.judgeModelProvider}/${evaluation.judgeModelName}`
-                                : evaluation.judgeModelName}
-                            </Badge>
-                          )}
-                        </div>
-                        {isEvalExpanded ? (
-                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </button>
-                      {isEvalExpanded && (
-                        <div className="border-t">
-                          {evaluation.sections.map((section, sectionIdx) => {
-                            const sectionKey = `${evalKey}-${sectionIdx}`;
-                            const isSectionExpanded =
-                              expandedSections.has(sectionKey);
-
-                            return (
-                              <div
-                                key={sectionKey}
-                                className="border-b last:border-b-0"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setExpandedSections((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(sectionKey)) {
-                                        next.delete(sectionKey);
-                                      } else {
-                                        next.add(sectionKey);
-                                      }
-                                      return next;
-                                    });
-                                  }}
-                                  className="w-full flex items-center justify-between px-3 py-2 bg-muted/20 hover:bg-muted/40 transition-colors text-left"
-                                >
-                                  <span className="text-xs font-medium">
-                                    {section.label}
-                                  </span>
-                                  {isSectionExpanded ? (
-                                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                                  ) : (
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                                  )}
-                                </button>
-                                {isSectionExpanded && (
-                                  <div className="p-3 text-sm whitespace-pre-wrap leading-relaxed bg-background">
-                                    {section.content}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              <EvaluationResults evaluations={evaluationDetails} />
             </LogStrip>
           )}
           <CardContent className="flex flex-row p-0 h-full relative overflow-hidden">
