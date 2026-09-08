@@ -578,76 +578,81 @@ export function LogDetailsView(): ReactElement {
           {trace !== null && selectedLog.duration !== null && (
             <RequestTrace stages={trace} total={selectedLog.duration} />
           )}
-          {selectedLog.hook_logs.length > 0 && (
-            <LogStrip
-              name="Hooks"
-              defaultOpen={hookSummary.verdict === 'denied'}
-              note={
-                <span className={SUMMARY_TONE[hookSummary.verdict]}>
-                  {hookSummary.text}
-                </span>
-              }
-            >
-              <HookResults
-                hookLogs={selectedLog.hook_logs}
-                reviewOf={(hookLog) => reviewOf(hookLog, reviews)}
-                onOpenReview={(review, reviewer) =>
-                  navigateToLogDetail(reviewer, review.id)
+          {/* However much is opened here, the strips take at most half the
+              card and scroll inside it: the conversation below them is what
+              the reader came for, and it may not be pushed off the page. */}
+          <div className="max-h-[50vh] shrink-0 overflow-y-auto">
+            {selectedLog.hook_logs.length > 0 && (
+              <LogStrip
+                name="Hooks"
+                defaultOpen={hookSummary.verdict === 'denied'}
+                note={
+                  <span className={SUMMARY_TONE[hookSummary.verdict]}>
+                    {hookSummary.text}
+                  </span>
                 }
-              />
-            </LogStrip>
-          )}
-          {skillRouting && (
-            <LogStrip
-              name="Routing"
-              note={
-                <>
-                  {skillRouting.label}
-                  {skillRouting.detail && ` \u00b7 ${skillRouting.detail}`}
-                </>
-              }
-            >
-              <div className="flex flex-row flex-wrap items-start gap-6">
-                <p className="max-w-prose flex-1 text-sm leading-relaxed text-muted-foreground">
-                  {skillRouting.title}
-                </p>
-                {selectedLog.embedding && (
-                  <EmbeddingFingerprint values={selectedLog.embedding} />
-                )}
-              </div>
-            </LogStrip>
-          )}
-          {(evaluationDetails.length > 0 || averageScore !== null) && (
-            <LogStrip
-              name="Evaluations"
-              note={
-                <>
-                  {evaluationDetails.length > 0
-                    ? `${evaluationDetails.length} ran`
-                    : 'None ran'}
-                  {averageScore !== null && (
-                    <>
-                      {' \u00b7 '}
-                      <span
-                        className={cn(
-                          'font-mono font-medium',
-                          averageScore >= GOOD_SCORE
-                            ? 'text-green-600 dark:text-green-500'
-                            : 'text-amber-500',
-                        )}
-                      >
-                        {(averageScore * 100).toFixed(0)}%
-                      </span>
-                      {' weighted'}
-                    </>
+              >
+                <HookResults
+                  hookLogs={selectedLog.hook_logs}
+                  reviewOf={(hookLog) => reviewOf(hookLog, reviews)}
+                  onOpenReview={(review, reviewer) =>
+                    navigateToLogDetail(reviewer, review.id)
+                  }
+                />
+              </LogStrip>
+            )}
+            {skillRouting && (
+              <LogStrip
+                name="Routing"
+                note={
+                  <>
+                    {skillRouting.label}
+                    {skillRouting.detail && ` \u00b7 ${skillRouting.detail}`}
+                  </>
+                }
+              >
+                <div className="flex flex-row flex-wrap items-start gap-6">
+                  <p className="max-w-prose flex-1 text-sm leading-relaxed text-muted-foreground">
+                    {skillRouting.title}
+                  </p>
+                  {selectedLog.embedding && (
+                    <EmbeddingFingerprint values={selectedLog.embedding} />
                   )}
-                </>
-              }
-            >
-              <EvaluationResults evaluations={evaluationDetails} />
-            </LogStrip>
-          )}
-          <CardContent className="flex flex-row p-0 h-full relative overflow-hidden">
+                </div>
+              </LogStrip>
+            )}
+            {(evaluationDetails.length > 0 || averageScore !== null) && (
+              <LogStrip
+                name="Evaluations"
+                note={
+                  <>
+                    {evaluationDetails.length > 0
+                      ? `${evaluationDetails.length} ran`
+                      : 'None ran'}
+                    {averageScore !== null && (
+                      <>
+                        {' \u00b7 '}
+                        <span
+                          className={cn(
+                            'font-mono font-medium',
+                            averageScore >= GOOD_SCORE
+                              ? 'text-green-600 dark:text-green-500'
+                              : 'text-amber-500',
+                          )}
+                        >
+                          {(averageScore * 100).toFixed(0)}%
+                        </span>
+                        {' weighted'}
+                      </>
+                    )}
+                  </>
+                }
+              >
+                <EvaluationResults evaluations={evaluationDetails} />
+              </LogStrip>
+            )}
+          </div>
+          <CardContent className="flex flex-1 min-h-0 flex-row p-0 relative overflow-hidden">
             {selectedLog.trace_id && session.logs.length > 1 && (
               <SessionMap
                 logs={session.logs}
