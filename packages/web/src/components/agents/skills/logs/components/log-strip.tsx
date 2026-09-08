@@ -62,8 +62,14 @@ export function LogStrip({
           {note}
         </span>
       </button>
+      {/* The app gives a paragraph the browser's own 1em margins, which
+          inside a strip only add to the spacing the layout already sets --
+          and the last one's runs on past the strip's own padding. */}
       {isOpen && (
-        <section aria-labelledby={headingId} className="px-4 pb-3 pl-11">
+        <section
+          aria-labelledby={headingId}
+          className="px-4 pb-3 pl-11 [&_p]:my-0"
+        >
           {children}
         </section>
       )}

@@ -88,7 +88,7 @@ export function HookResults({
         return (
           <div
             key={`${log.hook.type}-${log.hook.id}-${log.start_time}`}
-            className="space-y-1.5 py-2 first:pt-0 last:pb-0"
+            className="flex flex-col gap-1.5 py-2 first:pt-0 last:pb-0"
           >
             <div className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <Badge

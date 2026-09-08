@@ -122,9 +122,9 @@ export function EvaluationResults({
               )}
             </button>
             {isOpen && (
-              <div className="mt-1.5 space-y-2 pl-5">
+              <div className="mt-1.5 flex flex-col gap-2 pl-5">
                 {evaluation.sections.map((section) => (
-                  <div key={section.label} className="space-y-0.5">
+                  <div key={section.label} className="flex flex-col gap-0.5">
                     <div className="text-xs text-muted-foreground">
                       {section.label}
                     </div>
