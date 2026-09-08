@@ -606,6 +606,15 @@ carries `reviewing_trace_id`, and a request carrying it gets no reviewer hook
 of its own: a review is never reviewed, which is what keeps two agents that
 review each other from looping.
 
+**The client waits for the verdict**, so how long it may wait is the
+reviewed agent's to say: `options.review.timeout_ms`, null meaning
+`DEFAULT_REVIEW_TIMEOUT_MS` -- a minute. It is the reviewed agent's setting
+and not the reviewer's because it is that agent's client that is kept
+waiting, and the same reviewer may be worth a longer wait for one agent than
+another. Past it the review is one the reviewer could not give, which fails
+open unless the agent set `review_fail_closed`; a reviewer whose own model
+thinks for longer than this is never heard from at all.
+
 **Streams are held.** A blocking output hook has to see the whole response
 before the client does, so a stream it would review is served whole -- the
 provider is asked without `stream`, the hooks judge the JSON -- and what they
@@ -661,15 +670,20 @@ The models are columns on `agents` -- `judge_model_id`,
 database does real work for them, keeping a named model from being deleted
 out from under an agent (`ON DELETE SET NULL`, where system settings
 `RESTRICT`) and keeping an embedding model out of a text slot. Everything
-else -- each role's timeout, its reasoning effort, and the judge's token
-budget -- means nothing to the database, so it lives in one `options` JSON
-column typed by `AgentOptions` in `@shared/types/data/agent`. **Null there
-means inherit**, not "send nothing": an agent with no opinion reads exactly
-as the settings say and keeps following them as they change, and a field
-added later reads as inherit on every row written before it. A PATCH sends
-the roles it changes and the connectors merge them over what is stored
-(`mergeAgentOptions`), so changing one timeout cannot clear an effort beside
-it.
+else -- each role's timeout, its reasoning effort, the judge's token budget,
+and the wait the agent allows its reviewer -- means nothing to the database,
+so it lives in one `options` JSON column typed by `AgentOptions` in
+`@shared/types/data/agent`. That last one, `review`, is not a role at all:
+the reviewer is another agent with models of its own, so a timeout is the
+only thing there is to say about it here. Adding a setting like it is a
+change to that schema and the agent form, and to neither backend's.
+
+**Null there means inherit**, not "send nothing": an agent with no opinion
+reads exactly as the settings say and keeps following them as they change,
+and a field added later reads as inherit on every row written before it. A
+PATCH sends the fields it changes and the connectors merge them over what is
+stored (`mergeAgentOptions`), so changing one timeout cannot clear an effort
+beside it.
 
 `resolveRoleModel` (`utils/evaluation-model-resolver.ts`) puts the three
 answers together for a call, and every caller goes through it;

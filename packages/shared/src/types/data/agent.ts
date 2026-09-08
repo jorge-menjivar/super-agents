@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { ReasoningEffort } from '../api/routes/shared/thinking';
 import {
-  type InternalRole,
   MAX_INTERNAL_TIMEOUT_MS,
   MIN_INTERNAL_TIMEOUT_MS,
 } from './system-settings';
@@ -58,6 +57,13 @@ export const AgentOptions = z
       .prefault({}),
     skill_arbiter: textRole(),
     intent_compaction: textRole(),
+    /**
+     * How long this agent's reviewer may take, the client waiting throughout.
+     * Not a model the agent names -- the reviewer is another agent, with its
+     * own skill and its own models -- so time is the only thing to say about
+     * it here. Null is `DEFAULT_REVIEW_TIMEOUT_MS`.
+     */
+    review: z.object({ timeout_ms: TimeoutOverride }).prefault({}),
   })
   .prefault({});
 export type AgentOptions = z.infer<typeof AgentOptions>;
@@ -84,10 +90,11 @@ export const AgentOptionsUpdate = z.object({
     .optional(),
   skill_arbiter: textRoleUpdate(),
   intent_compaction: textRoleUpdate(),
+  review: z.object({ timeout_ms: TimeoutValue.optional() }).optional(),
 });
 export type AgentOptionsUpdate = z.infer<typeof AgentOptionsUpdate>;
 
-function mergeRole<R extends InternalRole>(
+function mergeRole<R extends keyof AgentOptions>(
   current: AgentOptions,
   update: AgentOptionsUpdate,
   role: R,
@@ -120,6 +127,7 @@ export function mergeAgentOptions(
     judge: mergeRole(current, update, 'judge'),
     skill_arbiter: mergeRole(current, update, 'skill_arbiter'),
     intent_compaction: mergeRole(current, update, 'intent_compaction'),
+    review: mergeRole(current, update, 'review'),
   };
 }
 
@@ -155,8 +163,9 @@ export const Agent = z.object({
   skill_arbiter_model_id: z.uuid().nullable(),
   intent_compaction_model_id: z.uuid().nullable(),
 
-  /** How long each of those may take and how hard it may think, where the
-   * agent has an opinion. Null inherits the system setting. */
+  /** How long each of those may take and how hard it may think, plus how
+   * long the agent's reviewer may take, where the agent has an opinion.
+   * Null inherits. */
   options: AgentOptions,
 
   /** Another agent that reviews every response before the client receives

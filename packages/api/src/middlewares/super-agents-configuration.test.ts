@@ -8,7 +8,7 @@ import {
   type SuperAgentsConfig,
   SuperAgentsConfigPreProcessed,
 } from '@shared/types/api/request/headers';
-import type { Skill } from '@shared/types/data';
+import { AgentOptions, type Skill } from '@shared/types/data';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@api/utils/embeddings', () => ({
@@ -263,6 +263,7 @@ describe('saConfigurationInjectorMiddleware reviewer', () => {
       reviewer_agent_id: 'agent-2',
       review_fail_closed: true,
       review_expose_reason: false,
+      options: AgentOptions.parse({ review: { timeout_ms: 120_000 } }),
     });
 
     await saConfigurationInjectorMiddleware(c, vi.fn());
@@ -274,7 +275,8 @@ describe('saConfigurationInjectorMiddleware reviewer', () => {
         id: 'reviewer:guard',
         type: 'output',
         hook_provider: 'agent',
-        config: { agent_name: 'guard' },
+        // The wait the reviewed agent allows, since its client waits it out.
+        config: { agent_name: 'guard', timeout_ms: 120_000 },
         await: true,
         fail_closed: true,
       }),

@@ -21,7 +21,10 @@ export const reviewerHookId = (reviewer: Pick<Agent, 'name'>): string =>
  *
  * Configured on the agent and added here, server-side, rather than read from
  * the client's `sa-config`: a review a client could leave out of its header
- * would review nothing.
+ * would review nothing. The agent's own `options.review.timeout_ms` bounds
+ * it -- the reviewed agent's, not the reviewer's, because it is the reviewed
+ * agent's client that waits -- and null leaves it at
+ * `DEFAULT_REVIEW_TIMEOUT_MS`.
  */
 export async function reviewerHookFor(
   c: AppContext,
@@ -34,6 +37,7 @@ export async function reviewerHookFor(
         | 'reviewer_agent_id'
         | 'review_fail_closed'
         | 'review_expose_reason'
+        | 'options'
       >
     | undefined,
   config: Pick<SuperAgentsConfigPreProcessed, 'reviewing_trace_id'>,
@@ -55,11 +59,15 @@ export async function reviewerHookFor(
     );
     return null;
   }
+  const timeoutMs = agent.options.review.timeout_ms;
   return {
     id: reviewerHookId(reviewer),
     type: HookType.OUTPUT_HOOK,
     hook_provider: HookProvider.AGENT,
-    config: { agent_name: reviewer.name },
+    config: {
+      agent_name: reviewer.name,
+      ...(timeoutMs === null ? {} : { timeout_ms: timeoutMs }),
+    },
     await: true,
     cache_mode: CacheMode.DISABLED,
     fail_closed: agent.review_fail_closed,

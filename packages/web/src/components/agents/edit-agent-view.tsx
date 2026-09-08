@@ -77,17 +77,24 @@ const selectChange =
     onChange(value === none ? null : value);
   };
 
+/** A timeout the form holds in seconds, or null to inherit. */
+const TimeoutSecondsSchema = z
+  .number({ error: 'Enter a whole number of seconds, or leave it empty' })
+  .int('Must be a whole number of seconds')
+  .min(MIN_TIMEOUT_SECONDS, `Must be at least ${MIN_TIMEOUT_SECONDS}`)
+  .max(MAX_TIMEOUT_SECONDS, `Must be at most ${MAX_TIMEOUT_SECONDS}`)
+  .nullable();
+
 /** One role's overrides, as the form holds them: seconds, not milliseconds. */
 const RoleFormSchema = z.object({
   model_id: z.string().nullable(),
-  timeout_seconds: z
-    .number({ error: 'Enter a whole number of seconds, or leave it empty' })
-    .int('Must be a whole number of seconds')
-    .min(MIN_TIMEOUT_SECONDS, `Must be at least ${MIN_TIMEOUT_SECONDS}`)
-    .max(MAX_TIMEOUT_SECONDS, `Must be at most ${MAX_TIMEOUT_SECONDS}`)
-    .nullable(),
+  timeout_seconds: TimeoutSecondsSchema,
   reasoning_effort: z.enum(ReasoningEffort).nullable(),
 });
+
+/** Seconds as the API takes them; null stays null, meaning inherit. */
+const millisecondsOf = (seconds: number | null): number | null =>
+  seconds === null ? null : seconds * 1000;
 
 /** What each role is called on the page, and what it is for. */
 const ROLE_LABELS: Record<InternalRole, { name: string; detail: string }> = {
@@ -147,6 +154,7 @@ const EditAgentFormSchema = z
       .nullable(),
     // Null means responses go unreviewed.
     reviewer_agent_id: z.string().nullable(),
+    review_timeout_seconds: TimeoutSecondsSchema,
     review_fail_closed: z.boolean(),
     review_expose_reason: z.boolean(),
   })
@@ -181,7 +189,7 @@ const rolesOf = (agent: Agent): EditAgentFormData['roles'] =>
     }),
   ) as EditAgentFormData['roles'];
 
-/** The form's roles as the API takes them: model columns, and one patch. */
+/** The form's overrides as the API takes them: model columns, and one patch. */
 function roleUpdates(data: EditAgentFormData): AgentUpdateParams {
   const models = Object.fromEntries(
     INTERNAL_ROLES.map((role) => [
@@ -192,8 +200,7 @@ function roleUpdates(data: EditAgentFormData): AgentUpdateParams {
   const options = Object.fromEntries(
     INTERNAL_ROLES.map((role) => {
       const { timeout_seconds, reasoning_effort } = data.roles[role];
-      const timeout_ms =
-        timeout_seconds === null ? null : timeout_seconds * 1000;
+      const timeout_ms = millisecondsOf(timeout_seconds);
       return [
         role,
         role === 'embedding'
@@ -208,7 +215,15 @@ function roleUpdates(data: EditAgentFormData): AgentUpdateParams {
       ];
     }),
   );
-  return { ...models, options } as AgentUpdateParams;
+  return {
+    ...models,
+    options: {
+      ...options,
+      // Not one of the roles: the reviewer is another agent with models of
+      // its own, so all the reviewed agent says is how long it may take.
+      review: { timeout_ms: millisecondsOf(data.review_timeout_seconds) },
+    },
+  } as AgentUpdateParams;
 }
 
 export function EditAgentView(): React.ReactElement {
@@ -276,6 +291,7 @@ export function EditAgentView(): React.ReactElement {
       roles: blankRoles(),
       judge_max_tokens: null,
       reviewer_agent_id: null,
+      review_timeout_seconds: null,
       review_fail_closed: false,
       review_expose_reason: false,
     },
@@ -292,6 +308,10 @@ export function EditAgentView(): React.ReactElement {
         roles: rolesOf(selectedAgent),
         judge_max_tokens: selectedAgent.options.judge.max_tokens,
         reviewer_agent_id: selectedAgent.reviewer_agent_id,
+        review_timeout_seconds:
+          selectedAgent.options.review.timeout_ms === null
+            ? null
+            : selectedAgent.options.review.timeout_ms / 1000,
         review_fail_closed: selectedAgent.review_fail_closed,
         review_expose_reason: selectedAgent.review_expose_reason,
       });
@@ -758,6 +778,45 @@ export function EditAgentView(): React.ReactElement {
                             ))}
                           </SelectContent>
                         </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="review_timeout_seconds"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Review timeout (seconds)</FormLabel>
+                        <FormDescription>
+                          How long the client waits for the verdict. Past it the
+                          review counts as one the reviewer could not give, so a
+                          response is delivered unless the agent fails closed.
+                          Empty is a minute.
+                        </FormDescription>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="1"
+                            min={MIN_TIMEOUT_SECONDS}
+                            max={MAX_TIMEOUT_SECONDS}
+                            placeholder="60"
+                            name={field.name}
+                            value={field.value ?? ''}
+                            onBlur={field.onBlur}
+                            onChange={(e) =>
+                              field.onChange(
+                                e.target.value === ''
+                                  ? null
+                                  : e.target.valueAsNumber,
+                              )
+                            }
+                            disabled={
+                              isUpdating ||
+                              form.watch('reviewer_agent_id') === null
+                            }
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
