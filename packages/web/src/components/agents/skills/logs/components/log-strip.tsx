@@ -33,7 +33,9 @@ export function LogStrip({
   const headingId = useId();
 
   return (
-    <div className="border-b">
+    // The line under the last strip belongs to the band, not to the strip:
+    // it marks where the band ends, and would scroll away in here.
+    <div>
       <button
         type="button"
         aria-expanded={isOpen}

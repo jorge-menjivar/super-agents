@@ -364,6 +364,14 @@ export function LogDetailsView(): ReactElement {
     return allDetails;
   }, [evaluationRuns]);
 
+  // Nothing to separate from the conversation when no strip has anything to
+  // say, and an empty band would draw a line under nothing.
+  const hasStrips =
+    (selectedLog?.hook_logs.length ?? 0) > 0 ||
+    skillRouting !== null ||
+    evaluationDetails.length > 0 ||
+    averageScore !== null;
+
   const skillNameOf = (log: Log): string | null =>
     skills.find((skill) => skill.id === log.skill_id)?.name ?? null;
   const logSkillName = selectedLog ? skillNameOf(selectedLog) : null;
@@ -581,7 +589,14 @@ export function LogDetailsView(): ReactElement {
           {/* However much is opened here, the strips take at most half the
               card and scroll inside it: the conversation below them is what
               the reader came for, and it may not be pushed off the page. */}
-          <div className="max-h-[50vh] shrink-0 overflow-y-auto">
+          <div
+            className={cn(
+              'max-h-[50vh] shrink-0 divide-y overflow-y-auto',
+              // Drawn on the band itself, so it stays at the boundary with
+              // the conversation instead of scrolling away with the strips.
+              hasStrips && 'border-b',
+            )}
+          >
             {selectedLog.hook_logs.length > 0 && (
               <LogStrip
                 name="Hooks"
