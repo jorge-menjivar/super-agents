@@ -15,7 +15,14 @@ export interface LoggedRequest {
   /** What each hook made of the request; a reviewer's verdict lands here. */
   hook_logs?: {
     hook: { id: string };
-    result: { deny_request: boolean; reason?: string; error?: string };
+    result: {
+      deny_request: boolean;
+      reason?: string;
+      error?: string;
+      response_body_override?: { choices?: { message: { content: string } }[] };
+    };
+    /** The response the hook withheld or replaced; absent when it allowed it. */
+    response_body?: { choices?: { message: { content: string } }[] };
   }[];
   start_time: number;
   end_time: number | null;

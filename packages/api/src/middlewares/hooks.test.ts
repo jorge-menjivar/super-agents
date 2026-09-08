@@ -267,6 +267,91 @@ describe('executeHooks logging', () => {
       expect(log.cache_status).toBe(CacheStatus.MISS);
       expect(log.duration).toBe(log.end_time - log.start_time);
       expect(log.result.reason).toBe('Fine.');
+      // An allowed response is on the provider log; it is not written twice.
+      expect(log.response_body).toBeUndefined();
     }
+  });
+
+  it('keeps the response a hook withheld on its log, since the client never sees it', async () => {
+    const connector: HooksConnector = {
+      name: HookProvider.AGENT,
+      executeHook: vi.fn().mockResolvedValue(verdict(true)),
+    };
+    const c = context([hook()], [connector]);
+
+    const [log] = await executeHooks(
+      c,
+      HookType.OUTPUT_HOOK,
+      200,
+      false,
+      requestData,
+      responseBody,
+    );
+
+    expect(log.response_body).toEqual(responseBody);
+  });
+
+  it('keeps the response a hook replaced, beside what it put in its place', async () => {
+    const replacement = { id: 'r', choices: [{ text: 'redacted' }] };
+    const connector: HooksConnector = {
+      name: HookProvider.AGENT,
+      executeHook: vi.fn().mockResolvedValue({
+        ...verdict(false),
+        response_body_override: replacement,
+      }),
+    };
+    const c = context([hook()], [connector]);
+
+    const [log] = await executeHooks(
+      c,
+      HookType.OUTPUT_HOOK,
+      200,
+      false,
+      requestData,
+      responseBody,
+    );
+
+    expect(log.response_body).toEqual(responseBody);
+    expect(log.result.response_body_override).toEqual(replacement);
+  });
+
+  it('keeps a withheld response when the hook failed closed, too', async () => {
+    const connector: HooksConnector = {
+      name: HookProvider.AGENT,
+      executeHook: vi.fn().mockRejectedValue(new Error('Reviewer unreachable')),
+    };
+    const c = context([hook({ fail_closed: true })], [connector]);
+
+    const [log] = await executeHooks(
+      c,
+      HookType.OUTPUT_HOOK,
+      200,
+      false,
+      requestData,
+      responseBody,
+    );
+
+    expect(log.result.deny_request).toBe(true);
+    expect(log.result.error).toBe('Reviewer unreachable');
+    expect(log.response_body).toEqual(responseBody);
+  });
+
+  it('keeps nothing on an input hook log: the request is on the provider log', async () => {
+    const connector: HooksConnector = {
+      name: HookProvider.AGENT,
+      executeHook: vi.fn().mockResolvedValue(verdict(true)),
+    };
+    const c = context([hook({ type: HookType.INPUT_HOOK })], [connector]);
+
+    const [log] = await executeHooks(
+      c,
+      HookType.INPUT_HOOK,
+      null,
+      false,
+      requestData,
+    );
+
+    expect(log.result.deny_request).toBe(true);
+    expect(log.response_body).toBeUndefined();
   });
 });

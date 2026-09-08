@@ -567,7 +567,16 @@ client told exactly why is a client shown how to rephrase; on an agent,
 itself never reaches the client: it names the reviewer and carries every
 hook's reason, and is read from the log row. A hook that sets
 `response_body_override` has the client receive that body instead
-(`utils/hooks.ts`). Retrying on a 446 (`retry.on_status_codes`) asks the
+(`utils/hooks.ts`). The provider log on the row records what the client
+received, so a hook that withholds or replaces the response keeps the
+response it judged on its own hook log (`response_body`): that is where
+what the model actually wrote survives, and the log page shows it under
+the hook's verdict, beside the verdict of every hook that ran. A reviewer
+hook there links to the review its verdict came from -- found among the
+trace's logs by the reviewer's name and the hook's own span
+(`utils/reviews.ts`) -- which is also where the answer a log written
+before this kept nothing of can still be read, in what the reviewer was
+sent. Retrying on a 446 (`retry.on_status_codes`) asks the
 provider again. The `hook_results` block the handler merges into an allowed
 response does not reach the client either: the body is re-parsed against
 its response schema on the way out, which strips it.

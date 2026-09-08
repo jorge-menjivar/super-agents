@@ -74,6 +74,24 @@ async function executeHookByProvider(
   }
 }
 
+/**
+ * The response an output hook judged, when the client is not given it --
+ * withheld, or replaced with the hook's own text. The provider log records
+ * what the client received, so without this what the model actually wrote
+ * would be gone. An allowed response is on the provider log already, and is
+ * not written twice.
+ */
+const judgedResponse = (
+  hookType: HookType,
+  result: HookResult,
+  saResponseBody?: SuperAgentsResponseBody,
+): Pick<HookLog, 'response_body'> =>
+  hookType === HookType.OUTPUT_HOOK &&
+  saResponseBody !== undefined &&
+  (result.deny_request || result.response_body_override !== undefined)
+    ? { response_body: saResponseBody as Record<string, unknown> }
+    : {};
+
 function shouldSkipHook(
   hook: Hook,
   fn: FunctionName,
@@ -213,6 +231,7 @@ export async function executeHooks(
           trace_id: saConfig.trace_id,
           hook: hook,
           result: hookResult,
+          ...judgedResponse(hookType, hookResult, saResponseBody),
           start_time: startTime,
           end_time: endTime,
           duration: duration,
