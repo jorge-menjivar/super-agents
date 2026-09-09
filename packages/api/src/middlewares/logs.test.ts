@@ -88,11 +88,14 @@ describe('logsMiddleware', () => {
   let app: Hono<AppEnv>;
   /** What the handler under test leaves on the context, beyond the usual. */
   let arrange: (c: AppContext) => void;
+  /** What happens once the handler has answered, before the row is closed. */
+  let settle: (c: AppContext) => void;
   let providerLog: AIProviderRequestLog;
 
   beforeEach(() => {
     vi.clearAllMocks();
     arrange = () => undefined;
+    settle = () => undefined;
     providerLog = { ...aiProviderLog };
     requestData = {
       functionName: FunctionName.CHAT_COMPLETE,
@@ -132,6 +135,10 @@ describe('logsMiddleware', () => {
           () => logsConnector as unknown as LogsStorageConnector,
         ),
       )
+      .use('*', async (c, next) => {
+        await next();
+        settle(c);
+      })
       .post('/v1/chat/completions', (c) => {
         c.set('sa_config', saConfig);
         c.set('agent', agent);
@@ -165,6 +172,44 @@ describe('logsMiddleware', () => {
     expect(log.original_system_prompt).toBe('You are the caller.');
     expect(log.skill_id).toBe('skill-1');
     expect(log.agent_id).toBe('agent-1');
+  });
+
+  it('closes a failed request whose answer is read while its row is still being written', async () => {
+    // The failure's message is read off the response the client is being
+    // given, and the row it closes may still be being written. Waiting for
+    // that write before taking the copy is waiting long enough for the body
+    // to be consumed -- and a clone of a consumed body throws, which used to
+    // lose the failure altogether rather than merely lose its message.
+    arrange = (c) => {
+      // No provider was reached, so the row is closed as a failure.
+      c.set('ai_provider_log', undefined);
+    };
+    settle = (c) => {
+      c.res = new Response(JSON.stringify({ error: 'nothing answered' }), {
+        status: 502,
+        headers: { 'content-type': 'application/json' },
+      });
+      // Still in flight when the request fails...
+      c.set(
+        'log_row_write',
+        new Promise<void>((resolve) => setTimeout(resolve, 20)),
+      );
+      // ...and the client has read the answer before it lands.
+      setTimeout(() => void c.res.text(), 0);
+    };
+
+    const response = await app.request('/v1/chat/completions', {
+      method: 'POST',
+    });
+    expect(response.status).toBe(502);
+
+    await vi.waitFor(() =>
+      expect(logsConnector.failLog).toHaveBeenCalledTimes(1),
+    );
+    expect(logsConnector.failLog.mock.calls[0][1]).toMatchObject({
+      status: 502,
+      error: 'nothing answered',
+    });
   });
 
   it('records how the skill was chosen', async () => {

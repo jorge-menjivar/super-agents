@@ -621,6 +621,14 @@ const closeFailedRequest = async (
   status?: number,
 ): Promise<void> => {
   try {
+    const responseStatus = status ?? c.res.status;
+
+    // Taken before anything is awaited, and read after. `c.res` is on its
+    // way to the client, so a clone taken later finds a body already
+    // consumed and throws -- which used to lose the failure entirely, since
+    // nothing below would then run.
+    const answered = reason === undefined ? c.res.clone() : null;
+
     // The writes that opened the row are not awaited by the request. Closing
     // it before the last of them lands would either be undone by it, or --
     // if the row does not exist yet -- update nothing and leave the request
@@ -628,18 +636,15 @@ const closeFailedRequest = async (
     await c.get('log_row_write');
 
     const endTime = Date.now();
-    const responseStatus = status ?? c.res.status;
 
-    let message = reason;
-    if (!message) {
-      // The gateway answers an error as JSON; anything else is not worth
-      // storing, and neither is a body large enough to matter.
-      message = await c.res
-        .clone()
-        .text()
+    // The gateway answers an error as JSON; anything else is not worth
+    // storing, and neither is a body large enough to matter.
+    const message =
+      reason ??
+      (await answered
+        ?.text()
         .then(errorMessageFrom)
-        .catch(() => undefined);
-    }
+        .catch(() => undefined));
 
     await c.get('logs_storage_connector').failLog(c, {
       id: requestId,
