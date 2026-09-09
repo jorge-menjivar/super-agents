@@ -131,82 +131,123 @@ export function extractMessagesFromRequestData(
 const MAX_TOOL_OUTPUT_LENGTH = 1000;
 const MAX_EMBEDDING_TEXT_LENGTH = 6000;
 
+const MESSAGE_SEPARATOR = '\n\n\n';
+
+/** One message as its line of the embedded text, or '' for nothing to say. */
+function formatMessageForEmbedding(message: ChatCompletionMessage): string {
+  const role = message.role;
+  let content = '';
+
+  if (typeof message.content === 'string') {
+    content += message.content;
+  } else if (Array.isArray(message.content)) {
+    content += message.content
+      .map((item) => {
+        if (typeof item === 'object' && item.text) {
+          return item.text;
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join(' ');
+  } else if (message.content) {
+    content += String(message.content);
+  }
+
+  // The tool's output is the message's content, capped: the embedding
+  // needs the topic of the output, not the whole of a git diff.
+  if (
+    role === ChatCompletionMessageRole.TOOL ||
+    role === ChatCompletionMessageRole.FUNCTION
+  ) {
+    return `Tool Call ${message.tool_call_id} Output: ${content.slice(
+      0,
+      MAX_TOOL_OUTPUT_LENGTH,
+    )}`;
+  }
+
+  if (message.tool_calls && message.tool_calls.length > 0) {
+    const tools = message.tool_calls
+      .map((tool) => {
+        const parsedTool = tool as {
+          id: string;
+          type: 'mcp_call';
+          function: {
+            name: string;
+            arguments: string;
+          };
+        };
+        return `Tool Call ID: ${parsedTool.id}\nTool Call Name: ${parsedTool.function.name}\nTool Call Arguments: ${parsedTool.function.arguments}`;
+      })
+      .join(', ');
+    return `Assistant Tool Calls:\n${tools}`;
+  }
+
+  // Only include messages with non-empty content after trimming
+  if (!content.trim()) {
+    return '';
+  }
+
+  if (role === ChatCompletionMessageRole.USER) {
+    return `User: ${content}`.trim();
+  }
+  if (role === ChatCompletionMessageRole.ASSISTANT) {
+    return `Assistant: ${content}`.trim();
+  }
+
+  return `${role}: ${content}`.trim();
+}
+
+/**
+ * A conversation as the text whose embedding places the request among its
+ * skill's clusters: the messages it ends with, newest first into the budget,
+ * rendered back in order.
+ *
+ * The tail rather than the head, because a request is asking for whatever it
+ * has arrived at. An agentic session runs for hundreds of turns behind one
+ * unchanging opening, so taking the budget from the front hands every turn of
+ * it the same text -- the same embedding, the same cluster, the same arm --
+ * however far the work has since travelled. `describeRequestIntent` reads the
+ * conversation from the end for the same reason.
+ */
 export function formatMessagesForEmbedding(
   messages: ChatCompletionMessage[],
 ): string {
-  return messages
-    .filter((message) => {
-      // Exclude system and developer messages from embeddings
-      return (
-        message.role !== ChatCompletionMessageRole.SYSTEM &&
-        message.role !== ChatCompletionMessageRole.DEVELOPER
-      );
-    })
-    .map((message) => {
-      const role = message.role;
-      let content = '';
+  const lines: string[] = [];
+  let budget = MAX_EMBEDDING_TEXT_LENGTH;
 
-      if (typeof message.content === 'string') {
-        content += message.content;
-      } else if (Array.isArray(message.content)) {
-        content += message.content
-          .map((item) => {
-            if (typeof item === 'object' && item.text) {
-              return item.text;
-            }
-            return '';
-          })
-          .filter(Boolean)
-          .join(' ');
-      } else if (message.content) {
-        content += String(message.content);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    // Exclude system and developer messages from embeddings
+    if (
+      message.role === ChatCompletionMessageRole.SYSTEM ||
+      message.role === ChatCompletionMessageRole.DEVELOPER
+    ) {
+      continue;
+    }
+    const line = formatMessageForEmbedding(message);
+    if (!line) {
+      continue;
+    }
+    if (lines.length > 0) {
+      budget -= MESSAGE_SEPARATOR.length;
+    }
+    if (budget <= 0) {
+      break;
+    }
+    // The newest message is worth cutting to fit; an older one that does not
+    // fit whole is left out, so the text never opens mid-sentence.
+    if (line.length > budget) {
+      if (lines.length === 0) {
+        lines.push(line.slice(0, budget));
       }
+      break;
+    }
+    lines.push(line);
+    budget -= line.length;
+  }
 
-      // The tool's output is the message's content, capped: the embedding
-      // needs the topic of the output, not the whole of a git diff.
-      if (
-        role === ChatCompletionMessageRole.TOOL ||
-        role === ChatCompletionMessageRole.FUNCTION
-      ) {
-        return `Tool Call ${message.tool_call_id} Output: ${content.slice(
-          0,
-          MAX_TOOL_OUTPUT_LENGTH,
-        )}`;
-      }
-
-      if (message.tool_calls && message.tool_calls.length > 0) {
-        const tools = message.tool_calls
-          .map((tool) => {
-            const parsedTool = tool as {
-              id: string;
-              type: 'mcp_call';
-              function: {
-                name: string;
-                arguments: string;
-              };
-            };
-            return `Tool Call ID: ${parsedTool.id}\nTool Call Name: ${parsedTool.function.name}\nTool Call Arguments: ${parsedTool.function.arguments}`;
-          })
-          .join(', ');
-        return `Assistant Tool Calls:\n${tools}`;
-      }
-
-      // Only include messages with non-empty content after trimming
-      if (!content.trim()) {
-        return '';
-      }
-
-      if (role === ChatCompletionMessageRole.USER) {
-        return `User: ${content}`.trim();
-      }
-      if (role === ChatCompletionMessageRole.ASSISTANT) {
-        return `Assistant: ${content}`.trim();
-      }
-
-      return `${role}: ${content}`.trim();
-    })
-    .filter(Boolean)
-    .join('\n\n\n');
+  return lines.reverse().join(MESSAGE_SEPARATOR);
 }
 
 export interface TextEmbedding {
