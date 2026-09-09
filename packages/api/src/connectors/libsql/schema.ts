@@ -295,6 +295,11 @@ const initialSchema: LibsqlMigration = {
       start_time INTEGER NOT NULL,
       first_token_time INTEGER,
       base_sa_config TEXT NOT NULL,
+      -- The body the caller sent, recorded when the row opens: the only
+      -- account of a request that is still running, or that failed before a
+      -- provider answered. ai_provider_request_log holds the body that
+      -- finally reached the provider.
+      request_body TEXT,
       -- Null while the request is still running. The row is written when the
       -- request arrives rather than when it finishes, so that work in
       -- progress is visible and a request that fails before reaching a
@@ -310,6 +315,10 @@ const initialSchema: LibsqlMigration = {
       metadata TEXT NOT NULL,
       embedding TEXT DEFAULT NULL,
       original_system_prompt TEXT,
+      -- The prompt the gateway chose, written as soon as the configuration
+      -- serving the request is pulled -- before the provider is asked, so
+      -- that a request still in flight can be read.
+      served_system_prompt TEXT,
       cache_status TEXT CHECK (
         cache_status IS NULL OR
         cache_status IN ('HIT', 'SEMANTIC_HIT', 'MISS', 'SEMANTIC_MISS', 'REFRESH', 'DISABLED')

@@ -1504,9 +1504,10 @@ export const supabaseLogsStorageConnector: LogsStorageConnector = {
       'logs',
       {
         ...startParams,
-        // NOT NULL with nothing to put in them yet.
+        // NOT NULL, and nothing to put in `hook_logs` until the hooks have
+        // run. `metadata` carries whatever the gateway has decided so far.
         hook_logs: [],
-        metadata: {},
+        metadata: startParams.metadata ?? {},
       },
       null,
       // A retried request could reuse an id; completing the row beats failing.

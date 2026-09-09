@@ -88,11 +88,14 @@ describe('logsMiddleware', () => {
   let app: Hono<AppEnv>;
   /** What the handler under test leaves on the context, beyond the usual. */
   let arrange: (c: AppContext) => void;
+  /** What happens once the handler has answered, before the row is closed. */
+  let settle: (c: AppContext) => void;
   let providerLog: AIProviderRequestLog;
 
   beforeEach(() => {
     vi.clearAllMocks();
     arrange = () => undefined;
+    settle = () => undefined;
     providerLog = { ...aiProviderLog };
     requestData = {
       functionName: FunctionName.CHAT_COMPLETE,
@@ -132,6 +135,10 @@ describe('logsMiddleware', () => {
           () => logsConnector as unknown as LogsStorageConnector,
         ),
       )
+      .use('*', async (c, next) => {
+        await next();
+        settle(c);
+      })
       .post('/v1/chat/completions', (c) => {
         c.set('sa_config', saConfig);
         c.set('agent', agent);
@@ -165,6 +172,44 @@ describe('logsMiddleware', () => {
     expect(log.original_system_prompt).toBe('You are the caller.');
     expect(log.skill_id).toBe('skill-1');
     expect(log.agent_id).toBe('agent-1');
+  });
+
+  it('closes a failed request whose answer is read while its row is still being written', async () => {
+    // The failure's message is read off the response the client is being
+    // given, and the row it closes may still be being written. Waiting for
+    // that write before taking the copy is waiting long enough for the body
+    // to be consumed -- and a clone of a consumed body throws, which used to
+    // lose the failure altogether rather than merely lose its message.
+    arrange = (c) => {
+      // No provider was reached, so the row is closed as a failure.
+      c.set('ai_provider_log', undefined);
+    };
+    settle = (c) => {
+      c.res = new Response(JSON.stringify({ error: 'nothing answered' }), {
+        status: 502,
+        headers: { 'content-type': 'application/json' },
+      });
+      // Still in flight when the request fails...
+      c.set(
+        'log_row_write',
+        new Promise<void>((resolve) => setTimeout(resolve, 20)),
+      );
+      // ...and the client has read the answer before it lands.
+      setTimeout(() => void c.res.text(), 0);
+    };
+
+    const response = await app.request('/v1/chat/completions', {
+      method: 'POST',
+    });
+    expect(response.status).toBe(502);
+
+    await vi.waitFor(() =>
+      expect(logsConnector.failLog).toHaveBeenCalledTimes(1),
+    );
+    expect(logsConnector.failLog.mock.calls[0][1]).toMatchObject({
+      status: 502,
+      error: 'nothing answered',
+    });
   });
 
   it('records how the skill was chosen', async () => {
@@ -292,6 +337,14 @@ describe('logsMiddleware', () => {
 describe('markRequestStarted', () => {
   const startLog = vi.fn().mockResolvedValue(undefined);
 
+  const clientBody = {
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: 'You are the caller.' },
+      { role: 'user', content: 'Translate this.' },
+    ],
+  };
+
   /** What the agent-and-skill middleware has on the context when it calls. */
   const arrived = {
     log_request_id: 'request-1',
@@ -300,29 +353,45 @@ describe('markRequestStarted', () => {
       functionName: FunctionName.CHAT_COMPLETE,
       method: HttpMethod.POST,
       url: 'http://localhost/v1/chat/completions',
-      requestBody: { model: 'gpt-4o', messages: [] },
+      requestBody: clientBody,
     },
     sa_config_pre_processed: saConfig,
     agent,
     logs_storage_connector: { startLog },
   };
 
-  const context = (values: Record<string, unknown>): AppContext =>
-    ({
+  /**
+   * A context that remembers what is set on it, since the writes chain
+   * through `log_row_write` and each call reads the one before.
+   */
+  const context = (values: Record<string, unknown>): AppContext => {
+    const state = { ...values };
+    return {
       req: { url: 'http://localhost/v1/chat/completions' },
-      get: (key: string) => values[key],
-    }) as unknown as AppContext;
+      get: (key: string) => state[key],
+      set: (key: string, value: unknown) => {
+        state[key] = value;
+      },
+    } as unknown as AppContext;
+  };
+
+  /** Everything the row has been written with, in the order it was written. */
+  const written = async (c: AppContext) => {
+    await c.get('log_row_write');
+    return startLog.mock.calls.map(([, params]) => params);
+  };
 
   beforeEach(() => {
-    startLog.mockClear();
+    startLog.mockReset();
+    startLog.mockResolvedValue(undefined);
     vi.mocked(emitSSEEvent).mockClear();
   });
 
   it('opens the row with no skill as soon as the agent is known', async () => {
-    markRequestStarted(context(arrived));
+    const c = context(arrived);
+    markRequestStarted(c);
 
-    expect(startLog).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(await written(c)).toEqual([
       expect.objectContaining({
         id: 'request-1',
         agent_id: 'agent-1',
@@ -330,42 +399,104 @@ describe('markRequestStarted', () => {
         start_time: 1000,
         model: 'gpt-4o',
       }),
-    );
-    await vi.waitFor(() =>
-      expect(emitSSEEvent).toHaveBeenCalledWith('log:request-started', {
-        log_id: 'request-1',
-        agent_id: 'agent-1',
-        skill_id: null,
-      }),
-    );
+    ]);
+    expect(emitSSEEvent).toHaveBeenCalledWith('log:request-started', {
+      log_id: 'request-1',
+      agent_id: 'agent-1',
+      skill_id: null,
+    });
   });
 
-  it('opens the row for a request that named only its agent', () => {
+  it('records the request the client made, before anything has served it', async () => {
+    // The row is the only account of the request until a provider answers,
+    // so what the caller sent has to be on it from the start.
+    const c = context(arrived);
+    markRequestStarted(c);
+
+    expect((await written(c))[0]).toMatchObject({
+      request_body: clientBody,
+      original_system_prompt: 'You are the caller.',
+      metadata: {},
+    });
+  });
+
+  it('opens the row for a request that named only its agent', async () => {
     // No `skill_name` in the header: routing will pick one. The config
     // schema the completion write parses with would refuse this.
-    markRequestStarted(
-      context({
-        ...arrived,
-        sa_config_pre_processed: { agent_name: 'helper', trace_id: 'trace-1' },
-      }),
-    );
+    const c = context({
+      ...arrived,
+      sa_config_pre_processed: { agent_name: 'helper', trace_id: 'trace-1' },
+    });
+    markRequestStarted(c);
 
-    expect(startLog).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        skill_id: null,
-        base_sa_config: { agent_name: 'helper' },
-      }),
-    );
+    expect((await written(c))[0]).toMatchObject({
+      skill_id: null,
+      base_sa_config: { agent_name: 'helper' },
+    });
   });
 
-  it('writes the row again with the skill once routing has picked one', () => {
-    markRequestStarted(context({ ...arrived, skill }));
+  it('writes the row again with the skill and how it was chosen', async () => {
+    const c = context({ ...arrived, skill, skill_routing: decision });
+    markRequestStarted(c);
 
-    expect(startLog).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ id: 'request-1', skill_id: 'skill-1' }),
+    expect((await written(c))[0]).toMatchObject({
+      id: 'request-1',
+      skill_id: 'skill-1',
+      metadata: { skill_routing: decision },
+    });
+  });
+
+  it('writes the row again with the configuration serving the request', async () => {
+    const c = context({
+      ...arrived,
+      skill,
+      pulled_arm: pulledArm,
+      sa_config: {
+        ...saConfig,
+        targets: [
+          {
+            configuration: {
+              ai_provider: 'openai',
+              model: 'gpt-5.6',
+              system_prompt: 'You translate text.',
+            },
+          },
+        ],
+      },
+    });
+    markRequestStarted(c);
+
+    expect((await written(c))[0]).toMatchObject({
+      cluster_id: 'cluster-1',
+      served_system_prompt: 'You translate text.',
+      ai_provider: 'openai',
+      model: 'gpt-5.6',
+      metadata: { served_configuration: { id: 'arm-1', name: '7' } },
+    });
+  });
+
+  it('lands the writes in the order they were made', async () => {
+    // None of them is awaited by the request, and an earlier, emptier write
+    // landing last would put a row with no skill on top of one with one.
+    const landed: (string | null)[] = [];
+    startLog.mockImplementation(async (_c, params) => {
+      // The first write is made to take longer than the second.
+      await new Promise((resolve) =>
+        setTimeout(resolve, params.skill_id ? 0 : 5),
+      );
+      landed.push(params.skill_id);
+    });
+
+    const c = context(arrived);
+    markRequestStarted(c);
+    (c as unknown as { set: (k: string, v: unknown) => void }).set(
+      'skill',
+      skill,
     );
+    markRequestStarted(c);
+    await c.get('log_row_write');
+
+    expect(landed).toEqual([null, 'skill-1']);
   });
 });
 

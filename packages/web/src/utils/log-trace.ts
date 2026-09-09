@@ -1,5 +1,6 @@
 import type { Log } from '@shared/types/data/log';
 import { HookType } from '@shared/types/middleware/hooks';
+import { readSkillRouting } from '@web/utils/skill-routing';
 
 /**
  * A request's passage through the gateway, read off the row it left.
@@ -85,9 +86,9 @@ function gatewayStage(
 } {
   if (first) {
     return {
-      label: 'routing',
+      label: 'setup',
       detail:
-        "Choosing the skill, embedding the request and the gateway's own setup, before anything else had run.",
+        "Embedding the request, pulling the configuration that served it, and the gateway's own setup, before anything else had run.",
     };
   }
   if (last) {
@@ -131,19 +132,39 @@ export function traceOf(log: Log): TraceStage[] | null {
   const stages: TraceStage[] = [];
   let cursor = start;
 
+  // The one piece of the gateway's own work the row times: choosing the
+  // skill, for a request that named only the agent. It happens at the head
+  // of the first gap, so the gap is split at it rather than drawn as one
+  // bar that hides the model call inside it.
+  const routingMs = readSkillRouting(log.metadata)?.duration_ms ?? null;
+
   known.forEach((span, index) => {
     // Overlapping spans are read as one after another: a hook that started
     // before the previous stage ended keeps only the part that is its own.
     const from = Math.max(span.from, cursor);
     const gap = from - cursor;
-    if (gap >= NOISE_MS) {
-      const where = gatewayStage(stages.length, cursor === start, false);
+    const first = cursor === start;
+    // Only what is left of the gap once routing has had its share; a
+    // measurement longer than the gap it sits in takes the whole of it.
+    const routed = first && routingMs !== null ? Math.min(routingMs, gap) : 0;
+    if (routed > 0) {
+      stages.push({
+        key: `routing-${cursor}`,
+        kind: 'gateway',
+        label: 'routing',
+        detail:
+          'Choosing the skill for a request that named only its agent: embedding it, and on a miss the arbiter and the skill it created.',
+        ms: routed,
+      });
+    }
+    if (gap - routed >= NOISE_MS) {
+      const where = gatewayStage(stages.length, first, false);
       stages.push({
         key: `gateway-${cursor}`,
         kind: 'gateway',
         label: where.label,
         detail: where.detail,
-        ms: gap,
+        ms: gap - routed,
       });
     }
     if (span.to > from) {

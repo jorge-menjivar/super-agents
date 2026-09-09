@@ -96,8 +96,8 @@ export const libsqlLogsStorageConnector: LogsStorageConnector = {
     c: AppContext,
     startParams: LogStartParams,
   ): Promise<void> => {
-    const { base_sa_config, ...rest } = startParams as LogStartParams &
-      Record<string, unknown>;
+    const { base_sa_config, request_body, metadata, ...rest } =
+      startParams as LogStartParams & Record<string, unknown>;
 
     await insertInto(
       getLibsqlClient(c),
@@ -105,9 +105,12 @@ export const libsqlLogsStorageConnector: LogsStorageConnector = {
       {
         ...asColumns(rest),
         base_sa_config: toJsonColumn(base_sa_config),
-        // NOT NULL with nothing to put in them yet.
+        request_body:
+          request_body === undefined ? undefined : toJsonColumn(request_body),
+        // NOT NULL, and nothing to put in `hook_logs` until the hooks have
+        // run. `metadata` carries whatever the gateway has decided so far.
         hook_logs: toJsonColumn([]),
-        metadata: toJsonColumn({}),
+        metadata: toJsonColumn(metadata ?? {}),
       },
       z.array(Log),
       // A retried request could reuse an id; completing the row beats failing.

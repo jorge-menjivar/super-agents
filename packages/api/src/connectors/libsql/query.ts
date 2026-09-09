@@ -21,6 +21,7 @@ const JSON_COLUMNS: Record<string, string[]> = {
   tools: ['raw_data'],
   logs: [
     'base_sa_config',
+    'request_body',
     'ai_provider_request_log',
     'hook_logs',
     'metadata',

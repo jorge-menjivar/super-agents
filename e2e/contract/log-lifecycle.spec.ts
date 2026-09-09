@@ -106,6 +106,8 @@ test.describe('the log row a request opens', () => {
         .then((r) => r.json())) as {
         status: number | null;
         end_time: number | null;
+        skill_id: string | null;
+        request_body: { messages?: { content: string }[] } | null;
       }[];
 
     try {
@@ -124,7 +126,16 @@ test.describe('the log row a request opens', () => {
           message: 'the request was never shown as running',
         })
         .toEqual([null]);
-      expect((await rows())[0].status).toBeNull();
+      const [open] = await rows();
+      expect(open.status).toBeNull();
+      // And it carries the request itself, which is the only account of what
+      // is being asked until the provider answers. The dashboard renders the
+      // conversation from this; a row with the client's body dropped in
+      // transit -- JSONB one side, TEXT the other -- would draw an empty card.
+      expect(open.request_body?.messages?.[0].content).toBe(
+        'are you still there',
+      );
+      expect(open.skill_id).not.toBeNull();
 
       const response = await pending;
       expect(response.status()).toBe(200);

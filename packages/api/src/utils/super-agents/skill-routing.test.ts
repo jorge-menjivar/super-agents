@@ -201,6 +201,7 @@ describe('routeRequestToSkill', () => {
         identity_similarity: null,
         conversation_similarity: null,
         // Every decision is timed, whichever way it was reached.
+        duration_ms: expect.any(Number),
       });
       expect(resolveEmbeddingModelConfig).not.toHaveBeenCalled();
       expect(embedText).not.toHaveBeenCalled();
@@ -409,6 +410,7 @@ describe('routeRequestToSkill', () => {
         candidates: 0,
         identity_similarity: null,
         conversation_similarity: null,
+        duration_ms: expect.any(Number),
       });
       expect(arbitrateSkillForRequest).not.toHaveBeenCalled();
       expect(createSkillForRequest).toHaveBeenCalledWith(

@@ -20,6 +20,13 @@
  * relaxed `skill_id`, once the row moved to before skill routing: until
  * routing has picked the skill there is none to write.
  *
+ * Also two columns on `logs` for what a request is before a provider has
+ * answered it: `request_body`, the body the caller sent, and
+ * `served_system_prompt`, the prompt the pulled configuration rendered.
+ * Both are additive, so an ALTER each suffices; the `logs_with_eval_scores`
+ * view is `SELECT l.*`, which SQLite expands when the view is queried
+ * rather than when it was created, so it picks them up untouched.
+ *
  * Also the response review columns on `agents`: `reviewer_agent_id`, the
  * agent whose responses another agent reviews before the client sees them,
  * `review_fail_closed`, whether a response it could not judge is withheld,
@@ -85,6 +92,15 @@ const NULLABLE_NOW = [
   'cache_status',
 ];
 
+/**
+ * Columns added to `logs` since the initial schema, as `schema.ts` spells
+ * them. Additive and nullable, so an ALTER apiece is the whole upgrade.
+ */
+const LOG_COLUMNS = [
+  { name: 'request_body', definition: 'TEXT', after: [] },
+  { name: 'served_system_prompt', definition: 'TEXT', after: [] },
+];
+
 const columnsOf = async (table) => {
   const result = await client.execute(`PRAGMA table_info(${table})`);
   return result.rows.map((row) => ({
@@ -110,8 +126,15 @@ const main = async () => {
   const missingReviewColumns = REVIEW_COLUMNS.filter(
     ({ name }) => !agentColumns.some((column) => column.name === name),
   );
+  const missingLogColumns = LOG_COLUMNS.filter(
+    ({ name }) => !columns.some((column) => column.name === name),
+  );
 
-  if (!needsLogsRebuild && missingReviewColumns.length === 0) {
+  if (
+    !needsLogsRebuild &&
+    missingReviewColumns.length === 0 &&
+    missingLogColumns.length === 0
+  ) {
     console.log('Already up to date; nothing to do.');
     await refreshFingerprints();
     return;
@@ -125,10 +148,19 @@ const main = async () => {
   }
 
   for (const column of missingReviewColumns) {
-    await addReviewColumn(column);
+    await addColumn('agents', column);
   }
   if (needsLogsRebuild) {
     await rebuildLogs(columns);
+  }
+
+  // Re-read: a rebuild builds the current shape, so what is still missing
+  // afterwards is only what the rebuild did not cover.
+  const rebuilt = await columnsOf('logs');
+  for (const column of LOG_COLUMNS) {
+    if (!rebuilt.some(({ name }) => name === column.name)) {
+      await addColumn('logs', column);
+    }
   }
 
   await refreshFingerprints();
@@ -158,13 +190,13 @@ const REVIEW_COLUMNS = [
   },
 ];
 
-const addReviewColumn = async ({ name, definition, after }) => {
-  console.log(`Adding \`agents.${name}\`...`);
-  await client.execute(`ALTER TABLE agents ADD COLUMN ${name} ${definition}`);
+const addColumn = async (table, { name, definition, after }) => {
+  console.log(`Adding \`${table}.${name}\`...`);
+  await client.execute(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
   for (const sql of after) {
     await client.execute(sql);
   }
-  console.log(`Added \`agents.${name}\`.`);
+  console.log(`Added \`${table}.${name}\`.`);
 };
 
 /** `columns` are the current `logs` columns, from `columnsOf`. */
@@ -197,6 +229,7 @@ const rebuildLogs = async (columns) => {
       start_time INTEGER NOT NULL,
       first_token_time INTEGER,
       base_sa_config TEXT NOT NULL,
+      request_body TEXT,
       status INTEGER,
       end_time INTEGER,
       duration INTEGER,
@@ -207,6 +240,7 @@ const rebuildLogs = async (columns) => {
       metadata TEXT NOT NULL,
       embedding TEXT DEFAULT NULL,
       original_system_prompt TEXT,
+      served_system_prompt TEXT,
       cache_status TEXT CHECK (
         cache_status IS NULL OR
         cache_status IN ('HIT', 'SEMANTIC_HIT', 'MISS', 'SEMANTIC_MISS', 'REFRESH', 'DISABLED')
