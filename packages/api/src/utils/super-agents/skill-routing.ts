@@ -51,6 +51,18 @@ const MAX_CENTROID_SAMPLES = 100;
 const IDENTITY_WEIGHT = 0.6;
 const CONVERSATION_WEIGHT = 0.4;
 
+/**
+ * How far a skill's identity similarity has to stand above the next skill's
+ * for identity to have chosen between them.
+ */
+const IDENTITY_SEPARATION = 0.05;
+
+/**
+ * How far above the threshold a decision has to land before the skill it
+ * chose learns from it.
+ */
+const LEARNING_MARGIN = 0.05;
+
 /** What a request with no system prompt, tools or message is filed under. */
 const DEFAULT_INTENT = 'General requests that carry no instructions or tools';
 
@@ -81,13 +93,25 @@ export class SkillRoutingError extends Error {
   }
 }
 
+/** What a skill says it is for: the one text that is its own. */
+export function describeText(skill: Skill): string {
+  return `${skill.name}: ${skill.description}`;
+}
+
 /**
- * What a skill's centroid starts from, before it has served a request: the
- * prompt the gateway created it from, when there is one -- that is what the
- * next request like it will carry -- and otherwise its description.
+ * What a skill's identity centroid starts from, before it has served a
+ * request: the prompt the gateway created it from, when there is one -- that
+ * is what the next request like it will carry -- and otherwise its
+ * description.
+ *
+ * Every skill one caller creates is seeded from that caller's prompt, so
+ * these centroids are alike by construction. That is identity doing its job:
+ * it marks the skills as this caller's. Telling them apart is the
+ * conversation centroid's, which is why that one is seeded from the
+ * description instead.
  */
 export function seedText(skill: Skill): string {
-  return skill.seed_system_prompt || `${skill.name}: ${skill.description}`;
+  return skill.seed_system_prompt || describeText(skill);
 }
 
 /** The running mean after one more sample, capped as described above. */
@@ -150,6 +174,60 @@ export function scoreIntent(
     return null;
   }
   return { score: sum / weight, identity, conversation };
+}
+
+/**
+ * Scores an intent against a whole field of skills at once, so that identity
+ * counts for what it can actually tell apart.
+ *
+ * A skill's identity centroid says which caller a skill belongs to, and an
+ * agent fed by one tool sends the same system prompt with every request: the
+ * skills of that caller then score alike on identity, whatever the request
+ * asks for. Weighted at 0.6 that similarity is a floor under every score --
+ * measured on real traffic, an identity pinned at 0.97 holds a request above
+ * a 0.8 threshold unless its conversation falls under 0.54, which is to say
+ * never. The arbiter, whose whole job is to catch work no skill fits, is
+ * then unreachable, and the skill with the broadest centroid keeps every
+ * request it wins.
+ *
+ * So identity narrows the field and the conversation chooses within it: the
+ * skills within `IDENTITY_SEPARATION` of the best identity are the ones it
+ * could not separate, and among those the score is the conversation alone.
+ * Skills it did separate keep the blend, which is how a second caller's
+ * skills stay marked down. When identity singles one skill out, it has
+ * chosen, and the blend stands for everyone.
+ *
+ * Returns one score per routing, in order, null where there is nothing to
+ * compare.
+ */
+export function scoreIntentAcrossSkills(
+  intent: RequestIntentEmbedding,
+  routings: (SkillRouting | undefined)[],
+): (SkillScore | null)[] {
+  const scores = routings.map((routing) =>
+    routing ? scoreIntent(intent, routing) : null,
+  );
+
+  const identities = scores
+    .map((score) => score?.identity ?? null)
+    .filter((identity): identity is number => identity !== null);
+  if (identities.length === 0) {
+    return scores;
+  }
+
+  const floor = Math.max(...identities) - IDENTITY_SEPARATION;
+  if (identities.filter((identity) => identity >= floor).length < 2) {
+    return scores;
+  }
+
+  return scores.map((score) =>
+    score !== null &&
+    score.identity !== null &&
+    score.conversation !== null &&
+    score.identity >= floor
+      ? { ...score, score: score.conversation }
+      : score,
+  );
 }
 
 /** The absorb-once key for a conversation embedding, per skill. */
@@ -277,17 +355,22 @@ async function tryEmbedIntent(
 
 type RoutingPass =
   | { kind: 'routed'; result: SkillRoutingResult }
-  /** No skill fits, and the agent may create one: what to create it from. */
-  | {
-      kind: 'create';
-      skills: Skill[];
-      intent: RequestIntentEmbedding | null;
-      similarity: number | null;
-      identitySimilarity: number | null;
-      conversationSimilarity: number | null;
-      /** The closest skill anyway, for routing conservatively. */
-      best: Skill | null;
-    };
+  /** No skill fits: what a new one would be made from, if one may be. */
+  | CreatePass;
+
+interface CreatePass {
+  kind: 'create';
+  skills: Skill[];
+  intent: RequestIntentEmbedding | null;
+  similarity: number | null;
+  identitySimilarity: number | null;
+  conversationSimilarity: number | null;
+  /** The closest skill anyway, for routing conservatively. */
+  best: Skill | null;
+  /** False at the agent's cap: the arbiter may still speak, but only to
+   * name a skill that already exists. */
+  canCreate: boolean;
+}
 
 /**
  * One look at the agent's skills: either the skill for the request, or the
@@ -333,6 +416,7 @@ async function routeOnce(
     intent: RequestIntentEmbedding | null,
     score: SkillScore | null,
     best: Skill | null,
+    canCreate = true,
   ): RoutingPass => ({
     kind: 'create',
     skills,
@@ -341,6 +425,7 @@ async function routeOnce(
     identitySimilarity: score?.identity ?? null,
     conversationSimilarity: score?.conversation ?? null,
     best,
+    canCreate,
   });
 
   if (skills.length === 0) {
@@ -397,21 +482,33 @@ async function routeOnce(
       skills
         .filter((skill) => !bySkill.has(skill.id))
         .map(async (skill) => {
-          const seed = await embedIntent(
-            c,
-            connector,
-            seedText(skill),
-            embeddingConfig.modelId,
-            agent,
-          );
+          // Both halves from the start: a skill whose conversation centroid
+          // is null is scored on identity alone, and identity is what the
+          // skills of one caller share.
+          const [seed, described] = await Promise.all([
+            embedIntent(
+              c,
+              connector,
+              seedText(skill),
+              embeddingConfig.modelId,
+              agent,
+            ),
+            embedIntent(
+              c,
+              connector,
+              describeText(skill),
+              embeddingConfig.modelId,
+              agent,
+            ),
+          ]);
           const routing = await connector.upsertSkillRouting(c, {
             skill_id: skill.id,
             agent_id: agent.id,
             centroid: seed.embedding,
-            conversation_centroid: null,
+            conversation_centroid: described.embedding,
             embedding_model_id: embeddingConfig.modelId,
             sample_count: 1,
-            conversation_sample_count: 0,
+            conversation_sample_count: 1,
           });
           bySkill.set(skill.id, routing);
         }),
@@ -425,52 +522,65 @@ async function routeOnce(
       embeddingConfig.modelId,
     );
 
+    const inOrder = skills.map((skill) => bySkill.get(skill.id));
+    const scores = scoreIntentAcrossSkills(intent, inOrder);
+
     let best: {
       skill: Skill;
       routing: SkillRouting;
       score: SkillScore;
     } | null = null;
-    for (const skill of skills) {
-      const routing = bySkill.get(skill.id);
-      if (!routing) {
-        continue;
-      }
-      const score = scoreIntent(intent, routing);
-      if (!score) {
-        continue;
+    skills.forEach((skill, i) => {
+      const routing = inOrder[i];
+      const score = scores[i];
+      if (!routing || !score) {
+        return;
       }
       if (!best || score.score > best.score.score) {
         best = { skill, routing, score };
       }
-    }
+    });
     if (!best) {
       throw new RequestEmbeddingError('No skill has a routing centroid');
     }
+    const chosen: {
+      skill: Skill;
+      routing: SkillRouting;
+      score: SkillScore;
+    } = best;
 
-    if (autoCreate && best.score.score < agent.skill_match_threshold) {
-      if (underCap) {
-        return create(intent, best.score, best.skill);
-      }
-      warn(
-        `[SKILL_ROUTING] Agent ${agent.name} is at its cap of ${agent.max_auto_created_skills} auto-created skills; routing to ${best.skill.name} at similarity ${best.score.score.toFixed(2)}`,
+    if (autoCreate && chosen.score.score < agent.skill_match_threshold) {
+      // Asked even at the cap. The arbiter cannot make a skill there, but its
+      // existing-skill verdict is the one way a request the centroids misfile
+      // reaches the skill it belongs to, and the cap is on how many skills an
+      // agent has rather than on whether its router may be corrected.
+      return create(intent, chosen.score, chosen.skill, underCap);
+    }
+
+    // Learn from the decision, so skills follow their traffic -- but only
+    // from decisions that were not close calls. A skill that takes in every
+    // request it barely won broadens until it is the nearest centroid to
+    // everything the agent is sent, and the agent collapses onto it; the
+    // narrow skills it swallowed never get another chance, because only the
+    // winner ever learns. Requests that name their skill teach it whatever
+    // its traffic is (`learnSkillIntent`), and so does an arbitrated verdict,
+    // so nothing here is the only way a skill can follow its work.
+    if (chosen.score.score >= agent.skill_match_threshold + LEARNING_MARGIN) {
+      await absorbIntent(
+        c,
+        connector,
+        agent.id,
+        chosen.skill.id,
+        chosen.routing,
+        intent,
       );
     }
 
-    // Learn from the decision, so skills follow their traffic.
-    await absorbIntent(
-      c,
-      connector,
-      agent.id,
-      best.skill.id,
-      best.routing,
-      intent,
-    );
-
     return routed(
-      best.skill,
+      chosen.skill,
       decide(
         'embedding',
-        best.score,
+        chosen.score,
         autoCreate ? agent.skill_match_threshold : null,
       ),
     );
@@ -525,41 +635,34 @@ export async function routeRequestToSkill(
     return first.result;
   }
 
-  // The arbiter is asked under the lease, so the lease has to outlast its
-  // budget -- one attempt and the client's one retry -- on top of creation.
   const settings = await connector.getSystemSettings(c);
-  const leaseMs =
-    SKILL_CREATION_LEASE_MS + 2 * skillArbiterTimeoutMs(agent, settings);
 
-  const underLease = async (): Promise<SkillRoutingResult> => {
-    const again = await routeOnce(c, connector, agent, requestIntent);
-    if (again.kind === 'routed') {
-      return again.result;
-    }
-
+  const settle = async (pass: CreatePass): Promise<SkillRoutingResult> => {
     const decision = (method: SkillRoutingMethod): SkillRoutingDecision => ({
       method,
-      similarity: again.similarity,
+      similarity: pass.similarity,
       threshold: agent.skill_match_threshold,
-      candidates: again.skills.length,
-      identity_similarity: again.identitySimilarity,
-      conversation_similarity: again.conversationSimilarity,
+      candidates: pass.skills.length,
+      identity_similarity: pass.identitySimilarity,
+      conversation_similarity: pass.conversationSimilarity,
     });
 
     // An agent with skills gets the arbiter's judgment before a new one is
     // made; an agent without any gets its first skill straight away.
-    if (again.skills.length > 0 && requestIntent) {
+    if (pass.skills.length > 0 && requestIntent) {
       const verdict = await arbitrateSkillForRequest(
         c,
         connector,
         agent,
-        again.skills,
+        pass.skills,
         requestIntent,
         settings,
       );
       if (verdict.kind === 'existing') {
-        // Teach the router, so the next such request needs no arbiter.
-        if (again.intent) {
+        // Teach the router, so the next such request needs no arbiter. A
+        // verdict is worth learning from where a close call is not: a model
+        // read the request and named the skill.
+        if (pass.intent) {
           const [routing] = await connector.getSkillRoutings(c, {
             skill_id: verdict.skill.id,
           });
@@ -568,10 +671,10 @@ export async function routeRequestToSkill(
             connector,
             agent.id,
             verdict.skill.id,
-            routing?.embedding_model_id === again.intent.modelId
+            routing?.embedding_model_id === pass.intent.modelId
               ? routing
               : undefined,
-            again.intent,
+            pass.intent,
           );
         }
         return { skill: verdict.skill, decision: decision('arbitrated') };
@@ -579,7 +682,18 @@ export async function routeRequestToSkill(
       if (verdict.kind === 'unavailable') {
         // The conservative side: the closest skill, and nothing created.
         return {
-          skill: again.best ?? mostUsed(again.skills),
+          skill: pass.best ?? mostUsed(pass.skills),
+          decision: decision('embedding'),
+        };
+      }
+      if (!pass.canCreate) {
+        // New work, and nowhere to put it: the agent is at its cap. The
+        // closest skill serves it, as it did before the arbiter was asked.
+        warn(
+          `[SKILL_ROUTING] Agent ${agent.name} is at its cap of ${agent.max_auto_created_skills} auto-created skills; routing to ${(pass.best ?? mostUsed(pass.skills)).name}`,
+        );
+        return {
+          skill: pass.best ?? mostUsed(pass.skills),
           decision: decision('embedding'),
         };
       }
@@ -592,11 +706,30 @@ export async function routeRequestToSkill(
         agent,
         saRequestData,
         requestIntent ? intentText(requestIntent) : DEFAULT_INTENT,
-        again.intent,
-        again.skills,
+        pass.intent,
+        pass.skills,
       ),
       decision: decision('created'),
     };
+  };
+
+  // At the cap nothing is created, so there is nothing to serialise and no
+  // reason to make concurrent requests queue behind one arbiter call.
+  if (!first.canCreate) {
+    return settle(first);
+  }
+
+  // The arbiter is asked under the lease, so the lease has to outlast its
+  // budget -- one attempt and the client's one retry -- on top of creation.
+  const leaseMs =
+    SKILL_CREATION_LEASE_MS + 2 * skillArbiterTimeoutMs(agent, settings);
+
+  const underLease = async (): Promise<SkillRoutingResult> => {
+    const again = await routeOnce(c, connector, agent, requestIntent);
+    if (again.kind === 'routed') {
+      return again.result;
+    }
+    return settle(again);
   };
 
   return withSkillCreationLease(c, connector, agent, underLease, leaseMs);

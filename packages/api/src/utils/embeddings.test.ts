@@ -285,5 +285,55 @@ describe('Embeddings Utility', () => {
       // formatter render every tool output as empty for months.
       expect(result).toContain('Tool Call call_123 Output: Weather result');
     });
+
+    it('keeps the end of a long conversation, not its opening', () => {
+      const messages = [
+        { role: ChatCompletionMessageRole.USER, content: 'The opening ask' },
+        ...Array.from({ length: 40 }, (_, i) => ({
+          role: ChatCompletionMessageRole.TOOL,
+          tool_call_id: `call_${i}`,
+          content: 'x'.repeat(900),
+        })),
+        { role: ChatCompletionMessageRole.USER, content: 'What is asked now' },
+      ];
+
+      const result = formatMessagesForEmbedding(messages);
+      expect(result).toContain('User: What is asked now');
+      expect(result).not.toContain('User: The opening ask');
+      expect(result.length).toBeLessThanOrEqual(6000);
+    });
+
+    it('gives two turns of one session different text as they diverge', () => {
+      const prefix = Array.from({ length: 40 }, (_, i) => ({
+        role: ChatCompletionMessageRole.TOOL,
+        tool_call_id: `call_${i}`,
+        content: 'x'.repeat(900),
+      }));
+
+      const earlier = formatMessagesForEmbedding([
+        ...prefix,
+        { role: ChatCompletionMessageRole.USER, content: 'Rename the field' },
+      ]);
+      const later = formatMessagesForEmbedding([
+        ...prefix,
+        { role: ChatCompletionMessageRole.USER, content: 'Rename the field' },
+        { role: ChatCompletionMessageRole.USER, content: 'Now write the docs' },
+      ]);
+
+      expect(earlier).not.toBe(later);
+      expect(later).toContain('User: Now write the docs');
+    });
+
+    it('cuts the newest message when it alone overruns the budget', () => {
+      const messages = [
+        { role: ChatCompletionMessageRole.USER, content: 'Earlier turn' },
+        { role: ChatCompletionMessageRole.USER, content: 'y'.repeat(9000) },
+      ];
+
+      const result = formatMessagesForEmbedding(messages);
+      expect(result.length).toBe(6000);
+      expect(result.startsWith('User: yyy')).toBe(true);
+      expect(result).not.toContain('Earlier turn');
+    });
   });
 });
