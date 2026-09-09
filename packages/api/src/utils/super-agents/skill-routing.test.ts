@@ -200,6 +200,7 @@ describe('routeRequestToSkill', () => {
         candidates: 1,
         identity_similarity: null,
         conversation_similarity: null,
+        // Every decision is timed, whichever way it was reached.
       });
       expect(resolveEmbeddingModelConfig).not.toHaveBeenCalled();
       expect(embedText).not.toHaveBeenCalled();
@@ -223,29 +224,33 @@ describe('routeRequestToSkill', () => {
       const sql = skill('s2', 'sql');
       connector.getSkills.mockResolvedValue([translate, sql]);
 
-      const result = await route(manual, chat('You translate text.'));
+      const result = await route(
+        manual,
+        chat('You translate text.', 'translate this'),
+      );
 
       expect(result.skill).toBe(translate);
       expect(result.decision.method).toBe('embedding');
       expect(result.decision.candidates).toBe(2);
       expect(result.decision.similarity).toBeCloseTo(1, 3);
       expect(result.decision.identity_similarity).toBeCloseTo(1, 3);
-      // Nothing had met a conversation yet, so identity alone decided.
-      expect(result.decision.conversation_similarity).toBeNull();
+      expect(result.decision.conversation_similarity).toBeCloseTo(1, 3);
       // The threshold is not consulted when nothing would be created.
       expect(result.decision.threshold).toBeNull();
 
       // Two seeds, then the winner absorbing the request.
       expect(connector.upsertSkillRouting).toHaveBeenCalledTimes(3);
+      // Both halves are seeded: identity from the prompt the skill would be
+      // called with, the conversation from what the skill says it is for.
       expect(connector.upsertSkillRouting).toHaveBeenCalledWith(
         c,
         expect.objectContaining({
           skill_id: 's1',
           centroid: [1, 0, 0.01],
-          conversation_centroid: null,
+          conversation_centroid: [1, 0, 0.01],
           embedding_model_id: MODEL_ID,
           sample_count: 1,
-          conversation_sample_count: 0,
+          conversation_sample_count: 1,
         }),
       );
       expect(connector.upsertSkillRouting).toHaveBeenCalledWith(
@@ -253,18 +258,18 @@ describe('routeRequestToSkill', () => {
         expect.objectContaining({
           skill_id: 's2',
           centroid: [0, 1, 0.01],
+          conversation_centroid: [0, 1, 0.01],
           sample_count: 1,
         }),
       );
-      // The absorb takes the identity into the main centroid and starts the
-      // conversation centroid from the conversation.
+      // The absorb moves both centroids on from their seeds.
       expect(connector.upsertSkillRouting).toHaveBeenLastCalledWith(
         c,
         expect.objectContaining({
           skill_id: 's1',
           sample_count: 2,
-          conversation_centroid: [0, 0, 0.01],
-          conversation_sample_count: 1,
+          conversation_centroid: [1, 0, 0.01],
+          conversation_sample_count: 2,
         }),
       );
     });
@@ -519,7 +524,10 @@ describe('routeRequestToSkill', () => {
       const translate = skill('s1', 'translate');
       connector.getSkills.mockResolvedValue([translate]);
 
-      const result = await route(growing, chat('You translate text.'));
+      const result = await route(
+        growing,
+        chat('You translate text.', 'translate this'),
+      );
 
       expect(result.skill).toBe(translate);
       expect(result.decision.method).toBe('embedding');
@@ -604,8 +612,10 @@ describe('routeRequestToSkill', () => {
         expect.objectContaining({
           skill_id: 's2',
           sample_count: 2,
-          conversation_centroid: [0, 0, 0.01],
-          conversation_sample_count: 1,
+          // On from the seed the description gave it, halfway to the
+          // conversation the arbiter filed here.
+          conversation_centroid: [0, 0.5, 0.01],
+          conversation_sample_count: 2,
         }),
       );
     });
@@ -630,17 +640,53 @@ describe('routeRequestToSkill', () => {
       expect(connector.upsertSkillRouting).toHaveBeenCalledTimes(2);
     });
 
-    it('routes to the closest skill once the agent is at its cap', async () => {
+    it('asks the arbiter at the cap, and honours an existing skill', async () => {
       const capped = { ...growing, max_auto_created_skills: 1 } as Agent;
       const translate = skill('s1', 'translate', 0, true);
-      connector.getSkills.mockResolvedValue([translate, skill('s2', 'sql')]);
+      const sql = skill('s2', 'sql');
+      connector.getSkills.mockResolvedValue([translate, sql]);
+      vi.mocked(arbitrateSkillForRequest).mockResolvedValue({
+        kind: 'existing',
+        skill: sql,
+      });
 
       const result = await route(capped, chat('Draw a picture of a cat.'));
 
+      // The cap stops the agent growing, not its router being corrected.
+      expect(arbitrateSkillForRequest).toHaveBeenCalled();
       expect(createSkillForRequest).not.toHaveBeenCalled();
-      expect(arbitrateSkillForRequest).not.toHaveBeenCalled();
+      expect(result.skill).toBe(sql);
+      expect(result.decision.method).toBe('arbitrated');
+    });
+
+    it('serves new work from the closest skill once at the cap', async () => {
+      const capped = { ...growing, max_auto_created_skills: 1 } as Agent;
+      const translate = skill('s1', 'translate', 0, true);
+      connector.getSkills.mockResolvedValue([translate, skill('s2', 'sql')]);
+      vi.mocked(arbitrateSkillForRequest).mockResolvedValue({ kind: 'new' });
+
+      const result = await route(capped, chat('Draw a picture of a cat.'));
+
+      // A new job with nowhere to go: nothing is created and the closest
+      // skill answers, as it did before the arbiter was asked.
+      expect(createSkillForRequest).not.toHaveBeenCalled();
       expect(result.decision.method).toBe('embedding');
       expect(['s1', 's2']).toContain(result.skill.id);
+    });
+
+    it('takes no creation lease at the cap', async () => {
+      const capped = { ...growing, max_auto_created_skills: 1 } as Agent;
+      connector.getSkills.mockResolvedValue([
+        skill('s1', 'translate', 0, true),
+        skill('s2', 'sql'),
+      ]);
+      vi.mocked(arbitrateSkillForRequest).mockResolvedValue({ kind: 'new' });
+
+      await route(capped, chat('Draw a picture of a cat.'));
+
+      // Nothing is created there, so concurrent requests have no reason to
+      // queue behind one arbiter call.
+      expect(connector.claimSkillCreationLease).not.toHaveBeenCalled();
     });
 
     it('refuses an agent without skills once it is at its cap', async () => {
