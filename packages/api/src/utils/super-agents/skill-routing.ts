@@ -629,6 +629,24 @@ export async function routeRequestToSkill(
   agent: Agent,
   saRequestData: SuperAgentsRequestData,
 ): Promise<SkillRoutingResult> {
+  // Timed here rather than at each of the ways out below, so that every
+  // decision carries how long it took to reach -- an embedding on the quick
+  // path, the arbiter and a new skill on the slow one. The client waits for
+  // all of it before the provider is asked, so the log records it.
+  const startedAt = Date.now();
+  const result = await chooseSkill(c, connector, agent, saRequestData);
+  return {
+    ...result,
+    decision: { ...result.decision, duration_ms: Date.now() - startedAt },
+  };
+}
+
+async function chooseSkill(
+  c: AppContext,
+  connector: UserDataStorageConnector,
+  agent: Agent,
+  saRequestData: SuperAgentsRequestData,
+): Promise<SkillRoutingResult> {
   const requestIntent = describeRequestIntent(saRequestData);
   const first = await routeOnce(c, connector, agent, requestIntent);
   if (first.kind === 'routed') {

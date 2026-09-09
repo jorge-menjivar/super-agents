@@ -42,6 +42,7 @@ import {
   createSkillAvatar,
 } from '@web/utils/avatars';
 import { describeHookLog, summariseHooks } from '@web/utils/hook-outcome';
+import { exchangeOf } from '@web/utils/log-exchange';
 import { outcomeOf } from '@web/utils/log-outcome';
 import { traceOf } from '@web/utils/log-trace';
 import { reviewOf } from '@web/utils/reviews';
@@ -275,27 +276,11 @@ export function LogDetailsView(): ReactElement {
 
   // Derived, not set in an effect, so a log switch never paints a frame of
   // the previous log's messages under the new log's header.
-  const saRequestData = useMemo((): SuperAgentsRequestData | null => {
-    if (!selectedLog) return null;
-    // Still running, or failed before a provider answered: there is no
-    // exchange to render, and the view says so instead.
-    if (!selectedLog.ai_provider_request_log) return null;
-    // A log recorded against a route or body shape this build no longer
-    // knows how to parse should cost us this one view, not the whole
-    // dashboard -- the error boundary above wraps every provider.
-    try {
-      return produceSuperAgentsRequestData(
-        selectedLog.ai_provider_request_log.method,
-        selectedLog.ai_provider_request_log.request_url,
-        {},
-        selectedLog.ai_provider_request_log.request_body,
-        selectedLog.ai_provider_request_log.response_body,
-      );
-    } catch (error) {
-      console.error('Failed to parse the log request data:', error);
-      return null;
-    }
-  }, [selectedLog]);
+  const saRequestData = useMemo(
+    (): SuperAgentsRequestData | null =>
+      selectedLog ? exchangeOf(selectedLog, window.location.origin) : null,
+    [selectedLog],
+  );
 
   // What the model wrote when the client did not receive it. A hook keeps
   // the response it withheld or replaced on its own log, since the provider
@@ -342,6 +327,26 @@ export function LogDetailsView(): ReactElement {
     return original === extractSystemPrompt(saRequestData) ? null : original;
   }, [selectedLog?.original_system_prompt, saRequestData]);
 
+  // The prompt the gateway chose, while the request is still being served,
+  // and where it came from. Once the provider has answered, the conversation
+  // below is the body that was sent and this prompt is its system message;
+  // before that, the conversation is the client's own request, so the prompt
+  // the skill substituted has nowhere else to appear.
+  const selectedSystemPrompt = useMemo(() => {
+    if (!selectedLog || selectedLog.ai_provider_request_log) return null;
+    const prompt = selectedLog.served_system_prompt;
+    if (!prompt || prompt === selectedLog.original_system_prompt) return null;
+    return {
+      prompt,
+      origin: describeSystemPromptOrigin({
+        partition: clusterName,
+        configuration: readServedConfiguration(selectedLog.metadata),
+        clientPrompt: selectedLog.original_system_prompt,
+        sentPrompt: prompt,
+      }),
+    };
+  }, [selectedLog, clusterName]);
+
   // The configuration that served the request, named on the header line
   // beside its partition.
   const servedConfiguration = useMemo(
@@ -353,6 +358,10 @@ export function LogDetailsView(): ReactElement {
   // the optimizer pulled, or the client, when the skill substituted nothing.
   const systemPromptOrigin = useMemo(() => {
     if (!selectedLog) return null;
+    // The badge labels the conversation's system message, which is the
+    // client's own until a provider has answered: nothing has replaced it
+    // yet, and the prompt that will is its own panel above.
+    if (!selectedLog.ai_provider_request_log) return null;
     return describeSystemPromptOrigin({
       partition: clusterName,
       configuration: readServedConfiguration(selectedLog.metadata),
@@ -719,6 +728,37 @@ export function LogDetailsView(): ReactElement {
                         className="text-xs text-muted-foreground"
                       >
                         as sent by the client
+                      </Badge>
+                    </div>
+                  </GenericViewer>
+                )}
+                {selectedLog && selectedSystemPrompt && (
+                  <GenericViewer
+                    path={`${selectedLog.id}-served-system-prompt`}
+                    language={'text'}
+                    defaultValue={selectedSystemPrompt.prompt}
+                    readOnly={true}
+                    onSave={async (): Promise<void> => {
+                      //pass
+                    }}
+                    onSelect={(): void => {
+                      //pass
+                    }}
+                  >
+                    <div className="flex flex-row items-center gap-2">
+                      <div className="text-sm font-normal">
+                        Selected system prompt
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className="text-xs text-muted-foreground"
+                        title={
+                          selectedSystemPrompt.origin?.title ??
+                          'The prompt the gateway chose for this request, in place of the one the client sent'
+                        }
+                      >
+                        {selectedSystemPrompt.origin?.label ??
+                          'chosen by the skill'}
                       </Badge>
                     </div>
                   </GenericViewer>

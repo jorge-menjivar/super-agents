@@ -55,6 +55,14 @@ const log = (extra: Partial<Log> = {}): Log =>
     ...extra,
   }) as Log;
 
+/** A routing decision, as the log row carries it. */
+const ROUTED = {
+  method: 'embedding',
+  similarity: 0.9,
+  threshold: 0.8,
+  candidates: 3,
+};
+
 /** The provider's own span, as the gateway records it. */
 const provider = (from: number, to: number) =>
   ({ start_time: from, end_time: to }) as Log['ai_provider_request_log'];
@@ -76,7 +84,7 @@ describe('traceOf', () => {
     );
 
     expect(stages?.map((stage) => [stage.label, stage.ms])).toEqual([
-      ['routing', 108_950],
+      ['setup', 108_950],
       ['provider', 7_867],
       ['review', 7_142],
     ]);
@@ -100,10 +108,10 @@ describe('traceOf', () => {
     );
 
     // The gateway's own work is named by where it falls: what ran before
-    // anything else is routing, what runs between two stages is the gateway,
+    // anything else is setup, what runs between two stages is the gateway,
     // and what is left at the end is the response.
     expect(stages?.map((stage) => stage.label)).toEqual([
-      'routing',
+      'setup',
       'check',
       'gateway',
       'provider',
@@ -144,7 +152,7 @@ describe('traceOf', () => {
     );
 
     expect(stages?.map((stage) => [stage.label, stage.ms])).toEqual([
-      ['routing', 1_000],
+      ['setup', 1_000],
       ['provider', 4_000],
       ['response', 4_000],
     ]);
@@ -162,9 +170,44 @@ describe('traceOf', () => {
       }),
     );
 
-    expect(stages?.map((stage) => stage.label)).toEqual([
-      'routing',
-      'provider',
+    expect(stages?.map((stage) => stage.label)).toEqual(['setup', 'provider']);
+  });
+
+  it('splits the head of the first gap into the routing it measured', () => {
+    // Routing is the one piece of the gateway's own work the row times, and
+    // it happens first, so the gap before the provider is cut at it rather
+    // than drawn as one bar that hides a model call inside it.
+    const stages = traceOf(
+      log({
+        metadata: { skill_routing: { ...ROUTED, duration_ms: 3_000 } },
+        ai_provider_request_log: provider(ARRIVED + 4_000, ARRIVED + 9_000),
+        end_time: ARRIVED + 9_000,
+        duration: 9_000,
+      }),
+    );
+
+    expect(stages?.map((stage) => [stage.label, stage.ms])).toEqual([
+      ['routing', 3_000],
+      ['setup', 1_000],
+      ['provider', 5_000],
+    ]);
+  });
+
+  it('gives routing the whole gap when it fills it', () => {
+    // The measurement and the gap come off different clocks, so routing can
+    // read as longer than the gap it sits in; it takes the gap, not more.
+    const stages = traceOf(
+      log({
+        metadata: { skill_routing: { ...ROUTED, duration_ms: 9_000 } },
+        ai_provider_request_log: provider(ARRIVED + 1_000, ARRIVED + 5_000),
+        end_time: ARRIVED + 5_000,
+        duration: 5_000,
+      }),
+    );
+
+    expect(stages?.map((stage) => [stage.label, stage.ms])).toEqual([
+      ['routing', 1_000],
+      ['provider', 4_000],
     ]);
   });
 

@@ -358,15 +358,41 @@ Database management:
 
 A gateway request is written to `logs` when it reaches its agent, before a
 skill is chosen, and completed by an upsert under the same id when it
-finishes (`markRequestStarted` in `middlewares/logs.ts`, called from the
-agent-and-skill middleware). Until routing has picked the skill the row's
-`skill_id` is null -- the column is nullable for exactly this -- and the
-middleware writes the row again once it has, so the skill's own logs pick it
-up. A request that fails before a provider answers, routing included, is
-closed as a failed row with its status and an `error`, which is how the
-failures that used to leave no trace are seen. The dashboard learns of both
-ends over the event stream (`log:request-started`, `log:request-settled`)
-and draws a running row until the completion lands.
+finishes (`markRequestStarted` in `middlewares/logs.ts`). Until routing has
+picked the skill the row's `skill_id` is null -- the column is nullable for
+exactly this -- and the row is written again once it has, so the skill's own
+logs pick it up. A request that fails before a provider answers, routing
+included, is closed as a failed row with its status and an `error`, which is
+how the failures that used to leave no trace are seen. The dashboard learns
+of both ends over the event stream (`log:request-started`,
+`log:request-settled`) and draws a running row until the completion lands.
+
+**The row says what the request is, not only that there is one.** It opens
+with `request_body` -- the body the caller sent -- and
+`original_system_prompt`, so a request still in flight has a conversation to
+read; `ai_provider_request_log` is what finally reached the provider, and is
+null until it answers. It is written a third time from
+`saConfigurationInjectorMiddleware`, once a configuration has been pulled:
+`cluster_id`, the provider and model that will answer, and
+`served_system_prompt`, the prompt that configuration rendered. `metadata`
+carries what the gateway has decided so far in the shape the completion
+write uses -- `skill_routing` from the second write, `served_configuration`
+from the third -- so a running row reads like a finished one. `exchangeOf`
+(`@web/utils/log-exchange`) is what the log page renders from: the provider
+exchange when there is one, the client's own request until then.
+
+Each write names only what it knows, so a later one fills in without erasing
+an earlier one's columns, and they are **chained** through the context's
+`log_row_write`: none is awaited by the request, and an earlier, emptier
+write landing last would put a running row back on top of a finished one.
+What closes the row -- the completion write and `closeFailedRequest` --
+waits on that chain for the same reason.
+
+`skill_routing.duration_ms` is how long choosing the skill took, measured
+around `routeRequestToSkill`. The client waits for all of it before the
+provider is asked, so the routing strip reports it and `utils/log-trace.ts`
+cuts it out of the head of the request's first gap, which would otherwise
+draw a model call as undifferentiated gateway time.
 
 ## Coding Style & Naming Conventions
 

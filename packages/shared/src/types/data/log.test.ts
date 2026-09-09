@@ -23,10 +23,12 @@ const base = {
   start_time: 1000,
   first_token_time: null,
   base_sa_config: {},
+  request_body: { model: 'gpt-5.6', messages: [] },
   hook_logs: [],
   metadata: {},
   embedding: null,
   original_system_prompt: null,
+  served_system_prompt: null,
   error: null,
   trace_id: null,
   parent_span_id: null,
@@ -92,6 +94,21 @@ describe('Log', () => {
     };
 
     expect(Log.safeParse(failed).success).toBe(true);
+  });
+
+  it('keeps the request a row that has not answered was opened with', () => {
+    // The row is the only account of a request until the provider answers,
+    // so what the caller sent has to survive it.
+    const log = Log.parse(running);
+
+    expect(log.request_body).toEqual({ model: 'gpt-5.6', messages: [] });
+  });
+
+  it('accepts a row written before the request was recorded', () => {
+    // Every row predating those columns reads them as null.
+    const old = { ...running, request_body: null, served_system_prompt: null };
+
+    expect(Log.safeParse(old).success).toBe(true);
   });
 
   it('still requires what a request has on arrival', () => {

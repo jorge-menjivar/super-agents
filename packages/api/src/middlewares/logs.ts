@@ -494,6 +494,12 @@ async function processLogs({
 
   await broadcastLog(JSON.stringify(createParams));
 
+  // The writes that opened this row are not awaited by the request, so one
+  // may still be in flight. Letting it land first is what keeps it from
+  // arriving after the completion and putting a running row back on top of
+  // a finished one.
+  await c.get('log_row_write');
+
   // Store the log in the configured logs storage connector
   try {
     const insertedLog = await logsStorageConnector.createLog(c, createParams);
@@ -615,6 +621,12 @@ const closeFailedRequest = async (
   status?: number,
 ): Promise<void> => {
   try {
+    // The writes that opened the row are not awaited by the request. Closing
+    // it before the last of them lands would either be undone by it, or --
+    // if the row does not exist yet -- update nothing and leave the request
+    // running for ever, since `failLog` never creates a row.
+    await c.get('log_row_write');
+
     const endTime = Date.now();
     const responseStatus = status ?? c.res.status;
 
@@ -644,18 +656,6 @@ const closeFailedRequest = async (
 };
 
 /**
- * Announce a request that is on its way to a provider, so the dashboard can
- * show it as a pending row while it runs.
- *
- * Called from the agent-and-skill middleware twice: as soon as the agent is
- * known, with no skill yet, and again once routing has picked one. The row
- * is upserted, so the second call fills the skill in. Announcing before
- * routing is what keeps its dead time -- embedding the request, compacting
- * its prompt, the arbiter -- out of the wait for the row to appear, which is
- * the row's whole purpose. This middleware's own pre-handler section cannot
- * do it: it runs before the agent has been resolved.
- */
-/**
  * The config as the arriving row records it. `skill_name` is optional here,
  * unlike in `NonPrivateSuperAgentsConfig`: before routing there is none, and
  * the completion write records the config with the skill routing chose.
@@ -664,6 +664,47 @@ const ArrivingSuperAgentsConfig = NonPrivateSuperAgentsConfig.extend({
   skill_name: z.string().optional(),
 });
 
+/**
+ * What the gateway has settled about the request so far, in the shape the
+ * completion write uses, so that a row still running reads like a finished
+ * one. Both keys are absent until the step that decides them has run.
+ */
+const metadataSoFar = (c: AppContext): Record<string, unknown> => {
+  const skillRouting = c.get('skill_routing');
+  const pulledArm = c.get('pulled_arm');
+  return {
+    ...(skillRouting ? { skill_routing: skillRouting } : {}),
+    ...(pulledArm
+      ? {
+          served_configuration: {
+            id: pulledArm.id,
+            name: pulledArm.name,
+          } satisfies ServedConfiguration,
+        }
+      : {}),
+  };
+};
+
+/**
+ * Announce a request that is on its way to a provider, so the dashboard can
+ * show what is known about it while it runs.
+ *
+ * Called three times: from the agent-and-skill middleware as soon as the
+ * agent is known, with nothing decided yet, and again once routing has
+ * picked the skill, and from the configuration injector once a
+ * configuration has been pulled for it. The row is upserted and each write
+ * names only what it knows, so a later call fills in without erasing an
+ * earlier one's columns. Announcing before routing is what keeps its dead
+ * time -- embedding the request, compacting its prompt, the arbiter -- out
+ * of the wait for the row to appear, which is the row's whole purpose;
+ * announcing again after each decision is what makes that wait legible
+ * rather than a spinner. This middleware's own pre-handler section cannot
+ * do the first one: it runs before the agent has been resolved.
+ *
+ * The writes are chained rather than merely started, because they overlap:
+ * none is awaited by the request, and one landing out of order would put
+ * the earlier, emptier row on top of the later one.
+ */
 export const markRequestStarted = (c: AppContext): void => {
   // Nothing about a row that exists to be looked at is worth failing a
   // request over, and this runs on every request the gateway serves.
@@ -685,40 +726,54 @@ export const markRequestStarted = (c: AppContext): void => {
 
     const requestBody = (saRequestData as { requestBody?: unknown })
       .requestBody;
-    const model =
+    const clientBody =
       requestBody &&
       typeof requestBody === 'object' &&
-      'model' in requestBody &&
-      typeof requestBody.model === 'string'
-        ? requestBody.model
+      !Array.isArray(requestBody)
+        ? (requestBody as Record<string, unknown>)
+        : undefined;
+    const model =
+      clientBody && typeof clientBody.model === 'string'
+        ? clientBody.model
         : undefined;
 
     // The pre-processed config, not `sa_config`: that one is injected by a
-    // middleware that runs *after* the skill resolves, so at this point it
-    // does not exist yet. Parsing through `NonPrivateSuperAgentsConfig`
-    // strips the targets, which carry the caller's provider keys.
+    // middleware that runs *after* the skill resolves, so on the first two
+    // calls it does not exist yet. Parsing through
+    // `NonPrivateSuperAgentsConfig` strips the targets, which carry the
+    // caller's provider keys.
     const saConfig = c.get('sa_config') ?? c.get('sa_config_pre_processed');
+    // The configuration the request will be sent with, once one has been
+    // pulled. The first target is the one that serves unless it fails, and
+    // the fallbacks would each be a request of their own.
+    const served = c.get('sa_config')?.targets[0]?.configuration;
+    const pulledArm = c.get('pulled_arm');
     const startParams: LogStartParams = {
       id: requestId,
       agent_id: c.get('agent').id,
       // Unset until routing has picked one; the second call fills it in.
       skill_id: (c.get('skill') as Skill | undefined)?.id ?? null,
+      cluster_id: pulledArm?.cluster_id,
       method: saRequestData.method,
       endpoint: url.pathname,
       function_name: saRequestData.functionName,
       start_time: c.get('log_start_time') ?? Date.now(),
       base_sa_config: ArrivingSuperAgentsConfig.parse(saConfig),
-      model,
+      request_body: clientBody,
+      original_system_prompt: extractSystemPrompt(saRequestData) ?? undefined,
+      served_system_prompt: served?.system_prompt ?? undefined,
+      metadata: metadataSoFar(c),
+      ai_provider: served?.ai_provider,
+      model: served?.model ?? model,
       trace_id: saConfig.trace_id ?? undefined,
     };
 
-    // Not awaited: a request must not wait on a write that exists so someone
-    // can watch it. The completion write is an upsert, so whichever of the
-    // two lands first, the row ends up right.
-    void c
-      .get('logs_storage_connector')
-      .startLog(c, startParams)
-      ?.then(() => {
+    // Not awaited by the request: it must not wait on a write that exists so
+    // someone can watch it. What closes the row does wait, so the writes
+    // cannot cross.
+    const written = (c.get('log_row_write') ?? Promise.resolve())
+      .then(() => c.get('logs_storage_connector').startLog(c, startParams))
+      .then(() => {
         emitSSEEvent('log:request-started', {
           log_id: requestId,
           agent_id: startParams.agent_id,
@@ -728,6 +783,7 @@ export const markRequestStarted = (c: AppContext): void => {
       .catch((e: unknown) => {
         warn('[Logs] Could not open the row for a request:', e);
       });
+    c.set('log_row_write', written);
   } catch (e) {
     warn('[Logs] Could not open the row for a request:', e);
   }

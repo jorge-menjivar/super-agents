@@ -71,6 +71,13 @@ export interface AppEnv {
     log_request_id?: string;
     /** When the request arrived, shared by the row opened then and its completion. */
     log_start_time?: number;
+    /**
+     * The last write to that row, so the next one chains onto it. The row is
+     * written several times as the request progresses and none of the writes
+     * is awaited by the request, so without this an earlier, emptier write
+     * could land on top of a later one.
+     */
+    log_row_write?: Promise<void>;
     ai_provider_log?: AIProviderRequestLog;
     hook_logs?: HookLog[];
     first_token_time?: number;

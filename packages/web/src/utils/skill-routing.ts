@@ -2,6 +2,7 @@ import {
   SkillRoutingDecision,
   type SkillRoutingMethod,
 } from '@shared/types/data/skill-routing';
+import { formatDuration } from '@web/utils/time';
 
 /** The routing decision a log carries, if the gateway chose its skill. */
 export function readSkillRouting(
@@ -44,7 +45,7 @@ const METHOD_TITLES: Record<SkillRoutingMethod, string> = {
 
 export interface SkillRoutingDescription {
   label: string;
-  /** Similarity against the threshold, when both were computed. */
+  /** Similarity against the threshold, and how long choosing took. */
   detail: string | null;
   title: string;
 }
@@ -53,7 +54,7 @@ export interface SkillRoutingDescription {
 export function describeSkillRouting(
   decision: SkillRoutingDecision,
 ): SkillRoutingDescription {
-  const { method, similarity, threshold, candidates } = decision;
+  const { method, similarity, threshold, candidates, duration_ms } = decision;
   const percent = (value: number): string => `${Math.round(value * 100)}%`;
   const parts: string[] = [];
   if (similarity !== null) {
@@ -67,6 +68,11 @@ export function describeSkillRouting(
   // label has already said there was only the one.
   if (candidates > 0 && method !== 'only_skill') {
     parts.push(`from ${candidates} skill${candidates === 1 ? '' : 's'}`);
+  }
+  // Time the client spent before the provider was even asked, which on the
+  // paths that call a model is most of what it waited for.
+  if (duration_ms !== undefined) {
+    parts.push(`took ${formatDuration(duration_ms)}`);
   }
   return {
     label: METHOD_LABELS[method],

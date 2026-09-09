@@ -79,5 +79,13 @@ export const SkillRoutingDecision = z.object({
   /** The two halves of the score, when both were computed. */
   identity_similarity: z.number().nullable().optional(),
   conversation_similarity: z.number().nullable().optional(),
+  /**
+   * How long choosing took, in milliseconds -- the embeddings, and on a miss
+   * the arbiter and the skill it created. The client waits for all of it
+   * before the provider is even asked, which is why it is worth recording
+   * separately from the request's own duration. Absent on a log written
+   * before the gateway measured it.
+   */
+  duration_ms: z.number().min(0).optional(),
 });
 export type SkillRoutingDecision = z.infer<typeof SkillRoutingDecision>;

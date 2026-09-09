@@ -189,6 +189,11 @@ CREATE TABLE IF NOT EXISTS logs (
   start_time BIGINT NOT NULL, -- Timestamp (ms) when request started
   first_token_time BIGINT, -- Timestamp (ms) when first token received (for streaming), NULL for non-streaming
   base_sa_config JSONB NOT NULL,
+  -- The body the caller sent, recorded when the row opens: the only account
+  -- of a request that is still running, or that failed before a provider
+  -- answered. ai_provider_request_log holds the body that finally reached
+  -- the provider.
+  request_body JSONB,
   -- Null while the request is still running. The row is written when the
   -- request arrives rather than when it finishes, so that work in progress is
   -- visible and a request that fails before reaching a provider -- or never
@@ -208,6 +213,10 @@ CREATE TABLE IF NOT EXISTS logs (
   -- received. ai_provider_request_log holds the body that reached the
   -- provider, in which an optimized skill has substituted its own prompt.
   original_system_prompt TEXT,
+  -- The prompt the gateway chose, written as soon as the configuration
+  -- serving the request is pulled -- before the provider is asked, so that a
+  -- request still in flight can be read.
+  served_system_prompt TEXT,
   -- Cache info
   cache_status cache_status_enum,
   -- Why it failed, when it failed before a provider answered. A failure the

@@ -79,6 +79,15 @@ export const Log = z.object({
   start_time: z.number(),
   first_token_time: z.number().nullable(),
   base_sa_config: z.record(z.string(), z.unknown()),
+  /**
+   * The body the caller sent, recorded when the row opens. It is what the
+   * request *was*, before a skill was chosen for it or a prompt substituted
+   * into it, which is the only account of a request that is still running or
+   * that failed before a provider answered.
+   * `ai_provider_request_log.request_body` is the body that finally reached
+   * the provider. Null on a row written before the gateway recorded it.
+   */
+  request_body: z.record(z.string(), z.unknown()).nullable(),
 
   /**
    * Everything below is null while the request is still running.
@@ -106,6 +115,15 @@ export const Log = z.object({
    * received. `ai_provider_request_log` holds the body that reached the
    * provider, in which an optimized skill has substituted its own prompt. */
   original_system_prompt: z.string().nullable(),
+  /**
+   * The system prompt the gateway chose for the request, written as soon as
+   * the configuration serving it is pulled -- before the provider is asked,
+   * so that a request still in flight can be read. A finished request
+   * carries it inside `ai_provider_request_log.request_body` too; this is
+   * what a running one has instead. Null when the skill substituted nothing,
+   * and on a row written before the gateway recorded it.
+   */
+  served_system_prompt: z.string().nullable(),
 
   // Cache info
   cache_status: z.enum(CacheStatus).nullable(),
@@ -221,19 +239,37 @@ export const LogsQueryParams = z.object({
 export type LogsQueryParams = z.infer<typeof LogsQueryParams>;
 
 /**
- * The row written when a request arrives, before anything is known about how
- * it went. Completed by `LogCreateParams` under the same `id`.
+ * The row as the request is still being served, written whenever the gateway
+ * learns something worth showing: when the request arrives, once routing has
+ * chosen its skill, and once a configuration has been pulled for it. Each
+ * write names only what it knows, so a later one never erases an earlier
+ * one's columns. Completed by `LogCreateParams` under the same `id`.
  */
 export const LogStartParams = z.object({
   id: z.uuid(),
   agent_id: z.uuid(),
   /** Null when the row opens before routing; written again once it is known. */
   skill_id: z.uuid().nullable(),
+  /** Unset until the optimizer has pulled a configuration. */
+  cluster_id: z.uuid().optional(),
   method: z.enum(HttpMethod),
   endpoint: z.string(),
   function_name: z.enum(FunctionName),
   start_time: z.number(),
   base_sa_config: z.record(z.string(), z.unknown()),
+  /** The body the caller sent, so a request in flight can be read. */
+  request_body: z.record(z.string(), z.unknown()).optional(),
+  original_system_prompt: z.string().optional(),
+  /** The prompt the pulled configuration rendered, once there is one. */
+  served_system_prompt: z.string().optional(),
+  /**
+   * What the gateway has decided so far -- how it routed the request, which
+   * configuration it pulled -- in the shape the completion write uses, so a
+   * running row reads like a finished one.
+   */
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  /** Resolved once a configuration is pulled; the caller's before that. */
+  ai_provider: z.enum(AIProvider).optional(),
   /** What the caller asked for; the arm may resolve something else. */
   model: z.string().optional(),
   trace_id: z.string().optional(),

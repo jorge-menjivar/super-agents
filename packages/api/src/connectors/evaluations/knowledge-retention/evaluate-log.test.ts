@@ -114,7 +114,9 @@ describe('Knowledge Retention - evaluateLog', () => {
       app_id: null,
       external_user_id: null,
       external_user_human_name: null,
+      request_body: null,
       original_system_prompt: null,
+      served_system_prompt: null,
       user_metadata: null,
       metadata: {},
       ai_provider_request_log: {
@@ -256,7 +258,9 @@ describe('Knowledge Retention - evaluateLog', () => {
       app_id: null,
       external_user_id: null,
       external_user_human_name: null,
+      request_body: null,
       original_system_prompt: null,
+      served_system_prompt: null,
       user_metadata: null,
       metadata: {},
       ai_provider_request_log: {
@@ -383,7 +387,9 @@ describe('Knowledge Retention - evaluateLog', () => {
       app_id: null,
       external_user_id: null,
       external_user_human_name: null,
+      request_body: null,
       original_system_prompt: null,
+      served_system_prompt: null,
       user_metadata: null,
       metadata: {},
       ai_provider_request_log: {

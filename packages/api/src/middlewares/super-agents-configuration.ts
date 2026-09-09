@@ -1,3 +1,4 @@
+import { markRequestStarted } from '@api/middlewares/logs';
 import { handleGenerateArms } from '@api/optimization/skill-optimizations';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
@@ -550,6 +551,12 @@ export const saConfigurationInjectorMiddleware = createMiddleware(
         };
 
         c.set('sa_config', saConfig);
+
+        // The row again, now that the request has a configuration: which one
+        // was pulled, the prompt it rendered and the model that will answer.
+        // Until the provider does, this is the only account of what the
+        // request is being sent as.
+        markRequestStarted(c);
       }
     }
     await next();
