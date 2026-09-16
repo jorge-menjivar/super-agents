@@ -49,7 +49,8 @@ const BOOL_COLUMNS: Record<string, string[]> = {
 type Executor = Pick<Client, 'execute'> | Pick<Transaction, 'execute'>;
 
 export interface Filters {
-  [column: string]: InValue | undefined;
+  /** A list is `IN (...)`, the way PostgREST's `in.(a,b)` is. */
+  [column: string]: InValue | InValue[] | undefined;
 }
 
 export interface SelectOptions {
@@ -62,16 +63,28 @@ export interface SelectOptions {
 const whereClause = (filters: Filters): { sql: string; args: InValue[] } => {
   const entries = Object.entries(filters).filter(
     ([, value]) => value !== undefined,
-  ) as [string, InValue][];
+  ) as [string, InValue | InValue[]][];
 
   if (entries.length === 0) {
     return { sql: '', args: [] };
   }
 
-  return {
-    sql: ` WHERE ${entries.map(([column]) => `${column} = ?`).join(' AND ')}`,
-    args: entries.map(([, value]) => value),
-  };
+  const args: InValue[] = [];
+  const conditions = entries.map(([column, value]) => {
+    if (!Array.isArray(value)) {
+      args.push(value);
+      return `${column} = ?`;
+    }
+    // A list of nothing matches nothing. Dropping the condition instead would
+    // widen the query to every row, which is the dangerous way to be wrong.
+    if (value.length === 0) {
+      return '0';
+    }
+    args.push(...value);
+    return `${column} IN (${value.map(() => '?').join(', ')})`;
+  });
+
+  return { sql: ` WHERE ${conditions.join(' AND ')}`, args };
 };
 
 /** Decode a table's rows and validate them against the schema they belong to. */

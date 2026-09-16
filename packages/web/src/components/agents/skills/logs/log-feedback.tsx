@@ -79,7 +79,10 @@ export function LogFeedback({ logId }: { logId: string }): ReactElement {
       });
     },
     onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ['feedback', logId] });
+      // The whole resource, not just this log's verdict: the session rail
+      // asks for a window of logs at once, and withdrawing a verdict emits
+      // no event of its own for the stream to invalidate it by.
+      queryClient.invalidateQueries({ queryKey: ['feedback'] });
       setComposing(null);
       if (created) {
         toast({

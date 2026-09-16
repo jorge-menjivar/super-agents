@@ -45,6 +45,23 @@ export const FeedbackQueryParams = z
   .object({
     id: z.uuid().optional(),
     log_id: z.uuid().optional(),
+    /**
+     * Several logs at once, comma-separated in the query string. The session
+     * rail asks for the verdicts on a whole window of requests, which is one
+     * query rather than one per row. An empty list is not a query -- it would
+     * read as no filter at all, which is every verdict on the deployment --
+     * so it is rejected rather than widened.
+     */
+    log_ids: z
+      .string()
+      .or(z.array(z.string()))
+      .transform((value) =>
+        typeof value === 'string'
+          ? value.split(',').map((id) => id.trim())
+          : value,
+      )
+      .pipe(z.array(z.uuid()).min(1))
+      .optional(),
     limit: z.coerce.number().int().positive().optional(),
     offset: z.coerce.number().int().min(0).optional(),
   })

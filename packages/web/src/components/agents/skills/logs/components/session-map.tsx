@@ -1,11 +1,17 @@
 'use client';
 
+import type { Feedback } from '@shared/types/data/feedback';
 import type { Log } from '@shared/types/data/log';
 import { Button } from '@web/components/ui/button';
 import { type LogOutcomeTone, outcomeOf } from '@web/utils/log-outcome';
 import { formatClockTime, formatDuration } from '@web/utils/time';
 import { cn } from '@web/utils/ui/utils';
-import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
+} from 'lucide-react';
 import type { ReactElement } from 'react';
 import { useEffect, useRef } from 'react';
 
@@ -45,7 +51,43 @@ interface SessionMapProps {
   appId?: string | null;
   /** A line under a request's time: what it was, when that is known */
   labelOf: (log: Log) => string | null;
+  /** A reviewer's thumb on a request, by log id; empty until they load */
+  feedback?: Map<string, Feedback>;
   onSelect: (log: Log) => void;
+}
+
+const NO_FEEDBACK = new Map<string, Feedback>();
+
+/**
+ * The thumb a person gave a request, beside the score a judge gave it.
+ *
+ * This is the one place colour is not the rail's outcome vocabulary, and it
+ * can be: the glyph already says which verdict it is, so green and red are
+ * emphasis rather than a second meaning -- and they are the colours the
+ * composer marks the same verdict with. A verdict is worth finding in a rail
+ * of thirty requests, which a muted glyph is not.
+ */
+function FeedbackThumb({ feedback }: { feedback: Feedback }): ReactElement {
+  const good = feedback.score >= 0.5;
+  const Icon = good ? ThumbsUpIcon : ThumbsDownIcon;
+  const label = good ? 'Marked as a good output' : 'Marked as a bad output';
+  // The reason is the reviewer's own words about this answer, so it belongs
+  // on the thumb rather than in the row's tooltip of request facts.
+  const title = feedback.feedback ? `${label} · ${feedback.feedback}` : label;
+
+  return (
+    <span
+      role="img"
+      aria-label={title}
+      title={title}
+      className={cn(
+        'self-center shrink-0',
+        good ? 'text-green-600 dark:text-green-500' : 'text-red-500',
+      )}
+    >
+      <Icon className="h-3 w-3" />
+    </span>
+  );
 }
 
 /**
@@ -64,6 +106,7 @@ export function SessionMap({
   traceId,
   appId,
   labelOf,
+  feedback = NO_FEEDBACK,
   onSelect,
 }: SessionMapProps): ReactElement {
   const currentRef = useRef<HTMLButtonElement>(null);
@@ -167,6 +210,7 @@ export function SessionMap({
           const label = labelOf(log);
           const time = formatClockTime(log.start_time);
           const running = log.duration === null;
+          const verdict = feedback.get(log.id);
           const duration =
             log.duration === null ? 'running' : formatDuration(log.duration);
           // The status lives here rather than in the row, which shows the
@@ -182,6 +226,11 @@ export function SessionMap({
                 : ['not scored'],
             )
             .concat(tone === 'unreviewed' ? ['went unreviewed'] : [])
+            .concat(
+              verdict === undefined
+                ? []
+                : [verdict.score >= 0.5 ? 'marked good' : 'marked bad'],
+            )
             .join(' · ');
           return (
             <li key={log.id}>
@@ -207,13 +256,16 @@ export function SessionMap({
                   >
                     {time}
                   </span>
-                  <span
-                    className={cn('font-medium', TEXT_TONE[tone])}
-                    title={outcome.title ?? outcome.label}
-                  >
-                    {score === null || score === undefined
-                      ? '—'
-                      : `${Math.round(score * 100)}%`}
+                  <span className="flex items-baseline gap-1">
+                    {verdict && <FeedbackThumb feedback={verdict} />}
+                    <span
+                      className={cn('font-medium', TEXT_TONE[tone])}
+                      title={outcome.title ?? outcome.label}
+                    >
+                      {score === null || score === undefined
+                        ? '—'
+                        : `${Math.round(score * 100)}%`}
+                    </span>
                   </span>
                 </div>
                 {label && (
