@@ -2,17 +2,69 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { SkillPerformanceChart } from '@web/components/agents/skills/skill-performance-chart';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+interface RenderedDataset {
+  label: string;
+  data: (number | null)[];
+  /** Indices the line was drawn out to the window edge at */
+  edges?: Set<number>;
+  pointRadius: number | ((context: { dataIndex: number }) => number);
+  segment?: {
+    borderDash: (context: { p1DataIndex: number }) => number[] | undefined;
+  };
+  spanGaps: boolean;
+}
+
+interface RenderedChart {
+  labels: string[];
+  datasets: RenderedDataset[];
+}
+
+interface RenderedOptions {
+  plugins: {
+    tooltip: {
+      filter: (item: { datasetIndex: number; dataIndex: number }) => boolean;
+    };
+  };
+}
+
+/**
+ * What the chart was last handed, unserialised.
+ *
+ * The attributes below are JSON, which drops the scriptable options and the
+ * set of window edges; a test that needs either reads them from here.
+ */
+const rendered = vi.hoisted(
+  () => ({}) as { data: RenderedChart; options: RenderedOptions },
+);
+
+/** The radius a dataset gives a bucket, scriptable or not. */
+const radiusAt = (dataset: RenderedDataset, dataIndex: number): number =>
+  typeof dataset.pointRadius === 'function'
+    ? dataset.pointRadius({ dataIndex })
+    : dataset.pointRadius;
+
+/** The dash pattern of the stretch ending at a bucket, if it has one. */
+const dashAt = (
+  dataset: RenderedDataset,
+  dataIndex: number,
+): number[] | undefined =>
+  dataset.segment?.borderDash({ p1DataIndex: dataIndex });
+
 // Mock Chart.js and react-chartjs-2
 vi.mock('react-chartjs-2', () => ({
-  Line: vi.fn(({ data, options }) => (
-    <div
-      data-testid="line-chart"
-      data-chart-data={JSON.stringify(data)}
-      data-chart-options={JSON.stringify(options)}
-    >
-      Line Chart Mock
-    </div>
-  )),
+  Line: vi.fn(({ data, options }) => {
+    rendered.data = data;
+    rendered.options = options;
+    return (
+      <div
+        data-testid="line-chart"
+        data-chart-data={JSON.stringify(data)}
+        data-chart-options={JSON.stringify(options)}
+      >
+        Line Chart Mock
+      </div>
+    );
+  }),
 }));
 
 vi.mock('chart.js', () => ({
@@ -32,10 +84,22 @@ vi.mock('chartjs-plugin-annotation', () => ({
   default: {},
 }));
 
+const HOUR = 60 * 60 * 1000;
+
+/**
+ * A bucket inside the chart's default window, on the grid the server buckets
+ * to. The window ends at the moment of the render, so a fixture with a fixed
+ * date falls outside it and draws nothing.
+ */
+const bucketAt = (hoursAgo: number): string =>
+  new Date(
+    Math.floor(Date.now() / HOUR) * HOUR - hoursAgo * HOUR,
+  ).toISOString();
+
 describe('SkillPerformanceChart', () => {
   const mockEvaluationScores = [
     {
-      time_bucket: '2025-01-15T10:00:00Z',
+      time_bucket: bucketAt(3),
       avg_score: 0.875,
       scores_by_evaluation: {
         task_completion: 0.85,
@@ -45,7 +109,7 @@ describe('SkillPerformanceChart', () => {
       count: 2,
     },
     {
-      time_bucket: '2025-01-15T11:00:00Z',
+      time_bucket: bucketAt(2),
       avg_score: 0.9,
       scores_by_evaluation: {
         task_completion: 0.88,
@@ -55,7 +119,7 @@ describe('SkillPerformanceChart', () => {
       count: 2,
     },
     {
-      time_bucket: '2025-01-15T12:00:00Z',
+      time_bucket: bucketAt(1),
       avg_score: 0.925,
       scores_by_evaluation: {
         task_completion: 0.9,
@@ -246,11 +310,22 @@ describe('SkillPerformanceChart', () => {
   it('should hide points when multiple data points exist', () => {
     render(<SkillPerformanceChart evaluationScores={mockEvaluationScores} />);
 
-    const chart = screen.getByTestId('line-chart');
-    const chartData = JSON.parse(chart.getAttribute('data-chart-data') || '{}');
+    // Scriptable, so that the value a line is drawn out to the window edge at
+    // carries no marker; here every bucket is a measured one.
+    expect(radiusAt(rendered.data.datasets[0], 0)).toBe(0);
+  });
 
-    const dataset = chartData.datasets[0];
-    expect(dataset.pointRadius).toBe(0);
+  it('carries every line forward to the right edge, dashed', () => {
+    render(<SkillPerformanceChart evaluationScores={mockEvaluationScores} />);
+
+    // The newest score is an hour old and the window ends now, so each line
+    // stands at its last value the rest of the way -- said with a dash.
+    for (const dataset of rendered.data.datasets) {
+      if (dataset.label === 'Events') continue;
+      const last = dataset.data.length - 1;
+      expect(dataset.data[last]).not.toBeNull();
+      expect(dashAt(dataset, last)).toEqual([6, 4]);
+    }
   });
 
   it('should configure chart options correctly', () => {

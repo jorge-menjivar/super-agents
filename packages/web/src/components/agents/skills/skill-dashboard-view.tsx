@@ -55,6 +55,7 @@ import { useSkillEvents } from '@web/providers/skill-events';
 import { useSkillOptimizationClusters } from '@web/providers/skill-optimization-clusters';
 import { useSkills } from '@web/providers/skills';
 import { createClusterAvatar, createSkillAvatar } from '@web/utils/avatars';
+import { scoreRangeForWindow } from '@web/utils/chart-window';
 import {
   AlertCircle,
   CalendarIcon,
@@ -168,11 +169,12 @@ export function SkillDashboardView(): ReactElement {
       selectedSkill
         ? getSkillEvaluationScoresByTimeBucket(selectedSkill.id, {
             interval_minutes: INTERVAL_CONFIG[selectedInterval].minutes,
-            start_time: new Date(
-              endTime.getTime() -
-                INTERVAL_CONFIG[selectedInterval].hours * 60 * 60 * 1000,
-            ).toISOString(),
-            end_time: endTime.toISOString(),
+            // Wider than the window it draws: the points just outside an edge
+            // are what let a line cross it instead of starting there.
+            ...scoreRangeForWindow(
+              endTime,
+              INTERVAL_CONFIG[selectedInterval].hours,
+            ),
           })
         : Promise.resolve([]),
     enabled: !!selectedSkill,
@@ -200,10 +202,9 @@ export function SkillDashboardView(): ReactElement {
           {
             cluster_id: cluster.id,
             interval_minutes: 5, // 5 min intervals
-            start_time: new Date(
-              endTime.getTime() - 2.5 * 60 * 60 * 1000,
-            ).toISOString(), // Last 2.5 hours (30 buckets)
-            end_time: endTime.toISOString(),
+            // The last 2.5 hours (30 buckets), and a window on each side of
+            // them so a line can cross the chart's edges.
+            ...scoreRangeForWindow(endTime, 2.5),
           },
         ).catch(() => []);
         return [cluster.id, scores] as const;

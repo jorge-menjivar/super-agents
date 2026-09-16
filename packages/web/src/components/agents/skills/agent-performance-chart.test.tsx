@@ -2,17 +2,70 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { AgentPerformanceChart } from '@web/components/agents/agent-performance-chart';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+interface RenderedDataset {
+  label: string;
+  borderColor: string;
+  data: (number | null)[];
+  /** Indices the line was drawn out to the window edge at */
+  edges?: Set<number>;
+  pointRadius: number | ((context: { dataIndex: number }) => number);
+  segment?: {
+    borderDash: (context: { p1DataIndex: number }) => number[] | undefined;
+  };
+  spanGaps: boolean;
+}
+
+interface RenderedChart {
+  labels: string[];
+  datasets: RenderedDataset[];
+}
+
+interface RenderedOptions {
+  plugins: {
+    tooltip: {
+      filter: (item: { datasetIndex: number; dataIndex: number }) => boolean;
+    };
+  };
+}
+
+/**
+ * What the chart was last handed, unserialised.
+ *
+ * The attributes below are JSON, which drops the scriptable options and the
+ * set of window edges; a test that needs either reads them from here.
+ */
+const rendered = vi.hoisted(
+  () => ({}) as { data: RenderedChart; options: RenderedOptions },
+);
+
+/** The radius a dataset gives a bucket, scriptable or not. */
+const radiusAt = (dataset: RenderedDataset, dataIndex: number): number =>
+  typeof dataset.pointRadius === 'function'
+    ? dataset.pointRadius({ dataIndex })
+    : dataset.pointRadius;
+
+/** The dash pattern of the stretch ending at a bucket, if it has one. */
+const dashAt = (
+  dataset: RenderedDataset,
+  dataIndex: number,
+): number[] | undefined =>
+  dataset.segment?.borderDash({ p1DataIndex: dataIndex });
+
 // Mock Chart.js and react-chartjs-2
 vi.mock('react-chartjs-2', () => ({
-  Line: vi.fn(({ data, options }) => (
-    <div
-      data-testid="line-chart"
-      data-chart-data={JSON.stringify(data)}
-      data-chart-options={JSON.stringify(options)}
-    >
-      Line Chart Mock
-    </div>
-  )),
+  Line: vi.fn(({ data, options }) => {
+    rendered.data = data;
+    rendered.options = options;
+    return (
+      <div
+        data-testid="line-chart"
+        data-chart-data={JSON.stringify(data)}
+        data-chart-options={JSON.stringify(options)}
+      >
+        Line Chart Mock
+      </div>
+    );
+  }),
 }));
 
 vi.mock('chart.js', () => ({
@@ -28,23 +81,35 @@ vi.mock('chart.js', () => ({
   Legend: vi.fn(),
 }));
 
+const HOUR = 60 * 60 * 1000;
+
+/**
+ * A bucket inside the chart's default window, on the grid the server buckets
+ * to. The window ends at the moment of the render, so a fixture with a fixed
+ * date falls outside it and draws nothing.
+ */
+const bucketAt = (hoursAgo: number): string =>
+  new Date(
+    Math.floor(Date.now() / HOUR) * HOUR - hoursAgo * HOUR,
+  ).toISOString();
+
 describe('AgentPerformanceChart', () => {
   const mockSkillId = '123e4567-e89b-12d3-a456-426614174000';
   const mockEvaluationScores = [
     {
-      time_bucket: '2025-01-15T10:00:00Z',
+      time_bucket: bucketAt(3),
       skill_id: mockSkillId,
       avg_score: 0.875,
       count: 2,
     },
     {
-      time_bucket: '2025-01-15T11:00:00Z',
+      time_bucket: bucketAt(2),
       skill_id: mockSkillId,
       avg_score: 0.9,
       count: 2,
     },
     {
-      time_bucket: '2025-01-15T12:00:00Z',
+      time_bucket: bucketAt(1),
       skill_id: mockSkillId,
       avg_score: 0.925,
       count: 2,
@@ -189,6 +254,138 @@ describe('AgentPerformanceChart', () => {
     );
 
     expect(chartOptions.plugins.title.text).toBe(customTitle);
+  });
+
+  it('crosses the left edge at the slope of the point before the window', () => {
+    render(
+      <AgentPerformanceChart
+        evaluationScores={[
+          // An hour before the window opens, and well inside it: the line
+          // enters the chart on the segment between the two.
+          {
+            time_bucket: bucketAt(25),
+            skill_id: mockSkillId,
+            avg_score: 0.5,
+            count: 1,
+          },
+          {
+            time_bucket: bucketAt(21),
+            skill_id: mockSkillId,
+            avg_score: 0.9,
+            count: 1,
+          },
+        ]}
+      />,
+    );
+
+    // 50 an hour before the window, 90 three hours into it: ten points an
+    // hour, so the segment stands at 60 where it crosses the edge.
+    const [skill] = rendered.data.datasets;
+    expect(skill.data[0]).toBeCloseTo(60, 6);
+    expect(skill.edges?.has(0)).toBe(true);
+    // A real segment between two scores, so the line enters solid
+    const entering = skill.data.findIndex(
+      (value, index) => index > 0 && value !== null,
+    );
+    expect(dashAt(skill, entering)).toBeUndefined();
+    // The edge is where the line is, not a bucket that was scored: no marker,
+    // and the tooltip has nothing to say about it.
+    expect(radiusAt(skill, 0)).toBe(0);
+    expect(
+      rendered.options.plugins.tooltip.filter({
+        datasetIndex: 0,
+        dataIndex: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it('leaves a line that nothing precedes starting where its first score is', () => {
+    render(
+      <AgentPerformanceChart
+        evaluationScores={[
+          {
+            time_bucket: bucketAt(21),
+            skill_id: mockSkillId,
+            avg_score: 0.9,
+            count: 1,
+          },
+        ]}
+      />,
+    );
+
+    // Nothing is known before a skill's first score, so the left edge is
+    // where the line starts, not where it enters.
+    const [skill] = rendered.data.datasets;
+    expect(skill.data[0]).toBeNull();
+    expect(skill.edges?.has(0)).toBe(false);
+  });
+
+  it('carries a skill quiet since before the window across it, dashed', () => {
+    render(
+      <AgentPerformanceChart
+        evaluationScores={[
+          {
+            time_bucket: bucketAt(40),
+            skill_id: mockSkillId,
+            avg_score: 0.9,
+            count: 1,
+          },
+        ]}
+      />,
+    );
+
+    // The skill scored nothing inside the window, and would have been absent
+    // from the chart altogether; its last score stands instead.
+    const [skill] = rendered.data.datasets;
+    const last = skill.data.length - 1;
+    expect(skill.data[0]).toBeCloseTo(90, 6);
+    expect(skill.data[last]).toBeCloseTo(90, 6);
+    // Carried the whole way, so the whole line is dashed
+    expect(dashAt(skill, last)).toEqual([6, 4]);
+    expect(skill.edges).toEqual(new Set([0, last]));
+  });
+
+  it('drops the skills that scored nothing in the window when asked to', () => {
+    const quiet = {
+      time_bucket: bucketAt(40),
+      skill_id: mockSkillId,
+      avg_score: 0.9,
+      count: 1,
+    };
+    const active = {
+      time_bucket: bucketAt(2),
+      skill_id: '123e4567-e89b-12d3-a456-426614174111',
+      avg_score: 0.5,
+      count: 1,
+    };
+
+    const { rerender } = render(
+      <AgentPerformanceChart evaluationScores={[quiet, active]} />,
+    );
+    expect(rendered.data.datasets).toHaveLength(3); // both skills, plus Events
+    const activeColor = rendered.data.datasets[1].borderColor;
+
+    rerender(
+      <AgentPerformanceChart
+        evaluationScores={[quiet, active]}
+        showQuietSkills={false}
+      />,
+    );
+
+    // Only the carried-across skill goes; the one with scores keeps both its
+    // place and its colour, so the toggle changes what is drawn and not how.
+    expect(rendered.data.datasets).toHaveLength(2);
+    expect(rendered.data.datasets[0].borderColor).toBe(activeColor);
+    expect(rendered.data.datasets[0].data.some((v) => v !== null)).toBe(true);
+  });
+
+  it('draws the measured stretch of a line solid and the carried one dashed', () => {
+    render(<AgentPerformanceChart evaluationScores={mockEvaluationScores} />);
+
+    const [skill] = rendered.data.datasets;
+    const measured = skill.data.findIndex((value) => value !== null);
+    expect(dashAt(skill, measured)).toBeUndefined();
+    expect(dashAt(skill, skill.data.length - 1)).toEqual([6, 4]);
   });
 
   it('should span gaps in data correctly', () => {
