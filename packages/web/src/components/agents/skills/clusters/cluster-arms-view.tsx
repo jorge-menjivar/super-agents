@@ -43,6 +43,7 @@ import { useSkillOptimizationClusters } from '@web/providers/skill-optimization-
 import { useSkillOptimizationEvaluations } from '@web/providers/skill-optimization-evaluations';
 import { useSkills } from '@web/providers/skills';
 import { createArmAvatar, createClusterAvatar } from '@web/utils/avatars';
+import { scoreRangeForWindow } from '@web/utils/chart-window';
 import {
   ArrowUpDown,
   BoxIcon,
@@ -146,11 +147,12 @@ export function ClusterArmsView(): ReactElement {
         ? getSkillEvaluationScoresByTimeBucket(selectedSkill.id, {
             cluster_id: clusterId,
             interval_minutes: INTERVAL_CONFIG[selectedInterval].minutes,
-            start_time: new Date(
-              endTime.getTime() -
-                INTERVAL_CONFIG[selectedInterval].hours * 60 * 60 * 1000,
-            ).toISOString(),
-            end_time: endTime.toISOString(),
+            // Wider than the window it draws: the points just outside an edge
+            // are what let a line cross it instead of starting there.
+            ...scoreRangeForWindow(
+              endTime,
+              INTERVAL_CONFIG[selectedInterval].hours,
+            ),
           })
         : Promise.resolve([]),
     enabled: !!selectedSkill && !!clusterId,

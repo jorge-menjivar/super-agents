@@ -47,11 +47,14 @@ import { useAgents } from '@web/providers/agents';
 import { useNavigation } from '@web/providers/navigation';
 import { useSkills } from '@web/providers/skills';
 import { createSkillAvatar } from '@web/utils/avatars';
+import { scoreRangeForWindow } from '@web/utils/chart-window';
 import {
   BarChart3Icon,
   Clock,
   CpuIcon,
   Edit,
+  EyeIcon,
+  EyeOffIcon,
   MoreVertical,
   PlusIcon,
   ScrollTextIcon,
@@ -146,6 +149,29 @@ export function AgentView(): ReactElement {
     }
   }, [selectedInterval]);
 
+  // Whether the chart draws the skills that scored nothing in the window,
+  // carried across it from an older score. Remembered like the interval: it
+  // is how this reader wants their chart, not a property of the agent.
+  const [showQuietSkills, setShowQuietSkills] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      return localStorage.getItem('agent-performance-quiet-skills') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'agent-performance-quiet-skills',
+        String(showQuietSkills),
+      );
+    } catch {
+      // localStorage not available
+    }
+  }, [showQuietSkills]);
+
   // End time for charts (defaults to now)
   const [endTime, setEndTime] = useState<Date>(() => new Date());
 
@@ -183,11 +209,12 @@ export function AgentView(): ReactElement {
         selectedAgent.id,
         {
           interval_minutes: INTERVAL_CONFIG[selectedInterval].minutes,
-          start_time: new Date(
-            endTime.getTime() -
-              INTERVAL_CONFIG[selectedInterval].hours * 60 * 60 * 1000,
-          ).toISOString(),
-          end_time: endTime.toISOString(),
+          // Wider than the window it draws: the points just outside an edge
+          // are what let a line cross it instead of starting there.
+          ...scoreRangeForWindow(
+            endTime,
+            INTERVAL_CONFIG[selectedInterval].hours,
+          ),
         },
       );
       return scores;
@@ -434,6 +461,30 @@ export function AgentView(): ReactElement {
                       <p>Jump to current time</p>
                     </TooltipContent>
                   </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-pressed={showQuietSkills}
+                        aria-label="Skills with no scores in this window"
+                        onClick={() => setShowQuietSkills((shown) => !shown)}
+                      >
+                        {showQuietSkills ? (
+                          <EyeIcon className="h-4 w-4" />
+                        ) : (
+                          <EyeOffIcon className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>
+                        {showQuietSkills
+                          ? 'Hide the skills that scored nothing in this window, whose lines are carried from an older score'
+                          : 'Show the skills that scored nothing in this window, carried from their last score'}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
               <Tooltip>
@@ -480,6 +531,7 @@ export function AgentView(): ReactElement {
                 intervalMinutes={INTERVAL_CONFIG[selectedInterval].minutes}
                 windowHours={INTERVAL_CONFIG[selectedInterval].hours}
                 endTime={endTime}
+                showQuietSkills={showQuietSkills}
               />
             )}
           </CardContent>

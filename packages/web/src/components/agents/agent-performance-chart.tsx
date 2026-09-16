@@ -2,6 +2,7 @@
 
 import type { SkillEvent } from '@shared/types/data/skill-event';
 import { eventColors, eventLabels } from '@web/constants';
+import { bucketsForWindow, seriesAcrossWindow } from '@web/utils/chart-window';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -43,6 +44,13 @@ interface AgentPerformanceChartProps {
   intervalMinutes?: number;
   windowHours?: number;
   endTime?: Date; // End time for the chart (rightmost bucket)
+  /**
+   * Draw the skills that scored nothing in this window, whose lines are
+   * carried across it from an older score. They are the agent's whole roster
+   * rather than what it is doing now, and a dozen of them can crowd out the
+   * two that are running, so this is the reader's to turn off.
+   */
+  showQuietSkills?: boolean;
 }
 
 // Color palette for skill lines
@@ -67,6 +75,7 @@ export function AgentPerformanceChart({
   intervalMinutes = 60,
   windowHours = 24,
   endTime = new Date(),
+  showQuietSkills = true,
 }: AgentPerformanceChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -80,50 +89,23 @@ export function AgentPerformanceChart({
   }, [skills]);
 
   const chartData = useMemo(() => {
-    // Generate all time buckets for the window
-    const now = endTime;
-    const startTime = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
-    const buckets: Array<{ time: Date; label: string }> = [];
+    const buckets = bucketsForWindow({
+      endTime,
+      windowHours,
+      intervalMinutes,
+    });
 
-    // Generate bucket times
-    let bucketTime = new Date(startTime);
-    // Round to bucket boundary
-    const startMinutes =
-      Math.floor(bucketTime.getMinutes() / intervalMinutes) * intervalMinutes;
-    bucketTime.setMinutes(startMinutes, 0, 0);
-
-    while (bucketTime <= now) {
-      // Format label based on interval size
-      let label: string;
-      if (intervalMinutes >= 1440) {
-        // 1 day or more: show only date
-        label = format(bucketTime, 'MMM d');
-      } else if (intervalMinutes >= 60) {
-        // 1 hour to 24 hours: show date and hour
-        label = format(bucketTime, 'MMM d, ha');
-      } else {
-        // Less than 1 hour: show date and time
-        label = format(bucketTime, 'MMM d, h:mm a');
-      }
-
-      buckets.push({ time: new Date(bucketTime), label });
-      bucketTime = new Date(bucketTime.getTime() + intervalMinutes * 60 * 1000);
-    }
-
-    // Group scores by skill_id
-    const skillScoreMap = new Map<string, Map<string, number | null>>();
+    // Group scores by skill_id. The fetched range is wider than the window,
+    // so a map holds points on both sides of it as well as inside.
+    const skillScoreMap = new Map<string, Map<number, number>>();
 
     for (const score of evaluationScores) {
+      if (score.avg_score === null) continue;
       if (!skillScoreMap.has(score.skill_id)) {
         skillScoreMap.set(score.skill_id, new Map());
       }
       const bucketTime = new Date(score.time_bucket).getTime();
-      skillScoreMap
-        .get(score.skill_id)!
-        .set(
-          bucketTime.toString(),
-          score.avg_score !== null ? score.avg_score * 100 : null,
-        );
+      skillScoreMap.get(score.skill_id)!.set(bucketTime, score.avg_score * 100);
     }
 
     // Fill in data for all buckets
@@ -136,30 +118,49 @@ export function AgentPerformanceChart({
       [key: string]: unknown;
     }> = [];
 
-    let colorIndex = 0;
-    for (const [skillId, scoreMap] of Array.from(skillScoreMap.entries())) {
+    // A skill keeps its colour whether or not the quiet ones are drawn, so
+    // the toggle below changes what is on the chart and not what it looks
+    // like: the index is the skill's place in the response, not in the chart.
+    for (const [colorIndex, [skillId, scoreMap]] of Array.from(
+      skillScoreMap.entries(),
+    ).entries()) {
+      const { data, edges, carried, measured } = seriesAcrossWindow(
+        scoreMap,
+        buckets,
+      );
+
+      // The fetched range reaches outside the window, so a skill can come
+      // back with nothing to draw at all -- not even a carry, having scored
+      // nothing before the window either.
+      if (data.every((value) => value === null)) continue;
+      // Scored nothing inside it, so every point of this line is carried
+      if (!showQuietSkills && measured === 0) continue;
+
       const skillName = skillNameMap.get(skillId) || 'Unknown Skill';
       const color = SKILL_COLORS[colorIndex % SKILL_COLORS.length];
-      colorIndex++;
-
-      const data = buckets.map((b) => {
-        const score = scoreMap.get(b.time.getTime().toString());
-        return score !== undefined ? score : null;
-      });
-
-      const hasOnlyOnePoint = data.filter((d) => d !== null).length === 1;
 
       skillDatasets.push({
         label: skillName,
         data,
+        // Where the line meets the window edge is not a bucket anyone
+        // scored, so it carries no marker and the tooltip skips it.
+        edges,
         borderColor: color,
         backgroundColor: color,
         borderWidth: 2,
-        pointRadius: hasOnlyOnePoint ? 2 : 0,
-        pointHoverRadius: 8,
+        pointRadius: (ctx: { dataIndex: number }) =>
+          measured === 1 && !edges.has(ctx.dataIndex) ? 2 : 0,
+        pointHoverRadius: (ctx: { dataIndex: number }) =>
+          edges.has(ctx.dataIndex) ? 0 : 8,
         pointHoverBorderWidth: 2,
         pointHoverBackgroundColor: color,
         pointHoverBorderColor: 'white',
+        // A carried stretch is dashed: it says the score is the last one
+        // known, not one measured here.
+        segment: {
+          borderDash: (ctx: { p1DataIndex: number }) =>
+            carried.has(ctx.p1DataIndex) ? [6, 4] : undefined,
+        },
         tension: 0.3,
         spanGaps: true,
       });
@@ -206,6 +207,7 @@ export function AgentPerformanceChart({
     windowHours,
     endTime,
     skillNameMap,
+    showQuietSkills,
   ]);
 
   // Create event annotations
@@ -326,6 +328,13 @@ export function AgentPerformanceChart({
         mode: 'index',
         intersect: false,
         displayColors: true,
+        // Where a line meets the window edge is not a bucket anybody
+        // scored: the line passes through it, but there is nothing to report
+        // for it, so the tooltip leaves it out as it does an empty bucket.
+        filter: (item) =>
+          !(
+            chartData.datasets[item.datasetIndex] as { edges?: Set<number> }
+          ).edges?.has(item.dataIndex),
         callbacks: {
           label: (context) => {
             const label = context.dataset.label || '';

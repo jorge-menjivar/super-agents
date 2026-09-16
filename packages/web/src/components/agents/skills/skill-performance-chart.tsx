@@ -2,6 +2,7 @@
 
 import type { SkillEvent } from '@shared/types/data/skill-event';
 import { eventColors, eventLabels } from '@web/constants';
+import { bucketsForWindow, seriesAcrossWindow } from '@web/utils/chart-window';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -79,47 +80,20 @@ export function SkillPerformanceChart({
   }, [clusters]);
 
   const chartData = useMemo(() => {
-    // Generate all time buckets for the window
-    const now = endTime;
-    const startTime = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
-    const buckets: Array<{ time: Date; label: string }> = [];
+    const buckets = bucketsForWindow({
+      endTime,
+      windowHours,
+      intervalMinutes,
+      compact: size === 'small',
+    });
 
-    // Generate bucket times
-    let bucketTime = new Date(startTime);
-    // Round to bucket boundary
-    const startMinutes =
-      Math.floor(bucketTime.getMinutes() / intervalMinutes) * intervalMinutes;
-    bucketTime.setMinutes(startMinutes, 0, 0);
-
-    while (bucketTime <= now) {
-      // Format label based on interval size and chart size
-      let label: string;
-      if (size === 'small') {
-        // For small charts, show only time
-        label = format(bucketTime, 'h:mm a');
-      } else if (intervalMinutes >= 1440) {
-        // 1 day or more: show only date
-        label = format(bucketTime, 'MMM d');
-      } else if (intervalMinutes >= 60) {
-        // 1 hour to 24 hours: show date and hour
-        label = format(bucketTime, 'MMM d, ha');
-      } else {
-        // Less than 1 hour: show date and time
-        label = format(bucketTime, 'MMM d, h:mm a');
-      }
-
-      buckets.push({ time: new Date(bucketTime), label });
-      bucketTime = new Date(bucketTime.getTime() + intervalMinutes * 60 * 1000);
-    }
-
-    // Create a map of time bucket to score
-    const scoreMap = new Map<string, number | null>();
+    // Create a map of time bucket to score. The fetched range is wider than
+    // the window, so these hold points on both sides of it as well as inside.
+    const scoreMap = new Map<number, number>();
     for (const score of evaluationScores) {
+      if (score.avg_score === null) continue;
       const bucketTime = new Date(score.time_bucket).getTime();
-      scoreMap.set(
-        bucketTime.toString(),
-        score.avg_score !== null ? score.avg_score * 100 : null,
-      );
+      scoreMap.set(bucketTime, score.avg_score * 100);
     }
 
     // Fill in data for all buckets
@@ -136,7 +110,7 @@ export function SkillPerformanceChart({
     }
 
     // Create a map for each evaluation method
-    const methodDataMaps = new Map<string, Map<string, number>>();
+    const methodDataMaps = new Map<string, Map<number, number>>();
     for (const method of allMethods) {
       methodDataMaps.set(method, new Map());
     }
@@ -150,7 +124,7 @@ export function SkillPerformanceChart({
         )) {
           const methodMap = methodDataMaps.get(method);
           if (methodMap) {
-            methodMap.set(bucketTime.toString(), methodScore * 100);
+            methodMap.set(bucketTime, methodScore * 100);
           }
         }
       }
@@ -164,36 +138,48 @@ export function SkillPerformanceChart({
         .join(' ');
     };
 
-    // Create datasets for each evaluation method
-    const methodDatasets = Array.from(methodDataMaps.entries()).map(
-      ([method, methodMap]) => {
-        const data = buckets.map((b) => {
-          const score = methodMap.get(b.time.getTime().toString());
-          return score !== undefined ? score : null;
-        });
-
-        const hasOnlyOnePoint = data.filter((d) => d !== null).length === 1;
+    // Create datasets for each evaluation method. The fetched range reaches
+    // outside the window, so a method can come back with nothing to draw
+    // inside it; it used to be absent from the response altogether, and it
+    // stays out of the legend the same way.
+    const methodDatasets = Array.from(methodDataMaps.entries())
+      .map(([method, methodMap]) => {
+        const { data, edges, carried, measured } = seriesAcrossWindow(
+          methodMap,
+          buckets,
+        );
         const color = METHOD_COLORS[method] || 'rgb(148, 163, 184)';
 
         return {
           label: formatMethodName(method),
           data,
+          // Where the line meets the window edge is not a bucket anyone
+          // scored, so it carries no marker and the tooltip skips it.
+          edges,
           borderColor: color,
           backgroundColor: color,
           borderWidth: 2,
-          pointRadius: hasOnlyOnePoint ? 2 : 0,
-          pointHoverRadius: 8,
+          pointRadius: (ctx: { dataIndex: number }) =>
+            measured === 1 && !edges.has(ctx.dataIndex) ? 2 : 0,
+          pointHoverRadius: (ctx: { dataIndex: number }) =>
+            edges.has(ctx.dataIndex) ? 0 : 8,
           pointHoverBorderWidth: 2,
           pointHoverBackgroundColor: color,
           pointHoverBorderColor: 'white',
+          // A carried stretch is dashed: it says the score is the last one
+          // known, not one measured here.
+          segment: {
+            borderDash: (ctx: { p1DataIndex: number }) =>
+              carried.has(ctx.p1DataIndex) ? [6, 4] : undefined,
+          },
           tension: 0.3,
           spanGaps: true,
         };
-      },
-    );
+      })
+      .filter((dataset) => dataset.data.some((value) => value !== null));
 
     // Create weighted average dataset (only if more than 1 evaluation method)
-    const shouldShowWeightedAverage = allMethods.size > 1;
+    const shouldShowWeightedAverage = methodDatasets.length > 1;
     const datasets: Array<{
       label: string;
       data: (number | null)[];
@@ -201,24 +187,33 @@ export function SkillPerformanceChart({
     }> = [];
 
     if (shouldShowWeightedAverage) {
-      const avgData = buckets.map((b) => {
-        const score = scoreMap.get(b.time.getTime().toString());
-        return score !== undefined ? score : null;
-      });
-
-      const hasOnlyOneAvgPoint = avgData.filter((d) => d !== null).length === 1;
+      const {
+        data: avgData,
+        edges: avgEdges,
+        carried: avgCarried,
+        measured: avgMeasured,
+      } = seriesAcrossWindow(scoreMap, buckets);
 
       datasets.push({
         label: 'Weighted Average',
         data: avgData,
+        edges: avgEdges,
         borderColor: 'rgb(115, 115, 115)', // gray for overall average
         backgroundColor: 'rgb(115, 115, 115)',
         borderWidth: 3, // Thicker line to stand out
-        pointRadius: hasOnlyOneAvgPoint ? 3 : 0,
-        pointHoverRadius: 8,
+        pointRadius: (ctx: { dataIndex: number }) =>
+          avgMeasured === 1 && !avgEdges.has(ctx.dataIndex) ? 3 : 0,
+        pointHoverRadius: (ctx: { dataIndex: number }) =>
+          avgEdges.has(ctx.dataIndex) ? 0 : 8,
         pointHoverBorderWidth: 2,
         pointHoverBackgroundColor: 'rgb(115, 115, 115)',
         pointHoverBorderColor: 'white',
+        // A carried stretch is dashed: it says the score is the last one
+        // known, not one measured here.
+        segment: {
+          borderDash: (ctx: { p1DataIndex: number }) =>
+            avgCarried.has(ctx.p1DataIndex) ? [6, 4] : undefined,
+        },
         tension: 0.3,
         spanGaps: true,
       });
@@ -379,6 +374,13 @@ export function SkillPerformanceChart({
         mode: 'index',
         intersect: false,
         displayColors: true,
+        // Where a line meets the window edge is not a bucket anybody
+        // scored: the line passes through it, but there is nothing to report
+        // for it, so the tooltip leaves it out as it does an empty bucket.
+        filter: (item) =>
+          !(
+            chartData.datasets[item.datasetIndex] as { edges?: Set<number> }
+          ).edges?.has(item.dataIndex),
         callbacks: {
           label: (context) => {
             const label = context.dataset.label || '';
