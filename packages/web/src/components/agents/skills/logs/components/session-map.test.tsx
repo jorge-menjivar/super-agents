@@ -1,3 +1,4 @@
+import type { Feedback } from '@shared/types/data/feedback';
 import type { HookLog, Log } from '@shared/types/data/log';
 import { CacheMode, CacheStatus } from '@shared/types/middleware/cache';
 import { HookProvider, HookType } from '@shared/types/middleware/hooks';
@@ -128,6 +129,47 @@ describe('SessionMap', () => {
 
     expect(screen.getByText('\u2014')).toHaveClass('text-muted-foreground');
     expect(screen.getByTitle(/still running/)).toBeInTheDocument();
+  });
+
+  const verdict = (log_id: string, score: number, note?: string): Feedback =>
+    ({
+      id: `fb-${log_id}`,
+      log_id,
+      score,
+      feedback: note ?? null,
+      created_at: '2026-09-15T00:00:00.000Z',
+      updated_at: '2026-09-15T00:00:00.000Z',
+    }) as Feedback;
+
+  it('marks the requests a person gave a thumb, with the reason on the thumb', () => {
+    renderMap({
+      feedback: new Map([
+        ['a', verdict('a', 1)],
+        ['c', verdict('c', 0, 'Invented the file it edited')],
+      ]),
+    });
+
+    expect(screen.getByLabelText('Marked as a good output')).toHaveClass(
+      'text-green-600',
+    );
+    expect(
+      screen.getByLabelText(
+        'Marked as a bad output · Invented the file it edited',
+      ),
+    ).toHaveClass('text-red-500');
+    // The row it was given on says so too, for a reader hovering anywhere
+    expect(screen.getByTitle(/^HTTP 500/)).toHaveAttribute(
+      'title',
+      expect.stringContaining('marked bad'),
+    );
+    // A request nobody judged carries no thumb
+    expect(screen.getAllByRole('img')).toHaveLength(2);
+  });
+
+  it('leaves the rail unmarked until the verdicts load', () => {
+    renderMap();
+
+    expect(screen.queryAllByRole('img')).toHaveLength(0);
   });
 
   it('opens a request', () => {

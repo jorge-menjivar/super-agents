@@ -28,6 +28,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { useLogSession } from '@web/hooks/use-log-session';
 import { usePinnedToBottom } from '@web/hooks/use-pinned-to-bottom';
 import { useReviewsOf } from '@web/hooks/use-reviews';
+import { useSessionFeedback } from '@web/hooks/use-session-feedback';
 import { useSmartBack } from '@web/hooks/use-smart-back';
 import { useAgents } from '@web/providers/agents';
 import { useLogs } from '@web/providers/logs';
@@ -172,6 +173,8 @@ export function LogDetailsView(): ReactElement {
   const { replaceToLogDetail, navigateToLogDetail, navigateToSkillDashboard } =
     useNavigation();
   const session = useLogSession(selectedLog);
+  // The thumbs the session's requests were given, for the rail to mark
+  const sessionFeedback = useSessionFeedback(session.logs);
   // The reviews a reviewer hook's verdicts came from, under their agents
   const reviews = useReviewsOf(selectedLog);
   const { clusters, setSkillId: setClustersSkillId } =
@@ -694,6 +697,7 @@ export function LogDetailsView(): ReactElement {
                 traceId={selectedLog.trace_id}
                 appId={selectedLog.app_id}
                 labelOf={sessionLabelOf}
+                feedback={sessionFeedback}
                 onSelect={openLog}
               />
             )}

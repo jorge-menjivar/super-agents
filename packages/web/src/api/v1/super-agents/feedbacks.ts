@@ -17,6 +17,8 @@ export async function getFeedback(
   const query: Record<string, string> = {};
   if (params.id) query.id = params.id;
   if (params.log_id) query.log_id = params.log_id;
+  // Comma-separated, which is how the query schema reads a list back
+  if (params.log_ids?.length) query.log_ids = params.log_ids.join(',');
   if (params.limit) query.limit = params.limit.toString();
   if (params.offset) query.offset = params.offset.toString();
 

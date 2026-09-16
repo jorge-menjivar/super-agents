@@ -242,6 +242,29 @@ describe('Feedback API', () => {
       });
     });
 
+    it('should read a comma-separated list of logs as one query', async () => {
+      mockGetFeedback.mockResolvedValue([]);
+
+      const res = await app.request(
+        '/feedback?log_ids=123e4567-e89b-12d3-a456-426614174002,123e4567-e89b-12d3-a456-426614174003',
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockGetFeedback).toHaveBeenCalledWith(expect.anything(), {
+        log_ids: [
+          '123e4567-e89b-12d3-a456-426614174002',
+          '123e4567-e89b-12d3-a456-426614174003',
+        ],
+      });
+    });
+
+    it('should reject an empty list of logs rather than answer with every verdict', async () => {
+      const res = await app.request('/feedback?log_ids=');
+
+      expect(res.status).toBe(400);
+      expect(mockGetFeedback).not.toHaveBeenCalled();
+    });
+
     it('should reject invalid query parameters', async () => {
       const res = await app.request('/feedback?id=invalid-uuid');
       expect(res.status).toBe(400);

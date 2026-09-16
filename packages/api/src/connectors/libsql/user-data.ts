@@ -123,7 +123,8 @@ export const libsqlUserDataStorageConnector: UserDataStorageConnector = {
     selectFrom(
       getLibsqlClient(c),
       'feedbacks',
-      { id: queryParams.id, log_id: queryParams.log_id },
+      // One column, asked either way: a list is `IN`, a single id is `=`.
+      { id: queryParams.id, log_id: queryParams.log_ids ?? queryParams.log_id },
       z.array(FeedbackSchema),
       { limit: queryParams.limit, offset: queryParams.offset },
     ),

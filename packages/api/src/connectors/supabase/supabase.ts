@@ -112,7 +112,11 @@ export const supabaseUserDataStorageConnector: UserDataStorageConnector = {
       postgrestParams.id = `eq.${queryParams.id}`;
     }
 
-    if (queryParams.log_id) {
+    // One column, asked either way, so a list never lands beside an equality
+    // on the same key and quietly replaces it.
+    if (queryParams.log_ids) {
+      postgrestParams.log_id = `in.(${queryParams.log_ids.join(',')})`;
+    } else if (queryParams.log_id) {
       postgrestParams.log_id = `eq.${queryParams.log_id}`;
     }
 

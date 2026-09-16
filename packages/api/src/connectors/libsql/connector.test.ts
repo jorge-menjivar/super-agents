@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { AppContext } from '@api/types/hono';
 import type { Client } from '@libsql/client';
 import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
+import { FeedbackCreateParams } from '@shared/types/data/feedback';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createLibsqlClient, resetLibsqlClients } from './client';
 import { libsqlLogsStorageConnector } from './logs';
@@ -1103,6 +1104,53 @@ describe('evaluations', () => {
         >[2],
       ),
     ).rejects.toThrow('Evaluation not found');
+  });
+});
+
+describe('feedback', () => {
+  it('reads a whole session of verdicts in one query', async () => {
+    const { c } = await freshDatabase();
+    const agent = await seedAgent(c);
+    const skill = await seedSkill(c, agent.id);
+
+    const rows = await Promise.all([
+      logs.createLog(c, logParams(agent.id, skill.id)),
+      logs.createLog(c, logParams(agent.id, skill.id)),
+      logs.createLog(c, logParams(agent.id, skill.id)),
+    ]);
+    for (const [index, row] of rows.entries()) {
+      await store.createFeedback(
+        c,
+        FeedbackCreateParams.parse({
+          log_id: row.id,
+          score: index === 1 ? 0 : 1,
+        }),
+      );
+    }
+
+    const asked = [rows[0].id, rows[1].id];
+    const found = await store.getFeedback(c, { log_ids: asked });
+    expect(found.map((f) => f.log_id).sort()).toEqual([...asked].sort());
+
+    // A single id still means one log, not the list
+    const one = await store.getFeedback(c, { log_id: rows[2].id });
+    expect(one.map((f) => f.log_id)).toEqual([rows[2].id]);
+  });
+
+  it('answers a list of no logs with nothing, not with everything', async () => {
+    const { c } = await freshDatabase();
+    const agent = await seedAgent(c);
+    const skill = await seedSkill(c, agent.id);
+    const row = await logs.createLog(c, logParams(agent.id, skill.id));
+    await store.createFeedback(
+      c,
+      FeedbackCreateParams.parse({ log_id: row.id, score: 1 }),
+    );
+
+    // The query schema rejects an empty list, so this can only be reached by
+    // a caller inside the process -- which must not be answered with every
+    // verdict on the deployment.
+    expect(await store.getFeedback(c, { log_ids: [] })).toEqual([]);
   });
 });
 
