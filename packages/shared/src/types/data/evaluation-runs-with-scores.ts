@@ -44,6 +44,17 @@ export const EvaluationScoresByTimeBucketParams = z.object({
   interval_minutes: z.number().min(1).max(1440), // 1 min to 1 day
   start_time: z.string().datetime(),
   end_time: z.string().datetime(),
+  /**
+   * Also return the bucket nearest outside each end of the range: the last
+   * one before `start_time` and the first one after `end_time`, per series.
+   *
+   * A chart draws a line as it crosses its window, which takes the point
+   * just beyond each edge -- and asking for it by widening the range means
+   * paying for everything in between, so how far back a line could reach was
+   * a guess with a cutoff in it. This is the question itself: two buckets,
+   * however old, at the cost of finding them.
+   */
+  include_edge_buckets: z.boolean().optional(),
 });
 
 export type EvaluationScoresByTimeBucketParams = z.infer<

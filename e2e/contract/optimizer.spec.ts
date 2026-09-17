@@ -896,6 +896,110 @@ test.describe('feedback re-evaluation', () => {
 });
 
 /**
+ * The bucket nearest outside a range.
+ *
+ * A chart draws a line as it crosses its window, which takes the point just
+ * beyond each edge. Asking for it by widening the range meant paying for every
+ * bucket in between and giving up at a cutoff, so `include_edge_buckets` asks
+ * the question itself -- and each backend answers it in its own language: a
+ * window function and a second read in `time-bucket.ts`, a pair of filtered
+ * aggregates in the plpgsql. Two implementations of one promise.
+ *
+ * A run's `created_at` is the database's to set, so these fixtures cannot be
+ * backdated; the range moves around them instead. Here because it needs a
+ * judged request, which needs the same global system settings the rest of this
+ * file sets up.
+ */
+test.describe('the buckets either side of a range', () => {
+  let configured: OptimizedSkill;
+
+  test.beforeAll(async ({ request }) => {
+    configured = await setUpOptimizedSkill(request, 'edges');
+    const created = await request.post(
+      `${SKILLS_PATH}/${configured.skillId}/evaluations`,
+      { data: { methods: ['conversation_completeness'] } },
+    );
+    expect(created.ok()).toBe(true);
+  });
+
+  test('answers with the nearest bucket beyond each end, and neither further', async ({
+    request,
+  }) => {
+    interface Bucket {
+      time_bucket: string;
+      avg_score: number | null;
+      count: number;
+    }
+
+    const before = Date.now();
+    const response = await request.post(CHAT_COMPLETIONS_PATH, {
+      headers: {
+        'sa-config': optimizedConfig(
+          configured.agentName,
+          configured.skillName,
+        ),
+      },
+      data: chatBody('score this one for the edges'),
+    });
+    expect(response.status()).toBe(200);
+
+    const scores = async (
+      start: number,
+      end: number,
+      edges: boolean,
+    ): Promise<Bucket[]> => {
+      const res = await request.post(
+        `${SKILLS_PATH}/${configured.skillId}/evaluation-scores-by-time-bucket`,
+        {
+          data: {
+            interval_minutes: 1,
+            start_time: new Date(start).toISOString(),
+            end_time: new Date(end).toISOString(),
+            ...(edges ? { include_edge_buckets: true } : {}),
+          },
+        },
+      );
+      expect(res.ok()).toBe(true);
+      return (await res.json()) as Bucket[];
+    };
+
+    const MINUTE = 60_000;
+    // The request is judged behind the response.
+    await expect
+      .poll(
+        async () =>
+          (await scores(before - MINUTE, Date.now() + MINUTE, false)).length,
+        { timeout: 60_000, message: 'the request was never judged' },
+      )
+      .toBeGreaterThan(0);
+
+    const judged = await scores(before - MINUTE, Date.now() + MINUTE, false);
+    const newest = judged[judged.length - 1];
+
+    // A range that ends before the run: it is the bucket after that range,
+    // and comes back only when the edges are asked for.
+    const earlier = { start: before - 20 * MINUTE, end: before - 10 * MINUTE };
+    expect(await scores(earlier.start, earlier.end, false)).toEqual([]);
+    const ahead = await scores(earlier.start, earlier.end, true);
+    expect(ahead).toHaveLength(1);
+    expect(ahead[0].time_bucket).toBe(judged[0].time_bucket);
+
+    // And a range that starts after every run: the bucket before it.
+    const later = {
+      start: Date.now() + 10 * MINUTE,
+      end: Date.now() + 20 * MINUTE,
+    };
+    expect(await scores(later.start, later.end, false)).toEqual([]);
+    const behind = await scores(later.start, later.end, true);
+    expect(behind).toHaveLength(1);
+    expect(behind[0].time_bucket).toBe(newest.time_bucket);
+    // A whole bucket, scored and counted as any other bucket is
+    expect(behind[0].count).toBe(newest.count);
+    expect(behind[0].avg_score).toBe(newest.avg_score);
+  });
+});
+
+/**
  * Response review, end to end: an agent whose responses another agent judges
  * before the client hears them. The reviewer answers under a model of its own
  * on the stub, so its verdicts can be scripted (`stubReply`) and its traffic

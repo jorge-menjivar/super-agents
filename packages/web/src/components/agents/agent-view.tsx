@@ -209,11 +209,12 @@ export function AgentView(): ReactElement {
         selectedAgent.id,
         {
           interval_minutes: INTERVAL_CONFIG[selectedInterval].minutes,
-          // Wider than the window it draws: the points just outside an edge
-          // are what let a line cross it instead of starting there.
+          // The window, and the bucket nearest outside each end of it: what a
+          // line needs to cross an edge instead of starting there.
           ...scoreRangeForWindow(
             endTime,
             INTERVAL_CONFIG[selectedInterval].hours,
+            INTERVAL_CONFIG[selectedInterval].minutes,
           ),
         },
       );
@@ -234,7 +235,13 @@ export function AgentView(): ReactElement {
     refetchInterval: 60000, // Refetch every minute
   });
 
-  // Fetch skill-level evaluation scores for all skills (small charts)
+  // Fetch skill-level evaluation scores for all skills (small charts).
+  //
+  // The cards follow the interval chosen for the chart above them rather than
+  // a window of their own. A card that always showed the last two hours said
+  // nothing about a skill that runs weekly, and disagreed with the chart it
+  // sits under: the reader picks a day and the cards keep answering in
+  // minutes.
   const {
     data: skillEvaluationScores = {},
     isLoading: isLoadingSkillEvaluationScores,
@@ -243,19 +250,21 @@ export function AgentView(): ReactElement {
       'skillEvaluationScores',
       selectedAgent?.id,
       skills.map((s) => s.id).join(','),
+      selectedInterval,
       endTime.toISOString(),
     ],
     queryFn: async () => {
       if (!selectedAgent || skills.length === 0) return {};
 
-      // Fetch scores for all skills in parallel (30 buckets at 5 min intervals = 2.5 hours)
+      // Fetch scores for all skills in parallel
       const scoresPromises = skills.map(async (skill) => {
         const scores = await getSkillEvaluationScoresByTimeBucket(skill.id, {
-          interval_minutes: 5, // 5 min intervals
-          start_time: new Date(
-            endTime.getTime() - 2.5 * 60 * 60 * 1000,
-          ).toISOString(), // Last 2.5 hours (30 buckets)
-          end_time: endTime.toISOString(),
+          interval_minutes: INTERVAL_CONFIG[selectedInterval].minutes,
+          ...scoreRangeForWindow(
+            endTime,
+            INTERVAL_CONFIG[selectedInterval].hours,
+            INTERVAL_CONFIG[selectedInterval].minutes,
+          ),
         }).catch(() => []);
         return [skill.id, scores] as const;
       });
@@ -656,8 +665,10 @@ export function AgentView(): ReactElement {
                             skillEvaluationScores[skill.id] || []
                           }
                           size="small"
-                          intervalMinutes={5}
-                          windowHours={2.5}
+                          intervalMinutes={
+                            INTERVAL_CONFIG[selectedInterval].minutes
+                          }
+                          windowHours={INTERVAL_CONFIG[selectedInterval].hours}
                           endTime={endTime}
                         />
                       )}

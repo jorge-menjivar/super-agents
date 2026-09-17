@@ -60,16 +60,38 @@ describe('bucketsForWindow', () => {
     expect(wide.label).toMatch(/^Sep 15, /);
     expect(narrow.label).not.toMatch(/Sep/);
   });
+
+  it('still names a day bucket by its date on a narrow chart', () => {
+    // Every day bucket starts at the same time, so a time would label them
+    // all alike.
+    const [narrow] = bucketsForWindow({
+      endTime: new Date(END),
+      windowHours: 24 * 5,
+      intervalMinutes: 1440,
+      compact: true,
+    });
+
+    expect(narrow.label).toMatch(/^Sep \d+$/);
+  });
 });
 
 describe('scoreRangeForWindow', () => {
-  it('reaches well past each edge of the window it draws', () => {
-    const range = scoreRangeForWindow(new Date(END), 5);
+  it('asks for the window itself, and for the buckets either side of it', () => {
+    const range = scoreRangeForWindow(new Date(END), 5, 60);
 
-    // Ten windows either way: a skill that went quiet for days still has its
-    // previous score fetched, which is the whole point of the wider range.
-    expect(Date.parse(range.start_time)).toBe(END - 50 * HOUR);
-    expect(Date.parse(range.end_time)).toBe(END + 50 * HOUR);
+    expect(Date.parse(range.start_time)).toBe(END - 5 * HOUR);
+    expect(Date.parse(range.end_time)).toBe(END);
+    // However old those neighbours are. Widening the range instead meant
+    // paying for everything in between, and giving up at a cutoff.
+    expect(range.include_edge_buckets).toBe(true);
+  });
+
+  it('starts on a bucket boundary, so the edge bucket is really outside', () => {
+    // A quarter past the hour, with hour buckets: an unaligned start would
+    // name the chart's own first bucket as the one before it.
+    const range = scoreRangeForWindow(new Date(END + 15 * 60 * 1000), 5, 60);
+
+    expect(Date.parse(range.start_time) % HOUR).toBe(0);
   });
 });
 

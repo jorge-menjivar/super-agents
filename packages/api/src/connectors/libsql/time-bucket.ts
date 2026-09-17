@@ -1,8 +1,107 @@
-import type { Client } from '@libsql/client';
+import type { Client, Row } from '@libsql/client';
 import type {
   EvaluationScoresByTimeBucketParams,
   EvaluationScoresByTimeBucketResult,
 } from '@shared/types/data/evaluation-runs-with-scores';
+
+/** The filters a query carries besides its range, as SQL and arguments. */
+const seriesFilters = (
+  params: EvaluationScoresByTimeBucketParams,
+): { sql: string; args: string[] } => {
+  const conditions: string[] = [];
+  const args: string[] = [];
+  for (const [column, value] of [
+    ['agent_id', params.agent_id],
+    ['skill_id', params.skill_id],
+    ['cluster_id', params.cluster_id],
+  ] as const) {
+    if (value) {
+      conditions.push(`AND er.${column} = ?`);
+      args.push(value);
+    }
+  }
+  return { sql: conditions.join(' '), args };
+};
+
+/**
+ * The runs of the bucket nearest outside each end of the range, per series.
+ *
+ * Two steps, because a bucket's score is the mean of every run in it: find
+ * the run nearest beyond the edge for each series, then read the whole bucket
+ * it belongs to. Doing it the other way -- taking that one run as the edge --
+ * would give a bucket a different score depending on which side of a window
+ * it fell.
+ */
+const edgeBucketRows = async (
+  client: Client,
+  params: EvaluationScoresByTimeBucketParams,
+  intervalMs: number,
+): Promise<Row[]> => {
+  const filters = seriesFilters(params);
+
+  // The nearest run beyond each edge, one per series. `cluster_id` partitions
+  // alongside the skill, matching the grouping the buckets are keyed by.
+  const nearest = await client.execute({
+    sql: `SELECT created_at, side FROM (
+            SELECT er.created_at,
+                   'before' AS side,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY er.agent_id, er.skill_id, er.cluster_id
+                     ORDER BY er.created_at DESC
+                   ) AS rank
+            FROM evaluation_runs_with_scores er
+            WHERE er.created_at < ? ${filters.sql}
+            UNION ALL
+            SELECT er.created_at,
+                   'after' AS side,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY er.agent_id, er.skill_id, er.cluster_id
+                     ORDER BY er.created_at ASC
+                   ) AS rank
+            FROM evaluation_runs_with_scores er
+            WHERE er.created_at > ? ${filters.sql}
+          ) WHERE rank = 1`,
+    args: [
+      params.start_time,
+      ...filters.args,
+      params.end_time,
+      ...filters.args,
+    ],
+  });
+
+  if (nearest.rows.length === 0) {
+    return [];
+  }
+
+  // Every run of the buckets those fall in. One range per bucket, which is a
+  // handful of them: one per series and side.
+  const ranges: string[] = [];
+  const args: string[] = [];
+  for (const row of nearest.rows) {
+    const at = Date.parse(String(row.created_at));
+    if (Number.isNaN(at)) continue;
+    const start = Math.floor(at / intervalMs) * intervalMs;
+    ranges.push('(er.created_at >= ? AND er.created_at < ?)');
+    args.push(
+      new Date(start).toISOString(),
+      new Date(start + intervalMs).toISOString(),
+    );
+  }
+
+  if (ranges.length === 0) {
+    return [];
+  }
+
+  const bucketed = await client.execute({
+    sql: `SELECT er.id, er.agent_id, er.skill_id, er.cluster_id, er.created_at,
+                 er.scores_by_evaluation
+          FROM evaluation_runs_with_scores er
+          WHERE (${ranges.join(' OR ')}) ${filters.sql}`,
+    args: [...args, ...filters.args],
+  });
+
+  return bucketed.rows;
+};
 
 /**
  * Replaces the `get_evaluation_scores_by_time_bucket` plpgsql function.
@@ -16,6 +115,8 @@ import type {
  *
  * - Buckets are aligned to the epoch at `interval_minutes`, so a series is
  *   stable across calls rather than relative to the range requested.
+ * - `include_edge_buckets` also returns the bucket nearest outside each end of
+ *   the range, per series, whole rather than just the run that identified it.
  * - `avg_score` is recomputed from the **current** evaluation weights rather
  *   than reusing the weighted average stored per run, so re-weighting an
  *   evaluation retroactively changes the chart.
@@ -45,7 +146,7 @@ export const aggregateScoresByTimeBucket = async (
   }
 
   const result = await client.execute({
-    sql: `SELECT er.agent_id, er.skill_id, er.cluster_id, er.created_at,
+    sql: `SELECT er.id, er.agent_id, er.skill_id, er.cluster_id, er.created_at,
                  er.scores_by_evaluation
           FROM evaluation_runs_with_scores er
           WHERE ${conditions.join(' AND ')}`,
@@ -53,6 +154,16 @@ export const aggregateScoresByTimeBucket = async (
   });
 
   const intervalMs = params.interval_minutes * 60 * 1000;
+
+  let rows = result.rows;
+  if (params.include_edge_buckets) {
+    // An edge bucket straddles the range when the caller's bounds are not on
+    // a bucket boundary, and then its runs come back from both queries. The
+    // id is what keeps such a run from being counted into its bucket twice.
+    const seen = new Set(rows.map((row) => String(row.id)));
+    const edges = await edgeBucketRows(client, params, intervalMs);
+    rows = [...rows, ...edges.filter((row) => !seen.has(String(row.id)))];
+  }
 
   interface Bucket {
     time_bucket: string;
@@ -66,7 +177,7 @@ export const aggregateScoresByTimeBucket = async (
 
   const buckets = new Map<string, Bucket>();
 
-  for (const row of result.rows) {
+  for (const row of rows) {
     const createdAt = Date.parse(String(row.created_at));
     if (Number.isNaN(createdAt)) {
       continue;

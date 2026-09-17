@@ -21,8 +21,10 @@ const labelFor = (
   intervalMinutes: number,
   compact: boolean,
 ): string => {
-  if (compact) return format(time, 'h:mm a');
+  // A day's bucket is named by its date even on a narrow chart: the time is
+  // the same for every one of them, so it would label thirty columns alike.
   if (intervalMinutes >= 1440) return format(time, 'MMM d');
+  if (compact) return format(time, intervalMinutes >= 60 ? 'ha' : 'h:mm a');
   if (intervalMinutes >= 60) return format(time, 'MMM d, ha');
   return format(time, 'MMM d, h:mm a');
 };
@@ -58,39 +60,34 @@ export function bucketsForWindow({
 }
 
 /**
- * How far past each edge a chart asks for scores, as a multiple of the window
- * it draws.
- *
- * The point beyond an edge is only useful if it is actually fetched, and a
- * skill that went quiet for a few days has its previous score much further
- * back than one window: a day-old chart reached back a day, found nothing, and
- * drew the same truncated line as before. Ten windows crosses a silence far
- * longer than the chart itself.
- *
- * It stays bounded rather than reaching back forever because the cost is the
- * server's scan, not the answer: only buckets that have scores come back, but
- * every run in the range is read to find them. Measured against a 3GB
- * database, one window costs 83ms and a year 392ms for the same 75 rows.
- */
-const EDGE_REACH = 10;
-
-/**
  * The range to ask the server for in order to draw a window of `windowHours`
- * ending at `endTime`: wider on each side by `EDGE_REACH` windows.
+ * ending at `endTime`, with `include_edge_buckets` so that the bucket nearest
+ * outside each end comes back too.
  *
- * The extra is never drawn. It is there so that the nearest point beyond an
- * edge is known, which is what lets a line cross that edge instead of starting
- * at it -- see `seriesAcrossWindow`. Only buckets have to match the server's
- * grid, so the range itself needs no alignment.
+ * Exactly the window, aligned to the bucket grid the chart draws on: the edge
+ * buckets are the ones outside *that*, so an unaligned start would name the
+ * chart's own first bucket as the one before it. Asking the server for the
+ * neighbours is what removes the reach this used to guess at -- it widened
+ * the range instead, which meant paying for every bucket in between and gave
+ * up at a cutoff, so a skill quiet for longer than the cutoff simply vanished.
  */
 export function scoreRangeForWindow(
   endTime: Date,
   windowHours: number,
-): { start_time: string; end_time: string } {
-  const reachMs = EDGE_REACH * windowHours * 60 * 60 * 1000;
+  intervalMinutes: number,
+): {
+  start_time: string;
+  end_time: string;
+  include_edge_buckets: true;
+} {
+  const intervalMs = intervalMinutes * 60 * 1000;
+  const end = endTime.getTime();
+  const start =
+    Math.floor((end - windowHours * 60 * 60 * 1000) / intervalMs) * intervalMs;
   return {
-    start_time: new Date(endTime.getTime() - reachMs).toISOString(),
-    end_time: new Date(endTime.getTime() + reachMs).toISOString(),
+    start_time: new Date(start).toISOString(),
+    end_time: new Date(end).toISOString(),
+    include_edge_buckets: true,
   };
 }
 

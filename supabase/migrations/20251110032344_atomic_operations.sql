@@ -369,7 +369,11 @@ CREATE OR REPLACE FUNCTION get_evaluation_scores_by_time_bucket(
   p_cluster_id UUID DEFAULT NULL,
   p_interval INTERVAL DEFAULT '1 hour',
   p_start_time TIMESTAMPTZ DEFAULT NOW() - INTERVAL '24 hours',
-  p_end_time TIMESTAMPTZ DEFAULT NOW()
+  p_end_time TIMESTAMPTZ DEFAULT NOW(),
+  -- Also return the bucket nearest outside each end of the range, per series:
+  -- what a chart needs to draw a line as it crosses its window rather than as
+  -- it starts. Off by default, so every existing caller is unaffected.
+  p_edge_buckets BOOLEAN DEFAULT FALSE
 )
 RETURNS TABLE (
   time_bucket TIMESTAMPTZ,
@@ -382,21 +386,52 @@ RETURNS TABLE (
 ) AS $$
 BEGIN
   RETURN QUERY
-  WITH bucketed_runs AS (
+  WITH matching_runs AS (
     SELECT
       date_trunc('hour', created_at) +
       (EXTRACT(EPOCH FROM (created_at - date_trunc('hour', created_at))) / EXTRACT(EPOCH FROM p_interval))::INTEGER * p_interval AS bucket,
       ers.agent_id AS aid,
       ers.skill_id AS sid,
       ers.cluster_id AS cid,
+      ers.created_at,
       ers.avg_score,
       ers.scores_by_evaluation
     FROM evaluation_runs_with_scores ers
-    WHERE ers.created_at >= p_start_time
-      AND ers.created_at <= p_end_time
-      AND (p_agent_id IS NULL OR ers.agent_id = p_agent_id)
+    WHERE (p_agent_id IS NULL OR ers.agent_id = p_agent_id)
       AND (p_skill_id IS NULL OR ers.skill_id = p_skill_id)
       AND (p_cluster_id IS NULL OR ers.cluster_id = p_cluster_id)
+      AND (
+        (ers.created_at >= p_start_time AND ers.created_at <= p_end_time)
+        -- Everything outside the range is a candidate for its edge buckets,
+        -- and `edge_buckets` below picks the nearest one of each series.
+        OR p_edge_buckets
+      )
+  ),
+  -- The bucket nearest outside each end, per series. NULL when the series
+  -- has nothing on that side, which leaves its line ending where it does.
+  edge_buckets AS (
+    SELECT
+      aid,
+      sid,
+      cid,
+      MAX(bucket) FILTER (WHERE created_at < p_start_time) AS before_bucket,
+      MIN(bucket) FILTER (WHERE created_at > p_end_time) AS after_bucket
+    FROM matching_runs
+    WHERE p_edge_buckets
+    GROUP BY aid, sid, cid
+  ),
+  bucketed_runs AS (
+    SELECT mr.bucket, mr.aid, mr.sid, mr.cid, mr.avg_score, mr.scores_by_evaluation
+    FROM matching_runs mr
+    LEFT JOIN edge_buckets eb
+      ON eb.aid = mr.aid
+      AND eb.sid = mr.sid
+      AND (eb.cid = mr.cid OR (eb.cid IS NULL AND mr.cid IS NULL))
+    WHERE (mr.created_at >= p_start_time AND mr.created_at <= p_end_time)
+      -- A whole edge bucket, not just the run that identified it, so its
+      -- score is the mean of the bucket exactly as any other bucket's is.
+      OR mr.bucket = eb.before_bucket
+      OR mr.bucket = eb.after_bucket
   ),
   aggregated_by_bucket AS (
     SELECT
@@ -451,4 +486,4 @@ COMMENT ON VIEW evaluation_runs_with_scores IS
 'Materialized scores from evaluation runs for efficient chart queries. avg_score is WEIGHTED by evaluation weights. scores_by_evaluation uses method names (e.g., "task_completion") as keys. Uses SECURITY INVOKER to respect querying user''s RLS policies.';
 
 COMMENT ON FUNCTION get_evaluation_scores_by_time_bucket IS
-'Aggregates evaluation scores into time buckets with scores broken down by evaluation method. Returns avg_score (correctly weighted using current evaluation weights) and scores_by_evaluation for displaying per-method charts.';
+'Aggregates evaluation scores into time buckets with scores broken down by evaluation method. Returns avg_score (correctly weighted using current evaluation weights) and scores_by_evaluation for displaying per-method charts. With p_edge_buckets, also returns the bucket nearest outside each end of the range per series, which is what lets a chart draw a line crossing its window.';

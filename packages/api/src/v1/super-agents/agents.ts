@@ -290,12 +290,14 @@ export const agentsRouter = new Hono<AppEnv>()
         interval_minutes: z.number().min(1).max(1440),
         start_time: z.string().datetime(),
         end_time: z.string().datetime(),
+        include_edge_buckets: z.boolean().optional(),
       }),
     ),
     async (c) => {
       try {
         const { agentId } = c.req.valid('param');
-        const { interval_minutes, start_time, end_time } = c.req.valid('json');
+        const { interval_minutes, start_time, end_time, include_edge_buckets } =
+          c.req.valid('json');
         const connector = c.get('user_data_storage_connector');
 
         const scores = await connector.getEvaluationScoresByTimeBucket(c, {
@@ -303,6 +305,7 @@ export const agentsRouter = new Hono<AppEnv>()
           interval_minutes,
           start_time,
           end_time,
+          ...(include_edge_buckets && { include_edge_buckets }),
         });
 
         return c.json(scores);
