@@ -2,7 +2,11 @@
 
 import type { SkillEvent } from '@shared/types/data/skill-event';
 import { eventColors, eventLabels } from '@web/constants';
-import { bucketsForWindow, seriesAcrossWindow } from '@web/utils/chart-window';
+import {
+  bucketsForWindow,
+  carriedFromLabel,
+  seriesAcrossWindow,
+} from '@web/utils/chart-window';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -30,6 +34,12 @@ ChartJS.register(
   Legend,
   annotationPlugin,
 );
+
+/** What a series hands the tooltip about its own edges. */
+interface ChartSeries {
+  edges?: Set<number>;
+  carried?: Map<number, number>;
+}
 
 interface AgentPerformanceChartProps {
   evaluationScores: Array<{
@@ -143,8 +153,10 @@ export function AgentPerformanceChart({
         label: skillName,
         data,
         // Where the line meets the window edge is not a bucket anyone
-        // scored, so it carries no marker and the tooltip skips it.
+        // scored, so it carries no marker. A crossing has nothing to report
+        // and the tooltip skips it; a carry reports when it was measured.
         edges,
+        carried,
         borderColor: color,
         backgroundColor: color,
         borderWidth: 2,
@@ -328,13 +340,17 @@ export function AgentPerformanceChart({
         mode: 'index',
         intersect: false,
         displayColors: true,
-        // Where a line meets the window edge is not a bucket anybody
-        // scored: the line passes through it, but there is nothing to report
-        // for it, so the tooltip leaves it out as it does an empty bucket.
-        filter: (item) =>
-          !(
-            chartData.datasets[item.datasetIndex] as { edges?: Set<number> }
-          ).edges?.has(item.dataIndex),
+        // A crossing is only where a line meets the window edge -- no bucket
+        // was scored there, so the tooltip leaves it out as it does an empty
+        // bucket. A carry is left in: its value was measured, and when it was
+        // measured is the one thing a dashed line cannot say on its own.
+        filter: (item) => {
+          const series = chartData.datasets[item.datasetIndex] as ChartSeries;
+          return (
+            !series.edges?.has(item.dataIndex) ||
+            series.carried?.has(item.dataIndex) === true
+          );
+        },
         callbacks: {
           label: (context) => {
             const label = context.dataset.label || '';
@@ -383,7 +399,14 @@ export function AgentPerformanceChart({
 
             // For performance datasets, show the score
             const value = context.parsed.y;
-            return `${label}: ${value!.toFixed(3)}`;
+            const series = chartData.datasets[context.datasetIndex] as
+              | ChartSeries
+              | undefined;
+            const carriedFrom = series?.carried?.get(context.dataIndex);
+            // A carried value is the last one measured, not one measured here
+            return carriedFrom === undefined
+              ? `${label}: ${value!.toFixed(3)}`
+              : `${label}: ${value!.toFixed(3)} · last scored ${carriedFromLabel(carriedFrom)}`;
           },
         },
       },

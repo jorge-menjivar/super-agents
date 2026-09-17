@@ -386,14 +386,71 @@ RETURNS TABLE (
 ) AS $$
 BEGIN
   RETURN QUERY
-  WITH matching_runs AS (
+  WITH edge_runs AS (
+    -- The nearest run beyond each end of the range, one per series.
+    --
+    -- Two ordered lookups rather than a pass over the series' history: this is
+    -- the whole point of the flag, so it must not cost what asking for a wider
+    -- range cost. `idx_evaluation_runs_series_created` matches this key order,
+    -- which is what keeps it a seek.
+    (
+      SELECT DISTINCT ON (ers.agent_id, ers.skill_id, ers.cluster_id)
+        ers.agent_id AS aid,
+        ers.skill_id AS sid,
+        ers.cluster_id AS cid,
+        ers.created_at AS at
+      FROM evaluation_runs_with_scores ers
+      WHERE p_edge_buckets
+        AND ers.created_at < p_start_time
+        AND (p_agent_id IS NULL OR ers.agent_id = p_agent_id)
+        AND (p_skill_id IS NULL OR ers.skill_id = p_skill_id)
+        AND (p_cluster_id IS NULL OR ers.cluster_id = p_cluster_id)
+      ORDER BY ers.agent_id, ers.skill_id, ers.cluster_id, ers.created_at DESC
+    )
+    UNION ALL
+    (
+      SELECT DISTINCT ON (ers.agent_id, ers.skill_id, ers.cluster_id)
+        ers.agent_id, ers.skill_id, ers.cluster_id, ers.created_at
+      FROM evaluation_runs_with_scores ers
+      WHERE p_edge_buckets
+        AND ers.created_at > p_end_time
+        AND (p_agent_id IS NULL OR ers.agent_id = p_agent_id)
+        AND (p_skill_id IS NULL OR ers.skill_id = p_skill_id)
+        AND (p_cluster_id IS NULL OR ers.cluster_id = p_cluster_id)
+      ORDER BY ers.agent_id, ers.skill_id, ers.cluster_id, ers.created_at ASC
+    )
+  ),
+  edge_buckets AS (
+    -- Those runs name a bucket; the bucket is then read whole below, because
+    -- its score is the mean of every run in it and not of the one that found it.
     SELECT
-      date_trunc('hour', created_at) +
-      (EXTRACT(EPOCH FROM (created_at - date_trunc('hour', created_at))) / EXTRACT(EPOCH FROM p_interval))::INTEGER * p_interval AS bucket,
+      aid,
+      sid,
+      cid,
+      to_timestamp(
+        FLOOR(EXTRACT(EPOCH FROM at) / EXTRACT(EPOCH FROM p_interval))
+          * EXTRACT(EPOCH FROM p_interval)
+      ) AS bucket_start
+    FROM edge_runs
+  ),
+  bucketed_runs AS (
+    SELECT
+      -- Floored to a multiple of the interval from the epoch, which is where
+      -- the libSQL connector and the charts put their buckets too.
+      --
+      -- This used to read `date_trunc('hour', …) + (seconds past the hour /
+      -- interval)::INTEGER * interval`, which is wrong twice over: a cast to
+      -- INTEGER rounds rather than truncates, so a run at 10:40 was filed
+      -- under the 11:00 bucket -- a bucket that starts after the run that is
+      -- in it -- and starting from the hour leaves every interval longer than
+      -- an hour off the grid, a six-hour bucket beginning at 10:00.
+      to_timestamp(
+        FLOOR(EXTRACT(EPOCH FROM ers.created_at) / EXTRACT(EPOCH FROM p_interval))
+          * EXTRACT(EPOCH FROM p_interval)
+      ) AS bucket,
       ers.agent_id AS aid,
       ers.skill_id AS sid,
       ers.cluster_id AS cid,
-      ers.created_at,
       ers.avg_score,
       ers.scores_by_evaluation
     FROM evaluation_runs_with_scores ers
@@ -402,36 +459,16 @@ BEGIN
       AND (p_cluster_id IS NULL OR ers.cluster_id = p_cluster_id)
       AND (
         (ers.created_at >= p_start_time AND ers.created_at <= p_end_time)
-        -- Everything outside the range is a candidate for its edge buckets,
-        -- and `edge_buckets` below picks the nearest one of each series.
-        OR p_edge_buckets
+        OR EXISTS (
+          SELECT 1
+          FROM edge_buckets eb
+          WHERE eb.aid = ers.agent_id
+            AND eb.sid = ers.skill_id
+            AND (eb.cid = ers.cluster_id OR (eb.cid IS NULL AND ers.cluster_id IS NULL))
+            AND ers.created_at >= eb.bucket_start
+            AND ers.created_at < eb.bucket_start + p_interval
+        )
       )
-  ),
-  -- The bucket nearest outside each end, per series. NULL when the series
-  -- has nothing on that side, which leaves its line ending where it does.
-  edge_buckets AS (
-    SELECT
-      aid,
-      sid,
-      cid,
-      MAX(bucket) FILTER (WHERE created_at < p_start_time) AS before_bucket,
-      MIN(bucket) FILTER (WHERE created_at > p_end_time) AS after_bucket
-    FROM matching_runs
-    WHERE p_edge_buckets
-    GROUP BY aid, sid, cid
-  ),
-  bucketed_runs AS (
-    SELECT mr.bucket, mr.aid, mr.sid, mr.cid, mr.avg_score, mr.scores_by_evaluation
-    FROM matching_runs mr
-    LEFT JOIN edge_buckets eb
-      ON eb.aid = mr.aid
-      AND eb.sid = mr.sid
-      AND (eb.cid = mr.cid OR (eb.cid IS NULL AND mr.cid IS NULL))
-    WHERE (mr.created_at >= p_start_time AND mr.created_at <= p_end_time)
-      -- A whole edge bucket, not just the run that identified it, so its
-      -- score is the mean of the bucket exactly as any other bucket's is.
-      OR mr.bucket = eb.before_bucket
-      OR mr.bucket = eb.after_bucket
   ),
   aggregated_by_bucket AS (
     SELECT

@@ -80,6 +80,7 @@ describe('libsql migrations', () => {
       '0001_initial_schema',
       '0002_feedbacks_updated_at',
       '0003_default_system_settings',
+      '0004_evaluation_run_lookup_indexes',
     ]);
   });
 
@@ -128,7 +129,9 @@ describe('libsql migrations', () => {
     const applied = await client.execute(
       'SELECT COUNT(*) AS n FROM schema_migrations',
     );
-    expect(Number(applied.rows[0].n)).toBe(3);
+    // Every migration, recorded exactly once -- stated against the list
+    // itself, so adding one does not make this a lie.
+    expect(Number(applied.rows[0].n)).toBe(libsqlMigrations.length);
   });
 
   describe('fingerprints', () => {
@@ -149,7 +152,7 @@ describe('libsql migrations', () => {
       const rows = await client.execute(
         'SELECT version, fingerprint FROM schema_migrations ORDER BY version',
       );
-      expect(rows.rows).toHaveLength(3);
+      expect(rows.rows).toHaveLength(libsqlMigrations.length);
       for (const row of rows.rows) {
         expect(String(row.fingerprint)).toMatch(/^[0-9a-f]{64}$/);
       }

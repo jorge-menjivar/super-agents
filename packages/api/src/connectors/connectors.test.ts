@@ -94,6 +94,7 @@ describe('ensureStorageReady', () => {
       '0001_initial_schema',
       '0002_feedbacks_updated_at',
       '0003_default_system_settings',
+      '0004_evaluation_run_lookup_indexes',
     ]);
   });
 
@@ -112,7 +113,9 @@ describe('ensureStorageReady', () => {
     const applied = await getLibsqlClient(c).execute(
       'SELECT COUNT(*) AS n FROM schema_migrations',
     );
-    expect(Number(applied.rows[0].n)).toBe(3);
+    const { libsqlMigrations } = await import('./libsql/schema');
+    // Every migration, recorded exactly once -- one run, not three.
+    expect(Number(applied.rows[0].n)).toBe(libsqlMigrations.length);
   });
 
   it('does nothing for a Supabase deployment', async () => {

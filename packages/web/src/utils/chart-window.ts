@@ -91,17 +91,42 @@ export function scoreRangeForWindow(
   };
 }
 
+/**
+ * When the score on a carried stretch was actually measured.
+ *
+ * The year shows only when it is not this one, which is the point: a line
+ * carried from last Tuesday and one carried from two years ago are drawn
+ * identically, and this is where they stop reading the same.
+ */
+export function carriedFromLabel(
+  time: number,
+  now: number = Date.now(),
+): string {
+  const at = new Date(time);
+  const today = new Date(now);
+  if (at.toDateString() === today.toDateString()) {
+    return format(at, 'h:mm a');
+  }
+  return at.getFullYear() === today.getFullYear()
+    ? format(at, 'MMM d')
+    : format(at, 'MMM d, yyyy');
+}
+
 export interface WindowSeries {
   /** One value per bucket, null where nothing was scored */
   data: (number | null)[];
   /** Indices holding where the line meets an edge, rather than a score */
   edges: Set<number>;
   /**
-   * Indices the line was carried to rather than measured toward. The stretch
-   * ending at one is drawn dashed, which is the whole reason it may be drawn
-   * at all: it says the score is the last one known, not a new one.
+   * Indices the line was carried to rather than measured toward, each against
+   * the bucket whose score it is carrying. The stretch ending at one is drawn
+   * dashed, which is the whole reason it may be drawn at all: it says the
+   * score is the last one known, not a new one -- and the bucket it came from
+   * is what lets the chart say *when* it was last known, which a dash alone
+   * cannot. Without that, a score carried from two years ago reads exactly
+   * like one carried from twenty minutes ago.
    */
-  carried: Set<number>;
+  carried: Map<number, number>;
   /** How many buckets carry a score */
   measured: number;
 }
@@ -148,7 +173,7 @@ export function seriesAcrossWindow(
   const times = buckets.map((bucket) => bucket.time.getTime());
   const data = times.map((time) => scores.get(time) ?? null);
   const edges = new Set<number>();
-  const carried = new Set<number>();
+  const carried = new Map<number, number>();
   const measured = data.filter((value) => value !== null).length;
 
   const last = times.length - 1;
@@ -188,7 +213,7 @@ export function seriesAcrossWindow(
       data[last] = before[1];
       for (const index of [0, last]) {
         edges.add(index);
-        carried.add(index);
+        carried.set(index, before[0]);
       }
     }
     return { data, edges, carried, measured };
@@ -208,7 +233,7 @@ export function seriesAcrossWindow(
     } else {
       // Nothing since: the last score stands, carried to the edge.
       data[last] = data[final];
-      carried.add(last);
+      carried.set(last, times[final]);
     }
     edges.add(last);
   }

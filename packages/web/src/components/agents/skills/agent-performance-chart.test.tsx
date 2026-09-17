@@ -20,10 +20,23 @@ interface RenderedChart {
   datasets: RenderedDataset[];
 }
 
+interface TooltipItem {
+  datasetIndex: number;
+  dataIndex: number;
+}
+
 interface RenderedOptions {
   plugins: {
     tooltip: {
-      filter: (item: { datasetIndex: number; dataIndex: number }) => boolean;
+      filter: (item: TooltipItem) => boolean;
+      callbacks: {
+        label: (context: {
+          dataset: { label: string };
+          parsed: { y: number };
+          datasetIndex: number;
+          dataIndex: number;
+        }) => string | string[];
+      };
     };
   };
 }
@@ -377,6 +390,38 @@ describe('AgentPerformanceChart', () => {
     expect(rendered.data.datasets).toHaveLength(2);
     expect(rendered.data.datasets[0].borderColor).toBe(activeColor);
     expect(rendered.data.datasets[0].data.some((v) => v !== null)).toBe(true);
+  });
+
+  it('says when a carried value was last measured, and stays quiet at a crossing', () => {
+    render(
+      <AgentPerformanceChart
+        evaluationScores={[
+          {
+            time_bucket: bucketAt(40),
+            skill_id: mockSkillId,
+            avg_score: 0.9,
+            count: 1,
+          },
+        ]}
+      />,
+    );
+
+    const [skill] = rendered.data.datasets;
+    const last = skill.data.length - 1;
+    const tooltip = rendered.options.plugins.tooltip;
+
+    // A carried value is reported: the dash says it was not measured here,
+    // and this says when it was.
+    expect(tooltip.filter({ datasetIndex: 0, dataIndex: last })).toBe(true);
+    const line = tooltip.callbacks.label({
+      dataset: { label: skill.label },
+      parsed: { y: 90 },
+      datasetIndex: 0,
+      dataIndex: last,
+    });
+    expect(line).toContain('last scored');
+    // Not today, so it is named by date rather than by clock time
+    expect(line).toMatch(/last scored [A-Z][a-z]{2} \d{1,2}/);
   });
 
   it('draws the measured stretch of a line solid and the carried one dashed', () => {

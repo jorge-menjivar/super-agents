@@ -723,8 +723,35 @@ const defaultSystemSettings: LibsqlMigration = {
   ],
 };
 
+/**
+ * The lookups behind `include_edge_buckets`: the newest run of a series before
+ * a time, and the oldest after it. Without an index in that order, finding the
+ * nearest run beyond an edge reads every run the skill has and sorts them;
+ * with one it is a seek to the end of a range.
+ *
+ * The four-column index matches the order `edgeBucketRows` partitions and
+ * orders by, so the agent-wide query gets its one row per series without a
+ * sort; the two-column one serves the per-skill queries the cards make, which
+ * cannot use an index led by `agent_id`.
+ *
+ * Appended rather than folded into the initial schema so that an existing
+ * database gains them by being migrated rather than recreated -- the
+ * fingerprint check refuses a migration whose statements have changed, and a
+ * local database can be very large by the time it has charts worth drawing.
+ */
+const evaluationRunLookupIndexes: LibsqlMigration = {
+  version: '0004_evaluation_run_lookup_indexes',
+  statements: [
+    `CREATE INDEX IF NOT EXISTS idx_evaluation_runs_skill_created
+       ON skill_optimization_evaluation_runs(skill_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_evaluation_runs_series_created
+       ON skill_optimization_evaluation_runs(agent_id, skill_id, cluster_id, created_at DESC)`,
+  ],
+};
+
 export const libsqlMigrations: LibsqlMigration[] = [
   initialSchema,
   feedbacksUpdatedAt,
   defaultSystemSettings,
+  evaluationRunLookupIndexes,
 ];

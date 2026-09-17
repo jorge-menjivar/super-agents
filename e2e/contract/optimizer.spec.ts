@@ -976,6 +976,15 @@ test.describe('the buckets either side of a range', () => {
     const judged = await scores(before - MINUTE, Date.now() + MINUTE, false);
     const newest = judged[judged.length - 1];
 
+    // A bucket holds the runs that fall inside it, so it cannot begin after
+    // them: the run is in the past, and so is its bucket. Postgres used to
+    // round rather than floor here -- a run at 10:40 filed under the 11:00
+    // bucket -- which libSQL never did, so the two disagreed about which
+    // bucket a run belonged to for the whole back half of every one.
+    for (const bucket of judged) {
+      expect(Date.parse(bucket.time_bucket)).toBeLessThanOrEqual(Date.now());
+    }
+
     // A range that ends before the run: it is the bucket after that range,
     // and comes back only when the edges are asked for.
     const earlier = { start: before - 20 * MINUTE, end: before - 10 * MINUTE };

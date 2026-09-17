@@ -1,5 +1,6 @@
 import {
   bucketsForWindow,
+  carriedFromLabel,
   scoreRangeForWindow,
   seriesAcrossWindow,
 } from '@web/utils/chart-window';
@@ -147,12 +148,14 @@ describe('seriesAcrossWindow', () => {
     expect(series.edges.has(5)).toBe(true);
   });
 
-  it('carries the last score to the right edge, and says it was carried', () => {
+  it('carries the last score to the right edge, and says where it came from', () => {
     const series = seriesAcrossWindow(new Map([[at(2), 80]]), buckets);
 
     expect(series.data).toEqual([null, null, 80, null, null, 80]);
-    expect(series.carried).toEqual(new Set([5]));
     expect(series.edges).toEqual(new Set([5]));
+    // Not just that it was carried, but from which bucket: a dash says the
+    // value was not measured here, and only this says when it was.
+    expect(series.carried.get(5)).toBe(at(2));
   });
 
   it('never carries a line backwards past its first score', () => {
@@ -171,7 +174,11 @@ describe('seriesAcrossWindow', () => {
 
     expect(series.data[0]).toBe(64);
     expect(series.data[5]).toBe(64);
-    expect(series.carried).toEqual(new Set([0, 5]));
+    // Both ends carried, both from the one score that exists
+    expect([...series.carried.values()]).toEqual([
+      at(0) - 200 * HOUR,
+      at(0) - 200 * HOUR,
+    ]);
     expect(series.measured).toBe(0);
   });
 
@@ -200,6 +207,22 @@ describe('seriesAcrossWindow', () => {
     expect(series.data[5]).toBe(110);
     expect(series.measured).toBe(0);
     expect(series.edges).toEqual(new Set([0, 5]));
+  });
+
+  it('names a carry by when it was last measured', () => {
+    const now = Date.parse('2026-09-17T14:00:00Z');
+
+    // Today needs no date; this year needs no year; an old one says the year,
+    // which is the whole point -- it is what a dash cannot say.
+    expect(carriedFromLabel(Date.parse('2026-09-17T09:30:00Z'), now)).toMatch(
+      /^\d{1,2}:\d{2} (AM|PM)$/,
+    );
+    expect(carriedFromLabel(Date.parse('2026-09-05T09:00:00Z'), now)).toBe(
+      'Sep 5',
+    );
+    expect(carriedFromLabel(Date.parse('2024-09-05T09:00:00Z'), now)).toBe(
+      'Sep 5, 2024',
+    );
   });
 
   it('draws nothing for a series whose only score comes after the window', () => {
