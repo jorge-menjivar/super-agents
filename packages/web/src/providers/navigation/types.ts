@@ -31,6 +31,7 @@ export interface NavigationState {
     | 'edit-agent'
     | 'agent-view'
     | 'agent-logs'
+    | 'skills-list'
     | 'create-skill'
     | 'skill-dashboard'
     | 'edit-skill'
