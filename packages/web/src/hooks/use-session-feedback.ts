@@ -1,7 +1,7 @@
 'use client';
 
 import type { Feedback } from '@shared/types/data/feedback';
-import type { Log } from '@shared/types/data/log';
+import type { LogSummary } from '@shared/types/data/log';
 import { useQuery } from '@tanstack/react-query';
 import { getFeedback } from '@web/api/v1/super-agents/feedbacks';
 import { useMemo } from 'react';
@@ -20,7 +20,7 @@ const NO_FEEDBACK = new Map<string, Feedback>();
  * when a verdict is withdrawn, so the rail follows the thumb the reader just
  * gave without asking for it.
  */
-export function useSessionFeedback(logs: Log[]): Map<string, Feedback> {
+export function useSessionFeedback(logs: LogSummary[]): Map<string, Feedback> {
   const ids = logs.map((log) => log.id);
   const { data } = useQuery({
     queryKey: ['feedback', 'logs', ids] as const,

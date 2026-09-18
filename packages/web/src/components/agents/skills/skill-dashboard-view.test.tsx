@@ -89,8 +89,8 @@ vi.mock('@web/providers/skills', async (importOriginal) => {
 });
 
 // Mock other providers
-vi.mock('@web/providers/logs', () => ({
-  useLogs: vi.fn(),
+vi.mock('@web/hooks/use-recent-logs', () => ({
+  useRecentLogs: vi.fn(),
 }));
 
 vi.mock('@web/providers/models', () => ({
@@ -132,9 +132,9 @@ vi.mock('@web/hooks/use-skill-validation', () => ({
   useSkillValidation: vi.fn(),
 }));
 
+import { useRecentLogs } from '@web/hooks/use-recent-logs';
 import { useSkillValidation } from '@web/hooks/use-skill-validation';
 import { useAgents } from '@web/providers/agents';
-import { useLogs } from '@web/providers/logs';
 import { useModels } from '@web/providers/models';
 import { useNavigation } from '@web/providers/navigation';
 import { useSkillEvents } from '@web/providers/skill-events';
@@ -227,23 +227,7 @@ describe('SkillDashboardView', () => {
       refreshSkills: vi.fn(),
     } as unknown as never);
 
-    vi.mocked(useLogs).mockReturnValue({
-      logs: [],
-      selectedLog: undefined,
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-      agentId: null,
-      setAgentId: vi.fn(),
-      skillId: null,
-      setSkillId: vi.fn(),
-      setAgentWide: vi.fn(),
-      hasNextPage: false,
-      isFetchingNextPage: false,
-      fetchNextPage: vi.fn(),
-      getLogById: vi.fn(),
-      refreshLogs: vi.fn(),
-    } as unknown as never);
+    vi.mocked(useRecentLogs).mockReturnValue({ logs: [], isLoading: false });
 
     vi.mocked(useModels).mockReturnValue({
       skillModels: [],
@@ -346,8 +330,8 @@ describe('SkillDashboardView', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     // The card and the logs table render through the same cells, so a
     // request that failed, or one still running, reads the same on both.
-    vi.mocked(useLogs).mockReturnValue({
-      ...vi.mocked(useLogs)(),
+    vi.mocked(useRecentLogs).mockReturnValue({
+      isLoading: false,
       logs: [
         {
           id: 'log-done',

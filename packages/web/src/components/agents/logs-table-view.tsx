@@ -1,6 +1,6 @@
 'use client';
 
-import type { Log } from '@shared/types/data';
+import type { LogSummary } from '@shared/types/data';
 import {
   isRunning,
   LogDuration,
@@ -70,10 +70,10 @@ export interface LogsTableViewProps {
   description: string;
   emptyText: string;
   onBack: () => void;
-  onLogClick: (log: Log) => void;
+  onLogClick: (log: LogSummary) => void;
   extraColumn: {
     header: string;
-    render: (log: Log) => ReactNode;
+    render: (log: LogSummary) => ReactNode;
   };
   /** The caller's own filter controls, beside the status filter */
   filters?: ReactNode;
@@ -88,8 +88,8 @@ export interface LogsTableViewProps {
  * Collapsing the last two claims the model does not support temperature and
  * then corrects itself when the request finishes.
  */
-const getTemperature = (log: Log): number | null | undefined => {
-  const requestBody = log.ai_provider_request_log?.request_body;
+const getTemperature = (log: LogSummary): number | null | undefined => {
+  const requestBody = log.provider_request_params;
   if (!requestBody || typeof requestBody !== 'object') {
     return undefined;
   }
@@ -99,8 +99,8 @@ const getTemperature = (log: Log): number | null | undefined => {
   return null;
 };
 
-const getThinkingEffort = (log: Log): string | null => {
-  const requestBody = log.ai_provider_request_log?.request_body;
+const getThinkingEffort = (log: LogSummary): string | null => {
+  const requestBody = log.provider_request_params;
   if (requestBody && typeof requestBody === 'object') {
     // Check for thinking.type (Anthropic extended thinking)
     if (
@@ -133,9 +133,11 @@ export function LogsTableView({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [goToPageInput, setGoToPageInput] = useState('');
 
-  const runningCount = logs.filter((log: Log) => log.end_time === null).length;
+  const runningCount = logs.filter(
+    (log: LogSummary) => log.end_time === null,
+  ).length;
 
-  const filteredLogs = logs.filter((log: Log) => {
+  const filteredLogs = logs.filter((log: LogSummary) => {
     if (statusFilter !== 'all') {
       // A request still running has no status to match yet.
       if (log.status === null) {

@@ -1,4 +1,5 @@
 import type { APIRequestContext } from '@playwright/test';
+import { forgetAgent, recordAgent } from './cleanup';
 
 export const AGENTS_PATH = '/v1/super-agents/agents';
 
@@ -48,7 +49,10 @@ export const createAgent = async (
     );
   }
 
-  return response.json() as Promise<Agent>;
+  const agent = (await response.json()) as Agent;
+  // So that a spec which does not delete it still cannot leave it behind.
+  recordAgent(agent.id);
+  return agent;
 };
 
 /**
@@ -59,6 +63,7 @@ export const deleteAgent = async (
   request: APIRequestContext,
   id: string,
 ): Promise<void> => {
+  forgetAgent(id);
   try {
     await request.delete(`${AGENTS_PATH}/${id}`);
   } catch {

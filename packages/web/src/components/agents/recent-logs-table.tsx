@@ -1,6 +1,6 @@
 'use client';
 
-import type { Log } from '@shared/types/data';
+import type { LogSummary } from '@shared/types/data';
 import {
   isRunning,
   LogDuration,
@@ -32,11 +32,11 @@ import type { ReactElement, ReactNode } from 'react';
  * that carried all of those would be read as neither.
  */
 export interface RecentLogsTableProps {
-  logs: Log[];
+  logs: LogSummary[];
   /** The column that differs: the skill across an agent, the partition within one. */
   context: {
     header: string;
-    render: (log: Log) => ReactNode;
+    render: (log: LogSummary) => ReactNode;
   };
   /** How many rows the card has room for. */
   limit?: number;

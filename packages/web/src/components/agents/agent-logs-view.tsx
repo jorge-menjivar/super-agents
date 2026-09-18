@@ -1,6 +1,6 @@
 'use client';
 
-import type { Log } from '@shared/types/data';
+import type { LogSummary } from '@shared/types/data';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { LogTagBadge } from '@web/components/agents/log-cells';
 import { LogsTableView } from '@web/components/agents/logs-table-view';
@@ -78,11 +78,11 @@ export function AgentLogsView(): ReactElement {
     return <div>No agent selected</div>;
   }
 
-  const getSkillName = (log: Log): string | null =>
+  const getSkillName = (log: LogSummary): string | null =>
     skills.find((skill) => skill.id === log.skill_id)?.name ?? null;
 
   // A running row with no skill is one routing has not placed yet.
-  const renderSkill = (log: Log) => (
+  const renderSkill = (log: LogSummary) => (
     <LogTagBadge
       value={getSkillName(log)}
       missing={
@@ -91,7 +91,7 @@ export function AgentLogsView(): ReactElement {
     />
   );
 
-  const renderPartition = (log: Log) => {
+  const renderPartition = (log: LogSummary) => {
     if (!log.cluster_id) {
       return <LogTagBadge value={null} />;
     }

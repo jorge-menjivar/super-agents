@@ -22,6 +22,7 @@ import {
 vi.mock('@web/api/v1/super-agents/agents', () => ({
   getAgents: vi.fn(),
   getAgentModels: vi.fn().mockResolvedValue([]),
+  getAgentSkillReadiness: vi.fn().mockResolvedValue([]),
   getAgentEvaluationScoresByTimeBucket: vi.fn().mockResolvedValue([]),
 }));
 
@@ -45,8 +46,8 @@ vi.mock('@web/providers/skills', async (importOriginal) => {
   };
 });
 
-vi.mock('@web/providers/logs', () => ({
-  useLogs: vi.fn(),
+vi.mock('@web/hooks/use-recent-logs', () => ({
+  useRecentLogs: () => ({ logs: [], isLoading: false }),
 }));
 
 // Mock the system settings provider
@@ -69,9 +70,12 @@ vi.mock('@web/providers/system-settings', () => ({
     children,
 }));
 
-import { getAgentModels, getAgents } from '@web/api/v1/super-agents/agents';
+import {
+  getAgentModels,
+  getAgentSkillReadiness,
+  getAgents,
+} from '@web/api/v1/super-agents/agents';
 import { getSkills } from '@web/api/v1/super-agents/skills';
-import { useLogs } from '@web/providers/logs';
 import { useSkills } from '@web/providers/skills';
 
 const mockAgent: Agent = {
@@ -188,29 +192,6 @@ const createSkillsCtx = (
     ...overrides,
   }) as unknown as ReturnType<typeof useSkills>;
 
-const createLogsCtx = (
-  overrides: Partial<ReturnType<typeof useLogs>> = {},
-): ReturnType<typeof useLogs> =>
-  ({
-    logs: [],
-    selectedLog: undefined,
-    isLoading: false,
-    error: null,
-    refetch: vi.fn(),
-    agentId: null,
-    setAgentId: vi.fn(),
-    skillId: null,
-    setSkillId: vi.fn(),
-    agentWide: false,
-    setAgentWide: vi.fn(),
-    hasNextPage: false,
-    isFetchingNextPage: false,
-    fetchNextPage: vi.fn(),
-    getLogById: vi.fn(),
-    refreshLogs: vi.fn(),
-    ...overrides,
-  }) as unknown as ReturnType<typeof useLogs>;
-
 const renderWithProviders = (component: React.ReactElement) => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -233,7 +214,7 @@ const renderWithProviders = (component: React.ReactElement) => {
   };
 };
 
-describe('SkillsListView', () => {
+describe('AgentView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetRouterMocks();
@@ -241,31 +222,47 @@ describe('SkillsListView', () => {
     setMockPathname('/agents/Test%20Agent');
     vi.mocked(getAgents).mockResolvedValue([mockAgent]);
     vi.mocked(getSkills).mockResolvedValue(mockSkills);
+    vi.mocked(getAgentSkillReadiness).mockResolvedValue([]);
     vi.mocked(useSkills).mockReturnValue(createSkillsCtx());
-    vi.mocked(useLogs).mockReturnValue(createLogsCtx());
     mockLocalStorage.getItem.mockReturnValue(null);
   });
 
-  it('renders skills list when agent is selected', async () => {
-    renderWithProviders(<AgentView />);
+  it('counts the skills and opens the page they live on', async () => {
+    const { user } = renderWithProviders(<AgentView />);
 
     await waitFor(() => {
-      expect(screen.getByText('Email Response')).toBeInTheDocument();
-      expect(screen.getByText('Chat Support')).toBeInTheDocument();
+      expect(screen.getByText('2 skills')).toBeInTheDocument();
+    });
+    // The cards themselves are a page of their own: fifteen skills under a
+    // chart of the same data was fifteen more charts to draw.
+    expect(screen.queryByText('Email Response')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /view skills/i }));
+    expect(routerMockState.navigate).toHaveBeenCalledWith({
+      to: '/agents/Test%20Agent/skills',
     });
   });
 
-  it('shows loading state', async () => {
-    vi.mocked(useSkills).mockReturnValue(
-      createSkillsCtx({ skills: [], isLoading: true }),
-    );
+  it('says how many of them are not ready', async () => {
+    vi.mocked(getAgentSkillReadiness).mockResolvedValue([
+      {
+        skill_id: 'skill-1',
+        model_count: 1,
+        evaluation_count: 0,
+        optimize: false,
+      },
+      {
+        skill_id: 'skill-2',
+        model_count: 0,
+        evaluation_count: 0,
+        optimize: false,
+      },
+    ]);
 
     renderWithProviders(<AgentView />);
 
-    // Loading state shows skeleton cards
     await waitFor(() => {
-      const skeletons = document.querySelectorAll('[data-slot="skeleton"]');
-      expect(skeletons.length).toBeGreaterThan(0);
+      expect(screen.getByText('2 skills, 1 not ready')).toBeInTheDocument();
     });
   });
 
@@ -287,39 +284,25 @@ describe('SkillsListView', () => {
           screen.getByText('This agent has no default models'),
         ).toBeInTheDocument();
       });
-      expect(screen.getByText(/no skills yet/i)).toBeInTheDocument();
-      // Once in the callout at the top, once in the empty state.
       expect(
-        screen.getAllByRole('button', { name: /add default models/i }),
-      ).toHaveLength(2);
-      expect(
-        screen.getByRole('button', { name: /create a skill by hand/i }),
+        screen.getByRole('button', { name: /add default models/i }),
       ).toBeInTheDocument();
-      expect(screen.queryByText(/create your first skill/i)).toBeNull();
     });
 
-    it('explains that skills come from requests when the agent has default models', async () => {
+    it('says where the first skill will come from', async () => {
       vi.mocked(getAgentModels).mockResolvedValue([{ id: 'model-1' } as never]);
 
       renderWithProviders(<AgentView />);
 
       await waitFor(() => {
-        expect(screen.getByText(/no skills yet/i)).toBeInTheDocument();
-      });
-      await waitFor(() => {
         expect(
-          screen.getByText(
-            /the first request to this agent makes its first skill/i,
-          ),
+          screen.getByText(/the first request to this agent makes one/i),
         ).toBeInTheDocument();
       });
       expect(screen.queryByText('This agent has no default models')).toBeNull();
-      expect(
-        screen.queryByRole('button', { name: /add default models/i }),
-      ).toBeNull();
     });
 
-    it('asks for a skill when the agent keeps its skills', async () => {
+    it('says only that there are none when the agent keeps its skills', async () => {
       vi.mocked(getAgents).mockResolvedValue([
         { ...mockAgent, auto_create_skills: false },
       ]);
@@ -327,16 +310,14 @@ describe('SkillsListView', () => {
       renderWithProviders(<AgentView />);
 
       await waitFor(() => {
-        expect(
-          screen.getByRole('button', { name: /create your first skill/i }),
-        ).toBeInTheDocument();
+        expect(screen.getByText('None yet')).toBeInTheDocument();
       });
       expect(screen.queryByText('This agent has no default models')).toBeNull();
       expect(getAgentModels).not.toHaveBeenCalled();
     });
   });
 
-  it('points at the missing default models above the skills', async () => {
+  it('points at the missing default models above everything else', async () => {
     vi.mocked(getAgentModels).mockResolvedValue([]);
 
     renderWithProviders(<AgentView />);
@@ -346,7 +327,7 @@ describe('SkillsListView', () => {
         screen.getByText('This agent has no default models'),
       ).toBeInTheDocument();
     });
-    expect(screen.getByText('Email Response')).toBeInTheDocument();
+    expect(screen.getByText('2 skills')).toBeInTheDocument();
   });
 
   it('shows message when no agent is selected', async () => {
@@ -356,17 +337,6 @@ describe('SkillsListView', () => {
 
     await waitFor(() => {
       expect(screen.getAllByText(/select an agent/i).length).toBeGreaterThan(0);
-    });
-  });
-
-  it('displays skill descriptions', async () => {
-    renderWithProviders(<AgentView />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Handles email responses')).toBeInTheDocument();
-      expect(
-        screen.getByText('Provides live chat support'),
-      ).toBeInTheDocument();
     });
   });
 
@@ -434,49 +404,6 @@ describe('SkillsListView', () => {
         screen.queryByRole('button', { name: /more options/i }),
       ).not.toBeInTheDocument();
     });
-  });
-
-  it('displays DiceBear avatar for each skill', async () => {
-    renderWithProviders(<AgentView />);
-
-    await waitFor(() => {
-      // Should find images for each skill
-      const images = screen.getAllByRole('img');
-
-      // Find skill avatars (excluding agent avatar in header)
-      const emailSkillAvatar = images.find((img) =>
-        img.getAttribute('alt')?.includes('Email Response'),
-      );
-      const chatSkillAvatar = images.find((img) =>
-        img.getAttribute('alt')?.includes('Chat Support'),
-      );
-
-      expect(emailSkillAvatar).toBeTruthy();
-      expect(chatSkillAvatar).toBeTruthy();
-
-      // Avatars should have SVG data (URL-encoded or base64)
-      expect(emailSkillAvatar?.getAttribute('src')).toContain(
-        'data:image/svg+xml',
-      );
-      expect(chatSkillAvatar?.getAttribute('src')).toContain(
-        'data:image/svg+xml',
-      );
-    });
-  });
-
-  it('marks the skills the gateway created', async () => {
-    vi.mocked(useSkills).mockReturnValue(
-      createSkillsCtx({
-        skills: [{ ...mockSkills[0], auto_created: true }, mockSkills[1]],
-      }),
-    );
-
-    renderWithProviders(<AgentView />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Email Response')).toBeInTheDocument();
-    });
-    expect(screen.getAllByText('auto')).toHaveLength(1);
   });
 
   it('offers the default models dialog from the agent menu', async () => {

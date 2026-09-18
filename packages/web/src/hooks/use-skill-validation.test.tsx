@@ -4,21 +4,30 @@ import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock the API module
-vi.mock('@web/api/v1/super-agents/skills', () => ({
-  getSkillModels: vi.fn(),
-  getSkillEvaluations: vi.fn(),
+vi.mock('@web/api/v1/super-agents/agents', () => ({
+  getAgentSkillReadiness: vi.fn(),
 }));
 
 // Import after mocking
-import {
-  getSkillEvaluations,
-  getSkillModels,
-} from '@web/api/v1/super-agents/skills';
+import { getAgentSkillReadiness } from '@web/api/v1/super-agents/agents';
 import { useSkillValidation } from '@web/hooks/use-skill-validation';
 
-const mockGetSkillModels = vi.mocked(getSkillModels);
-const mockGetSkillEvaluations = vi.mocked(getSkillEvaluations);
+const mockGetAgentSkillReadiness = vi.mocked(getAgentSkillReadiness);
+
+/** The agent's answer, as the readiness endpoint gives it. */
+const readiness = (
+  skillId: string,
+  models: number,
+  evaluations: number,
+  optimize = false,
+) => [
+  {
+    skill_id: skillId,
+    model_count: models,
+    evaluation_count: evaluations,
+    optimize,
+  },
+];
 
 describe('useSkillValidation', () => {
   let queryClient: QueryClient;
@@ -29,29 +38,30 @@ describe('useSkillValidation', () => {
     );
   };
 
-  const createMockSkill = (overrides: Partial<Skill> = {}): Skill => ({
-    id: 'skill-123',
-    agent_id: 'agent-123',
-    name: 'Test Skill',
-    description: 'A test skill',
-    metadata: {},
-    optimize: false,
-    configuration_count: 0,
-    auto_created: false,
-    seed_system_prompt: null,
-    created_at: '2024-01-01T00:00:00Z',
-    updated_at: '2024-01-01T00:00:00Z',
-    clustering_interval: 0,
-    reflection_min_requests_per_arm: 0,
-    exploration_temperature: 1.0,
-    last_clustering_at: null,
-    last_clustering_log_start_time: null,
-    evaluations_regenerated_at: null,
-    evaluation_lock_acquired_at: null,
-    total_requests: 0,
-    allowed_template_variables: [],
-    ...overrides,
-  });
+  const createMockSkill = (overrides: Partial<Skill> = {}): Skill =>
+    ({
+      id: 'skill-123',
+      agent_id: 'agent-123',
+      name: 'Test Skill',
+      description: 'A test skill',
+      metadata: {},
+      optimize: false,
+      configuration_count: 0,
+      auto_created: false,
+      seed_system_prompt: null,
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+      clustering_interval: 0,
+      reflection_min_requests_per_arm: 0,
+      exploration_temperature: 1,
+      last_clustering_at: null,
+      last_clustering_log_start_time: null,
+      evaluations_regenerated_at: null,
+      evaluation_lock_acquired_at: null,
+      total_requests: 0,
+      allowed_template_variables: [],
+      ...overrides,
+    }) as Skill;
 
   beforeEach(() => {
     queryClient = new QueryClient({
@@ -65,13 +75,7 @@ describe('useSkillValidation', () => {
   });
 
   it('returns loading state initially', () => {
-    mockGetSkillModels.mockImplementation(
-      () =>
-        new Promise(() => {
-          // Never resolves - simulates loading state
-        }),
-    );
-    mockGetSkillEvaluations.mockImplementation(
+    mockGetAgentSkillReadiness.mockImplementation(
       () =>
         new Promise(() => {
           // Never resolves - simulates loading state
@@ -86,10 +90,7 @@ describe('useSkillValidation', () => {
   });
 
   it('returns ready state when skill has models (no optimization)', async () => {
-    mockGetSkillModels.mockResolvedValueOnce([
-      { id: 'model-1', name: 'GPT-4' },
-    ] as never);
-    mockGetSkillEvaluations.mockResolvedValueOnce([]);
+    mockGetAgentSkillReadiness.mockResolvedValue(readiness('skill-123', 1, 0));
 
     const { result } = renderHook(
       () => useSkillValidation(createMockSkill({ optimize: false })),
@@ -107,8 +108,7 @@ describe('useSkillValidation', () => {
   });
 
   it('returns not ready when skill has no models', async () => {
-    mockGetSkillModels.mockResolvedValueOnce([]);
-    mockGetSkillEvaluations.mockResolvedValueOnce([]);
+    mockGetAgentSkillReadiness.mockResolvedValue(readiness('skill-123', 0, 0));
 
     const { result } = renderHook(() => useSkillValidation(createMockSkill()), {
       wrapper: createWrapper(),
@@ -126,10 +126,7 @@ describe('useSkillValidation', () => {
   });
 
   it('requires evaluations when optimization is enabled', async () => {
-    mockGetSkillModels.mockResolvedValueOnce([
-      { id: 'model-1', name: 'GPT-4' },
-    ] as never);
-    mockGetSkillEvaluations.mockResolvedValueOnce([]);
+    mockGetAgentSkillReadiness.mockResolvedValue(readiness('skill-123', 1, 0));
 
     const { result } = renderHook(
       () => useSkillValidation(createMockSkill({ optimize: true })),
@@ -147,12 +144,7 @@ describe('useSkillValidation', () => {
   });
 
   it('returns ready when optimization is enabled with models and evaluations', async () => {
-    mockGetSkillModels.mockResolvedValueOnce([
-      { id: 'model-1', name: 'GPT-4' },
-    ] as never);
-    mockGetSkillEvaluations.mockResolvedValueOnce([
-      { id: 'eval-1', name: 'Quality Check' },
-    ] as never);
+    mockGetAgentSkillReadiness.mockResolvedValue(readiness('skill-123', 1, 1));
 
     const { result } = renderHook(
       () => useSkillValidation(createMockSkill({ optimize: true })),
@@ -174,8 +166,7 @@ describe('useSkillValidation', () => {
       wrapper: createWrapper(),
     });
 
-    expect(mockGetSkillModels).not.toHaveBeenCalled();
-    expect(mockGetSkillEvaluations).not.toHaveBeenCalled();
+    expect(mockGetAgentSkillReadiness).not.toHaveBeenCalled();
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isReady).toBe(false);
     expect(result.current.modelsCount).toBe(0);
@@ -187,29 +178,26 @@ describe('useSkillValidation', () => {
       wrapper: createWrapper(),
     });
 
-    expect(mockGetSkillModels).not.toHaveBeenCalled();
-    expect(mockGetSkillEvaluations).not.toHaveBeenCalled();
+    expect(mockGetAgentSkillReadiness).not.toHaveBeenCalled();
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isReady).toBe(false);
   });
 
-  it('calls APIs with correct skill_id', async () => {
-    mockGetSkillModels.mockResolvedValueOnce([]);
-    mockGetSkillEvaluations.mockResolvedValueOnce([]);
+  it('asks the skill’s agent once, not the skill', async () => {
+    mockGetAgentSkillReadiness.mockResolvedValue(readiness('skill-xyz', 0, 0));
 
     renderHook(() => useSkillValidation(createMockSkill({ id: 'skill-xyz' })), {
       wrapper: createWrapper(),
     });
 
     await waitFor(() => {
-      expect(mockGetSkillModels).toHaveBeenCalledWith('skill-xyz');
-      expect(mockGetSkillEvaluations).toHaveBeenCalledWith('skill-xyz');
+      expect(mockGetAgentSkillReadiness).toHaveBeenCalledWith('agent-123');
     });
+    expect(mockGetAgentSkillReadiness).toHaveBeenCalledTimes(1);
   });
 
   it('shows multiple missing requirements when both are missing', async () => {
-    mockGetSkillModels.mockResolvedValueOnce([]);
-    mockGetSkillEvaluations.mockResolvedValueOnce([]);
+    mockGetAgentSkillReadiness.mockResolvedValue(readiness('skill-123', 0, 0));
 
     const { result } = renderHook(
       () => useSkillValidation(createMockSkill({ optimize: true })),
@@ -231,15 +219,7 @@ describe('useSkillValidation', () => {
   });
 
   it('counts multiple models and evaluations correctly', async () => {
-    mockGetSkillModels.mockResolvedValueOnce([
-      { id: 'model-1' },
-      { id: 'model-2' },
-      { id: 'model-3' },
-    ] as never);
-    mockGetSkillEvaluations.mockResolvedValueOnce([
-      { id: 'eval-1' },
-      { id: 'eval-2' },
-    ] as never);
+    mockGetAgentSkillReadiness.mockResolvedValue(readiness('skill-123', 3, 2));
 
     const { result } = renderHook(
       () => useSkillValidation(createMockSkill({ optimize: true })),
@@ -255,27 +235,27 @@ describe('useSkillValidation', () => {
     expect(result.current.isReady).toBe(true);
   });
 
-  it('shows loading while either query is pending', () => {
-    // Models resolve immediately, evaluations never resolve
-    mockGetSkillModels.mockResolvedValueOnce([{ id: 'model-1' }] as never);
-    mockGetSkillEvaluations.mockImplementation(
-      () =>
-        new Promise(() => {
-          // Never resolves - simulates loading state
-        }),
+  it('reads as not ready for a skill the answer does not name', async () => {
+    // A skill created since the agent was last asked: nothing is known about
+    // it, and "nothing" is what not ready looks like.
+    mockGetAgentSkillReadiness.mockResolvedValue(
+      readiness('other-skill', 1, 1),
     );
 
     const { result } = renderHook(() => useSkillValidation(createMockSkill()), {
       wrapper: createWrapper(),
     });
 
-    // Should remain loading until both queries complete
-    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isReady).toBe(false);
+    expect(result.current.modelsCount).toBe(0);
   });
 
   it('does not require evaluations when optimization is disabled', async () => {
-    mockGetSkillModels.mockResolvedValueOnce([{ id: 'model-1' }] as never);
-    mockGetSkillEvaluations.mockResolvedValueOnce([]);
+    mockGetAgentSkillReadiness.mockResolvedValue(readiness('skill-123', 1, 0));
 
     const { result } = renderHook(
       () => useSkillValidation(createMockSkill({ optimize: false })),

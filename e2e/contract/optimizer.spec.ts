@@ -1,4 +1,4 @@
-import { type APIRequestContext, expect, test } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
 import {
   AGENTS_PATH,
   type Agent,
@@ -8,6 +8,7 @@ import {
   getSkillRoutings,
   uniqueAgentName,
 } from '../fixtures/agents';
+import { recordModel } from '../fixtures/cleanup';
 import {
   CHAT_COMPLETIONS_PATH,
   chatBody,
@@ -41,6 +42,7 @@ import {
   SKILLS_PATH,
   type Skill,
 } from '../fixtures/skills';
+import { expect, test } from '../fixtures/test';
 
 /**
  * The self-optimization loop, running for real against the stub provider.
@@ -1100,6 +1102,7 @@ test.describe('response review', () => {
     });
     expect(guardModel.status()).toBe(201);
     const { id: guardModelId } = (await guardModel.json()) as { id: string };
+    recordModel(guardModelId);
 
     guardScope = `${scope}-guard`;
     const guard = await servingAgent(request, guardScope, guardModelId);

@@ -103,6 +103,7 @@ const mockUserDataStorageConnector = {
   deleteDataset: vi.fn(),
   // Log methods (required by interface)
   getLogs: vi.fn(),
+  getLogSummaries: vi.fn(),
   deleteLog: vi.fn(),
   // Dataset-Log Bridge methods (required by interface)
   getDatasetLogs: vi.fn(),
@@ -131,6 +132,7 @@ const mockUserDataStorageConnector = {
   deleteModel: vi.fn(),
   // Skill-Model relationship methods
   getSkillModels: vi.fn(),
+  getSkillReadiness: vi.fn(),
   getSkillsByModelId: vi.fn(),
   addModelsToSkill: vi.fn(),
   removeModelsFromSkill: vi.fn(),

@@ -1,5 +1,6 @@
 import type { APIRequestContext } from '@playwright/test';
 import { createAgent, uniqueAgentName } from './agents';
+import { recordModel, recordProvider, rememberSystemSettings } from './cleanup';
 import { STUB_URL, uniqueModelName } from './gateway';
 import { createSkill, SKILLS_PATH } from './skills';
 
@@ -70,6 +71,11 @@ export const setUpStubModels = async (
   const textModel = uniqueModelName(`${scope}-text`);
   const embeddingModel = uniqueModelName(`${scope}-embed`);
 
+  // Captured before the PATCH below, so the row this worker found is the row
+  // it leaves: the internal skills resolve through these, and the stub is not
+  // listening after the run.
+  await rememberSystemSettings(request);
+
   const provider = await post<{ id: string }>(request, PROVIDERS_PATH, {
     ai_provider: 'ollama',
     name: uniqueModelName(`${scope}-provider`),
@@ -91,6 +97,10 @@ export const setUpStubModels = async (
     model_type: 'embed',
     embedding_dimensions: 8,
   });
+
+  recordProvider(provider.id);
+  recordModel(text.id);
+  recordModel(embedding.id);
 
   const settings = await request.patch(SETTINGS_PATH, {
     data: {

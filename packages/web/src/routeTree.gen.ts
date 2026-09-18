@@ -25,6 +25,7 @@ import { Route as MainAiProvidersIdAddModelsRouteImport } from './routes/_main/a
 import { Route as MainAiProvidersIdEditRouteImport } from './routes/_main/ai-providers.$id.edit'
 import { Route as MainAgentsAgentNameLogsIndexRouteImport } from './routes/_main/agents.$agentName.logs.index'
 import { Route as MainAgentsAgentNameLogsLogIdRouteImport } from './routes/_main/agents.$agentName.logs.$logId'
+import { Route as MainAgentsAgentNameSkillsIndexRouteImport } from './routes/_main/agents.$agentName.skills.index'
 import { Route as MainAgentsAgentNameSkillsSkillNameRouteImport } from './routes/_main/agents.$agentName.skills.$skillName'
 import { Route as MainAgentsAgentNameSkillsCreateRouteImport } from './routes/_main/agents.$agentName.skills.create'
 import { Route as MainAgentsAgentNameSkillsSkillNameIndexRouteImport } from './routes/_main/agents.$agentName.skills.$skillName.index'
@@ -151,6 +152,16 @@ const MainAgentsAgentNameLogsLogIdRoute =
     getParentRoute: () => MainAgentsAgentNameLogsRoute,
   } as any).lazy(() =>
     import('./routes/_main/agents.$agentName.logs.$logId.lazy').then(
+      (d) => d.Route,
+    ),
+  )
+const MainAgentsAgentNameSkillsIndexRoute =
+  MainAgentsAgentNameSkillsIndexRouteImport.update({
+    id: '/skills/',
+    path: '/skills/',
+    getParentRoute: () => MainAgentsAgentNameRoute,
+  } as any).lazy(() =>
+    import('./routes/_main/agents.$agentName.skills.index.lazy').then(
       (d) => d.Route,
     ),
   )
@@ -322,6 +333,7 @@ export interface FileRoutesByFullPath {
   '/agents/$agentName/skills/$skillName': typeof MainAgentsAgentNameSkillsSkillNameRouteWithChildren
   '/agents/$agentName/skills/create': typeof MainAgentsAgentNameSkillsCreateRoute
   '/agents/$agentName/logs/': typeof MainAgentsAgentNameLogsIndexRoute
+  '/agents/$agentName/skills/': typeof MainAgentsAgentNameSkillsIndexRoute
   '/agents/$agentName/skills/$skillName/edit': typeof MainAgentsAgentNameSkillsSkillNameEditRoute
   '/agents/$agentName/skills/$skillName/evaluations': typeof MainAgentsAgentNameSkillsSkillNameEvaluationsRouteWithChildren
   '/agents/$agentName/skills/$skillName/events': typeof MainAgentsAgentNameSkillsSkillNameEventsRoute
@@ -353,6 +365,7 @@ export interface FileRoutesByTo {
   '/agents/$agentName/logs/$logId': typeof MainAgentsAgentNameLogsLogIdRoute
   '/agents/$agentName/skills/create': typeof MainAgentsAgentNameSkillsCreateRoute
   '/agents/$agentName/logs': typeof MainAgentsAgentNameLogsIndexRoute
+  '/agents/$agentName/skills': typeof MainAgentsAgentNameSkillsIndexRoute
   '/agents/$agentName/skills/$skillName/edit': typeof MainAgentsAgentNameSkillsSkillNameEditRoute
   '/agents/$agentName/skills/$skillName/events': typeof MainAgentsAgentNameSkillsSkillNameEventsRoute
   '/agents/$agentName/skills/$skillName/setup': typeof MainAgentsAgentNameSkillsSkillNameSetupRoute
@@ -386,6 +399,7 @@ export interface FileRoutesById {
   '/_main/agents/$agentName/skills/$skillName': typeof MainAgentsAgentNameSkillsSkillNameRouteWithChildren
   '/_main/agents/$agentName/skills/create': typeof MainAgentsAgentNameSkillsCreateRoute
   '/_main/agents/$agentName/logs/': typeof MainAgentsAgentNameLogsIndexRoute
+  '/_main/agents/$agentName/skills/': typeof MainAgentsAgentNameSkillsIndexRoute
   '/_main/agents/$agentName/skills/$skillName/edit': typeof MainAgentsAgentNameSkillsSkillNameEditRoute
   '/_main/agents/$agentName/skills/$skillName/evaluations': typeof MainAgentsAgentNameSkillsSkillNameEvaluationsRouteWithChildren
   '/_main/agents/$agentName/skills/$skillName/events': typeof MainAgentsAgentNameSkillsSkillNameEventsRoute
@@ -422,6 +436,7 @@ export interface FileRouteTypes {
     | '/agents/$agentName/skills/$skillName'
     | '/agents/$agentName/skills/create'
     | '/agents/$agentName/logs/'
+    | '/agents/$agentName/skills/'
     | '/agents/$agentName/skills/$skillName/edit'
     | '/agents/$agentName/skills/$skillName/evaluations'
     | '/agents/$agentName/skills/$skillName/events'
@@ -453,6 +468,7 @@ export interface FileRouteTypes {
     | '/agents/$agentName/logs/$logId'
     | '/agents/$agentName/skills/create'
     | '/agents/$agentName/logs'
+    | '/agents/$agentName/skills'
     | '/agents/$agentName/skills/$skillName/edit'
     | '/agents/$agentName/skills/$skillName/events'
     | '/agents/$agentName/skills/$skillName/setup'
@@ -485,6 +501,7 @@ export interface FileRouteTypes {
     | '/_main/agents/$agentName/skills/$skillName'
     | '/_main/agents/$agentName/skills/create'
     | '/_main/agents/$agentName/logs/'
+    | '/_main/agents/$agentName/skills/'
     | '/_main/agents/$agentName/skills/$skillName/edit'
     | '/_main/agents/$agentName/skills/$skillName/evaluations'
     | '/_main/agents/$agentName/skills/$skillName/events'
@@ -621,6 +638,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/agents/$agentName/logs/$logId'
       preLoaderRoute: typeof MainAgentsAgentNameLogsLogIdRouteImport
       parentRoute: typeof MainAgentsAgentNameLogsRoute
+    }
+    '/_main/agents/$agentName/skills/': {
+      id: '/_main/agents/$agentName/skills/'
+      path: '/skills'
+      fullPath: '/agents/$agentName/skills/'
+      preLoaderRoute: typeof MainAgentsAgentNameSkillsIndexRouteImport
+      parentRoute: typeof MainAgentsAgentNameRoute
     }
     '/_main/agents/$agentName/skills/$skillName': {
       id: '/_main/agents/$agentName/skills/$skillName'
@@ -871,6 +895,7 @@ interface MainAgentsAgentNameRouteChildren {
   MainAgentsAgentNameIndexRoute: typeof MainAgentsAgentNameIndexRoute
   MainAgentsAgentNameSkillsSkillNameRoute: typeof MainAgentsAgentNameSkillsSkillNameRouteWithChildren
   MainAgentsAgentNameSkillsCreateRoute: typeof MainAgentsAgentNameSkillsCreateRoute
+  MainAgentsAgentNameSkillsIndexRoute: typeof MainAgentsAgentNameSkillsIndexRoute
 }
 
 const MainAgentsAgentNameRouteChildren: MainAgentsAgentNameRouteChildren = {
@@ -880,6 +905,7 @@ const MainAgentsAgentNameRouteChildren: MainAgentsAgentNameRouteChildren = {
   MainAgentsAgentNameSkillsSkillNameRoute:
     MainAgentsAgentNameSkillsSkillNameRouteWithChildren,
   MainAgentsAgentNameSkillsCreateRoute: MainAgentsAgentNameSkillsCreateRoute,
+  MainAgentsAgentNameSkillsIndexRoute: MainAgentsAgentNameSkillsIndexRoute,
 }
 
 const MainAgentsAgentNameRouteWithChildren =

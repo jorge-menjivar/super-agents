@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import {
   AGENTS_PATH,
   createAgent,
@@ -15,6 +15,7 @@ import {
   uniqueModelName,
 } from '../fixtures/gateway';
 import { createSkill } from '../fixtures/skills';
+import { expect, test } from '../fixtures/test';
 
 test.describe('agents dashboard', () => {
   test('redirects the root to the agents list when auth is disabled', async ({

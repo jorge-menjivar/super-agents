@@ -1,4 +1,3 @@
-import { expect, test } from '@playwright/test';
 import { createAgent, deleteAgent, uniqueAgentName } from '../fixtures/agents';
 import {
   CHAT_COMPLETIONS_PATH,
@@ -8,6 +7,7 @@ import {
   uniqueModelName,
 } from '../fixtures/gateway';
 import { createSkill } from '../fixtures/skills';
+import { expect, test } from '../fixtures/test';
 
 const LOGS_PATH = '/v1/super-agents/observability/logs';
 const FEEDBACKS_PATH = '/v1/super-agents/feedbacks';

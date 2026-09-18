@@ -1,6 +1,7 @@
-import { expect, type Page, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { createAgent, deleteAgent, uniqueAgentName } from '../fixtures/agents';
 import { createSkill, SKILLS_PATH } from '../fixtures/skills';
+import { expect, test } from '../fixtures/test';
 
 /**
  * Editing an evaluation's optional parameters, in a real browser.
