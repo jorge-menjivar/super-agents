@@ -44,6 +44,7 @@ import { useSkillOptimizationEvaluations } from '@web/providers/skill-optimizati
 import { useSkills } from '@web/providers/skills';
 import { createArmAvatar, createClusterAvatar } from '@web/utils/avatars';
 import { scoreRangeForWindow } from '@web/utils/chart-window';
+import { buttonLike } from '@web/utils/ui/button-like';
 import {
   ArrowUpDown,
   BoxIcon,
@@ -778,7 +779,6 @@ export function ClusterArmsView(): ReactElement {
                 return (
                   <Card
                     key={arm.id}
-                    className="hover:shadow-lg hover:border-primary/50 transition-all cursor-pointer"
                     style={
                       colorizeMode !== 'none'
                         ? {
@@ -790,17 +790,27 @@ export function ClusterArmsView(): ReactElement {
                           }
                         : undefined
                     }
-                    onClick={() =>
-                      selectedAgent &&
-                      selectedSkill &&
-                      selectedCluster &&
-                      navigateToArmDetail(
-                        selectedAgent.name,
-                        selectedSkill.name,
-                        selectedCluster.name,
-                        arm.name,
-                      )
-                    }
+                    {...buttonLike({
+                      onActivate: () => {
+                        if (
+                          !selectedAgent ||
+                          !selectedSkill ||
+                          !selectedCluster
+                        )
+                          return;
+                        navigateToArmDetail(
+                          selectedAgent.name,
+                          selectedSkill.name,
+                          selectedCluster.name,
+                          arm.name,
+                        );
+                      },
+                      // The card holds a chart, and a button is named by what
+                      // is inside it unless it says otherwise.
+                      label: `Configuration ${arm.name}`,
+                      className:
+                        'hover:shadow-lg hover:border-primary/50 transition-all cursor-pointer',
+                    })}
                   >
                     <CardHeader>
                       <CardTitle className="text-lg leading-none mb-2 flex items-center gap-2">

@@ -266,6 +266,43 @@ describe('SkillsView', () => {
     });
   });
 
+  /**
+   * A card that is only a div with an onClick can be reached by pointer and
+   * by nothing else: not by Tab, not by Enter, and not by a browser driven
+   * from the keyboard, which looks for controls and finds none -- React
+   * delegates the click at the document root, leaving no `onclick` in the
+   * DOM to see.
+   */
+  it('makes every card a control, named rather than read out whole', async () => {
+    renderWithProviders(<SkillsView />);
+
+    const card = await screen.findByRole('button', {
+      name: 'Chat Support skill',
+    });
+    expect(card).toHaveAttribute('tabindex', '0');
+
+    card.focus();
+    expect(card).toHaveFocus();
+  });
+
+  it('opens a skill from the keyboard', async () => {
+    const { user } = renderWithProviders(<SkillsView />);
+
+    const card = await screen.findByRole('button', {
+      name: 'Chat Support skill',
+    });
+    card.focus();
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(routerMockState.navigate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: '/agents/Test%20Agent/skills/Chat%20Support',
+        }),
+      );
+    });
+  });
+
   describe('without skills', () => {
     beforeEach(() => {
       vi.mocked(useSkills).mockReturnValue(

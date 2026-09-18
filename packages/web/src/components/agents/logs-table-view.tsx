@@ -7,7 +7,7 @@ import {
   LogEvalScore,
   LogFunction,
   LogModel,
-  LogStatusBadge,
+  LogRowHandle,
 } from '@web/components/agents/log-cells';
 import { Badge } from '@web/components/ui/badge';
 import { Button } from '@web/components/ui/button';
@@ -273,7 +273,10 @@ export function LogsTableView({
                         onClick={() => onLogClick(log)}
                       >
                         <TableCell>
-                          <LogStatusBadge log={log} />
+                          <LogRowHandle
+                            log={log}
+                            onSelect={() => onLogClick(log)}
+                          />
                         </TableCell>
                         <TableCell>
                           <LogEvalScore log={log} />

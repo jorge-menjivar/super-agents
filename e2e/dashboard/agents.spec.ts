@@ -274,6 +274,88 @@ test.describe('live updates', () => {
   });
 });
 
+/**
+ * The dashboard reached without a mouse.
+ *
+ * A `<Card onClick>` is a div wearing a pointer cursor: it cannot be tabbed
+ * to, Enter does nothing on it, and a keyboard-driven browser cannot find it
+ * at all, because React delegates the click at the document root and leaves
+ * no `onclick` in the DOM to see. Only a real browser can tell the difference,
+ * so this is checked here rather than in the component tests.
+ */
+test.describe('reaching the dashboard from the keyboard', () => {
+  test('opens a skill from its card, and a request from its row', async ({
+    page,
+    request,
+  }) => {
+    const name = uniqueAgentName('keyboard');
+    const agent = await createAgent(request, name);
+    const model = uniqueModelName('keyboard');
+
+    try {
+      await createSkill(request, agent.id, 'keyboard_skill');
+      const answered = await request.post(CHAT_COMPLETIONS_PATH, {
+        headers: { 'sa-config': saConfig(name, 'keyboard_skill', { model }) },
+        data: chatBody('leave a log behind'),
+      });
+      expect(answered.status()).toBe(200);
+
+      // The skills page: every card is a control with a name of its own,
+      // rather than one named by the chart inside it.
+      await page.goto(`/agents/${name}/skills`);
+      const card = page.getByRole('button', { name: 'keyboard_skill skill' });
+      await expect(card).toBeVisible();
+
+      await card.focus();
+      await expect(card).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(
+        new RegExp(`/agents/${name}/skills/keyboard_skill$`),
+      );
+
+      // The agent dashboard: the logs card is not itself a control, and each
+      // row opens the request it describes.
+      await page.goto(`/agents/${name}`);
+      await expect(
+        page.getByRole('button', { name: /view all/i }),
+      ).toBeVisible();
+
+      const row = page.getByRole('button', { name: /chat_complete at .*200/ });
+      await expect(row).toBeVisible();
+      await row.focus();
+      await expect(row).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(
+        new RegExp(`/agents/${name}/logs/[0-9a-f-]+$`),
+      );
+
+      // The logs page itself: its rows were the same div with an onClick.
+      await page.goto(`/agents/${name}/logs`);
+      const listed = page
+        .getByRole('button', { name: /chat_complete at .*200/ })
+        .first();
+      await expect(listed).toBeVisible();
+      await listed.focus();
+      await expect(listed).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(
+        new RegExp(`/agents/${name}/logs/[0-9a-f-]+$`),
+      );
+
+      // And the agents list, which every visitor lands on first.
+      await page.goto('/agents');
+      const agentCard = page.getByRole('button', { name: `${name} agent` });
+      await expect(agentCard).toBeVisible();
+      await agentCard.focus();
+      await expect(agentCard).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(new RegExp(`/agents/${name}$`));
+    } finally {
+      await deleteAgent(request, agent.id);
+    }
+  });
+});
+
 test.describe('log page', () => {
   test('shows every hook that judged the request, and the answer one withheld', async ({
     page,

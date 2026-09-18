@@ -37,6 +37,7 @@ import {
   type TimeInterval,
 } from '@web/utils/chart-interval';
 import { scoreRangeForWindow } from '@web/utils/chart-window';
+import { buttonLike } from '@web/utils/ui/button-like';
 import { Clock, PlusIcon, SearchIcon } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import type { ReactElement } from 'react';
@@ -279,8 +280,14 @@ export function SkillsView(): ReactElement {
             {filteredSkills.map((skill) => (
               <Card
                 key={skill.id}
-                className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all"
-                onClick={() => handleSkillSelect(skill)}
+                {...buttonLike({
+                  onActivate: () => handleSkillSelect(skill),
+                  // The card holds a chart, and a button is named by what is
+                  // inside it unless it says otherwise.
+                  label: `${skill.name} skill`,
+                  className:
+                    'cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all',
+                })}
               >
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2 mb-2">

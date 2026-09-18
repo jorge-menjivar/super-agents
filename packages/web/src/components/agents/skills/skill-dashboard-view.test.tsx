@@ -377,6 +377,46 @@ describe('SkillDashboardView', () => {
     expect(screen.getByText('4.0s')).toBeInTheDocument();
   });
 
+  /**
+   * Every card here used to be one large div with an onClick: reachable by
+   * pointer and by nothing else, since React delegates the click at the
+   * document root and leaves no `onclick` in the DOM to find.
+   */
+  it('gives the cards that go somewhere a control to go by', async () => {
+    vi.mocked(useRecentLogs).mockReturnValue({
+      isLoading: false,
+      logs: [
+        {
+          id: 'log-done',
+          cluster_id: 'cluster-1',
+          function_name: 'chat_complete',
+          model: 'glm-5.3',
+          status: 200,
+          start_time: new Date('2026-09-03T10:15:30Z').getTime(),
+          end_time: new Date('2026-09-03T10:15:31Z').getTime(),
+          duration: 900,
+          avg_eval_score: 0.91,
+        },
+      ],
+    } as unknown as never);
+
+    renderWithProviders(<SkillDashboardView />);
+
+    // Two ways out, one per card, rather than two cards that swallow a click.
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /view all/i }).length).toBe(
+        2,
+      );
+    });
+
+    // And a request opens from its own row.
+    const row = screen.getByRole('button', {
+      name: /chat_complete at .*200/i,
+    });
+    row.focus();
+    expect(row).toHaveFocus();
+  });
+
   it('shows no skill selected message when skill is not available', async () => {
     vi.mocked(useSkills).mockReturnValue({
       selectedSkill: null,

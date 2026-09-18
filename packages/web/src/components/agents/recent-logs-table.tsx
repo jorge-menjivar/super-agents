@@ -7,6 +7,7 @@ import {
   LogEvalScore,
   LogFunction,
   LogModel,
+  LogRowHandle,
   LogStatusBadge,
 } from '@web/components/agents/log-cells';
 import {
@@ -18,6 +19,7 @@ import {
   TableRow,
 } from '@web/components/ui/table';
 import { formatClockTime } from '@web/utils/time';
+import { cn } from '@web/utils/ui/utils';
 import type { ReactElement, ReactNode } from 'react';
 
 /**
@@ -40,12 +42,18 @@ export interface RecentLogsTableProps {
   };
   /** How many rows the card has room for. */
   limit?: number;
+  /**
+   * Opens one request. Given one, each row is a way into its own log rather
+   * than five lines of text under a card that goes somewhere else.
+   */
+  onLogSelect?: (log: LogSummary) => void;
 }
 
 export function RecentLogsTable({
   logs,
   context,
   limit = 5,
+  onLogSelect,
 }: RecentLogsTableProps): ReactElement {
   return (
     <Table>
@@ -64,15 +72,21 @@ export function RecentLogsTable({
         {logs.slice(0, limit).map((log) => (
           <TableRow
             key={log.id}
-            className={
+            className={cn(
               isRunning(log)
                 ? 'bg-muted/30 hover:bg-muted/30'
-                : 'hover:bg-transparent'
-            }
+                : 'hover:bg-transparent',
+              onLogSelect && 'cursor-pointer hover:bg-muted/50',
+            )}
             data-testid={isRunning(log) ? 'running-log-row' : undefined}
+            onClick={onLogSelect ? () => onLogSelect(log) : undefined}
           >
             <TableCell>
-              <LogStatusBadge log={log} />
+              {onLogSelect ? (
+                <LogRowHandle log={log} onSelect={() => onLogSelect(log)} />
+              ) : (
+                <LogStatusBadge log={log} />
+              )}
             </TableCell>
             <TableCell>
               <LogEvalScore log={log} />

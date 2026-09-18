@@ -287,7 +287,32 @@ export function AIProvidersListView({
                         onClick={() => onProviderSelect?.(apiKey.id)}
                       >
                         <TableCell className="font-medium">
-                          {apiKey.name}
+                          {onProviderSelect ? (
+                            /**
+                             * The name is the row's handle rather than the row
+                             * itself: a `tr` is a row, and calling it a button
+                             * would take the table apart for anyone reading it
+                             * as one. It has to be a real control all the same
+                             * -- React delegates the row's own click at the
+                             * document root, leaving no `onclick` in the DOM
+                             * for a keyboard-driven browser to find.
+                             */
+                            <button
+                              type="button"
+                              aria-label={`Show the models of ${apiKey.name}`}
+                              aria-pressed={selectedProviderId === apiKey.id}
+                              className="rounded-md text-left outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                              onClick={(event) => {
+                                // The row selects the same provider.
+                                event.stopPropagation();
+                                onProviderSelect(apiKey.id);
+                              }}
+                            >
+                              {apiKey.name}
+                            </button>
+                          ) : (
+                            apiKey.name
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge
