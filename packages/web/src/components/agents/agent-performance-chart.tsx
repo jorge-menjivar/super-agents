@@ -411,7 +411,9 @@ export function AgentPerformanceChart({
         },
       },
       title: {
-        display: true,
+        // The card above the chart already names it; an empty title is how a
+        // caller says so rather than drawing it twice.
+        display: title !== '',
         text: title,
         font: {
           size: 12,

@@ -46,6 +46,7 @@ import {
 } from '@shared/types/data/model';
 import type { SkillQueryParams } from '@shared/types/data/skill';
 import {
+  type RecentSkill,
   Skill,
   type SkillCreateParams,
   type SkillReadiness,
@@ -688,6 +689,51 @@ export const supabaseUserDataStorageConnector: UserDataStorageConnector = {
       model_count: models.get(id) ?? 0,
       evaluation_count: evaluations.get(id) ?? 0,
     }));
+  },
+
+  /**
+   * One read, because PostgREST can limit an embedded resource: the agent's
+   * skills, each with the single newest of its logs. The ordering is done
+   * here rather than by the database, since the column it sorts on lives
+   * inside the embed.
+   */
+  getRecentSkills: async (
+    c: AppContext,
+    agentId: string,
+    limit: number,
+  ): Promise<RecentSkill[]> => {
+    const skills = await selectFromSupabase(
+      c,
+      'skills',
+      {
+        agent_id: `eq.${agentId}`,
+        select: 'id,name,logs(start_time)',
+        'logs.order': 'start_time.desc',
+        'logs.limit': '1',
+      },
+      z.array(
+        z.object({
+          id: z.uuid(),
+          name: z.string(),
+          logs: z.array(z.object({ start_time: z.number() })),
+        }),
+      ),
+    );
+
+    return skills
+      .flatMap((skill) =>
+        skill.logs.length === 0
+          ? []
+          : [
+              {
+                skill_id: skill.id,
+                name: skill.name,
+                last_used_at: skill.logs[0].start_time,
+              },
+            ],
+      )
+      .sort((a, b) => b.last_used_at - a.last_used_at)
+      .slice(0, limit);
   },
 
   getSkillsByModelId: async (

@@ -7,6 +7,7 @@ import { getAgentEvaluationScoresByTimeBucket } from '@web/api/v1/super-agents/a
 import { getSkillEvents } from '@web/api/v1/super-agents/skill-events';
 import { AgentPerformanceChart } from '@web/components/agents/agent-performance-chart';
 import { AgentRecentLogsCard } from '@web/components/agents/agent-recent-logs-card';
+import { AgentSkillsCard } from '@web/components/agents/agent-skills-card';
 import { AgentStatusIndicator } from '@web/components/agents/agent-status-indicator';
 import { DeleteAgentDialog } from '@web/components/agents/delete-agent-dialog';
 import { ManageAgentModelsDialog } from '@web/components/agents/manage-agent-models-dialog';
@@ -35,7 +36,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@web/components/ui/tooltip';
-import { useAgentUnreadySkills } from '@web/hooks/use-agent-unready-skills';
 import { useAgentValidation } from '@web/hooks/use-agent-validation';
 import { usePermissiveNavigate } from '@web/hooks/use-permissive-navigate';
 import { useAgents } from '@web/providers/agents';
@@ -57,7 +57,6 @@ import {
   EyeOffIcon,
   LayersIcon,
   MoreVertical,
-  PlusIcon,
   ScrollTextIcon,
   Trash2,
 } from 'lucide-react';
@@ -114,9 +113,6 @@ export function AgentView(): ReactElement {
     !!selectedAgent?.auto_create_skills &&
     !isLoadingValidation &&
     defaultModelsCount === 0;
-  // Already answered for the sidebar's mark on this agent, so the card below
-  // costs nothing to fill in.
-  const { unreadySkillsCount } = useAgentUnreadySkills(selectedAgent);
 
   const [selectedInterval, setSelectedInterval] = useState<TimeInterval>(() =>
     storedInterval(INTERVAL_KEY),
@@ -152,12 +148,8 @@ export function AgentView(): ReactElement {
   // End time for charts (defaults to now)
   const [endTime, setEndTime] = useState<Date>(() => new Date());
 
-  // Use providers
-  const {
-    skills,
-    isLoading: isLoadingSkills,
-    setQueryParams: setSkillQueryParams,
-  } = useSkills();
+  // The chart's legend: every skill of the agent, named and coloured.
+  const { skills, setQueryParams: setSkillQueryParams } = useSkills();
 
   // Update skills query params when agent changes
   useEffect(() => {
@@ -216,14 +208,6 @@ export function AgentView(): ReactElement {
     if (selectedAgent) {
       navigate({
         to: `/agents/${encodeURIComponent(selectedAgent.name)}/skills`,
-      });
-    }
-  };
-
-  const handleCreateSkill = () => {
-    if (selectedAgent) {
-      navigate({
-        to: `/agents/${encodeURIComponent(selectedAgent.name)}/skills/create`,
       });
     }
   };
@@ -356,168 +340,130 @@ export function AgentView(): ReactElement {
           </Alert>
         )}
 
-        {/* Agent Performance Chart */}
-        <Card>
-          <CardHeader className="pb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <BarChart3Icon className="h-5 w-5 text-muted-foreground" />
-              <CardTitle className="text-lg">Agent Performance</CardTitle>
-            </div>
-            <CardDescription className="mb-4">
-              Performance metrics across all skills for this agent
-            </CardDescription>
-            <div className="flex justify-between items-start gap-4">
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="flex items-center gap-2">
-                        <DateTimePicker
-                          date={endTime}
-                          onDateChange={setEndTime}
-                        />
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>
-                        Select the end time for the chart (rightmost data point)
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={() => setEndTime(new Date())}
-                      >
-                        <Clock className="h-4 w-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>Jump to current time</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        aria-pressed={showQuietSkills}
-                        aria-label="Skills with no scores in this window"
-                        onClick={() => setShowQuietSkills((shown) => !shown)}
-                      >
-                        {showQuietSkills ? (
-                          <EyeIcon className="h-4 w-4" />
-                        ) : (
-                          <EyeOffIcon className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>
-                        {showQuietSkills
-                          ? 'Hide the skills that scored nothing in this window, whose lines are carried from an older score'
-                          : 'Show the skills that scored nothing in this window, carried from their last score'}
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
+        {/* The chart, and the skills whose scores it draws, side by side */}
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <Card className="flex h-full flex-col xl:col-span-2">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <BarChart3Icon className="h-5 w-5 text-muted-foreground" />
+                <CardTitle className="text-lg">Agent Performance</CardTitle>
+              </div>
+              <CardDescription className="mb-3">
+                How every skill of this agent has been scoring
+              </CardDescription>
+              <div className="flex flex-wrap justify-between items-start gap-4">
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-2">
+                          <DateTimePicker
+                            date={endTime}
+                            onDateChange={setEndTime}
+                          />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        <p>
+                          Select the end time for the chart (rightmost data
+                          point)
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setEndTime(new Date())}
+                        >
+                          <Clock className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        <p>Jump to current time</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          aria-pressed={showQuietSkills}
+                          aria-label="Skills with no scores in this window"
+                          onClick={() => setShowQuietSkills((shown) => !shown)}
+                        >
+                          {showQuietSkills ? (
+                            <EyeIcon className="h-4 w-4" />
+                          ) : (
+                            <EyeOffIcon className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        <p>
+                          {showQuietSkills
+                            ? 'Hide the skills that scored nothing in this window, whose lines are carried from an older score'
+                            : 'Show the skills that scored nothing in this window, carried from their last score'}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                 </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <ToggleGroup
+                      type="single"
+                      value={selectedInterval}
+                      onValueChange={(value) => {
+                        if (value) setSelectedInterval(value as TimeInterval);
+                      }}
+                      size="sm"
+                      className="border rounded-lg gap-0 overflow-hidden"
+                    >
+                      {TIME_INTERVALS.map((interval) => (
+                        <ToggleGroupItem
+                          key={interval}
+                          value={interval}
+                          aria-label={`Toggle ${INTERVAL_CONFIG[interval].label} interval`}
+                          className="text-xs rounded-none"
+                        >
+                          {INTERVAL_CONFIG[interval].label}
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p>Select time interval for chart buckets</p>
+                  </TooltipContent>
+                </Tooltip>
               </div>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ToggleGroup
-                    type="single"
-                    value={selectedInterval}
-                    onValueChange={(value) => {
-                      if (value) setSelectedInterval(value as TimeInterval);
-                    }}
-                    size="sm"
-                    className="border rounded-lg gap-0 overflow-hidden"
-                  >
-                    {TIME_INTERVALS.map((interval) => (
-                      <ToggleGroupItem
-                        key={interval}
-                        value={interval}
-                        aria-label={`Toggle ${INTERVAL_CONFIG[interval].label} interval`}
-                        className="text-xs rounded-none"
-                      >
-                        {INTERVAL_CONFIG[interval].label}
-                      </ToggleGroupItem>
-                    ))}
-                  </ToggleGroup>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>Select time interval for chart buckets</p>
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {isLoadingAgentEvaluationScores ? (
-              <div className="h-64 flex items-center justify-center">
-                <Skeleton className="h-full w-full" />
-              </div>
-            ) : (
-              <AgentPerformanceChart
-                evaluationScores={agentEvaluationScores}
-                events={agentEvents}
-                skills={skills}
-                intervalMinutes={INTERVAL_CONFIG[selectedInterval].minutes}
-                windowHours={INTERVAL_CONFIG[selectedInterval].hours}
-                endTime={endTime}
-                showQuietSkills={showQuietSkills}
-              />
-            )}
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="flex-1">
+              {isLoadingAgentEvaluationScores ? (
+                <div className="h-64 flex items-center justify-center">
+                  <Skeleton className="h-full w-full" />
+                </div>
+              ) : (
+                <AgentPerformanceChart
+                  title=""
+                  evaluationScores={agentEvaluationScores}
+                  events={agentEvents}
+                  skills={skills}
+                  intervalMinutes={INTERVAL_CONFIG[selectedInterval].minutes}
+                  windowHours={INTERVAL_CONFIG[selectedInterval].hours}
+                  endTime={endTime}
+                  showQuietSkills={showQuietSkills}
+                />
+              )}
+            </CardContent>
+          </Card>
+
+          <AgentSkillsCard />
+        </div>
 
         {/* Recent Logs across all skills */}
         <AgentRecentLogsCard />
-
-        {/* The skills themselves live on their own page */}
-        <Card
-          className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all"
-          onClick={handleViewSkills}
-        >
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <div>
-              <CardTitle className="text-base font-medium">Skills</CardTitle>
-              <CardDescription>
-                {isLoadingSkills
-                  ? 'Counting…'
-                  : skills.length === 0
-                    ? selectedAgent.auto_create_skills
-                      ? 'None yet — the first request to this agent makes one'
-                      : 'None yet'
-                    : `${skills.length} skill${skills.length === 1 ? '' : 's'}${
-                        unreadySkillsCount > 0
-                          ? `, ${unreadySkillsCount} not ready`
-                          : ''
-                      }`}
-              </CardDescription>
-            </div>
-            <LayersIcon className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handleViewSkills}>
-                View skills
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  handleCreateSkill();
-                }}
-              >
-                <PlusIcon className="h-4 w-4 mr-2" />
-                Create Skill
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       <DeleteAgentDialog

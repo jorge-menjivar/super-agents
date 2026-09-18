@@ -21,6 +21,7 @@ import {
   type ModelUpdateParams,
   mergeAgentOptions,
   mergeSystemSettingsOptions,
+  type RecentSkill,
   type Skill,
   type SkillCreateParams,
   type SkillEvent,
@@ -642,6 +643,38 @@ export const libsqlUserDataStorageConnector: UserDataStorageConnector = {
       optimize: Boolean(row.optimize),
       model_count: Number(row.model_count),
       evaluation_count: Number(row.evaluation_count),
+    }));
+  },
+
+  /**
+   * One index seek per skill: `idx_logs_skill_start_time` is
+   * `(skill_id, start_time DESC)`, so each `MAX(start_time)` reads the head
+   * of that skill's slice rather than scanning the agent's logs.
+   */
+  getRecentSkills: async (
+    c: AppContext,
+    agentId: string,
+    limit: number,
+  ): Promise<RecentSkill[]> => {
+    const result = await getLibsqlClient(c).execute({
+      sql: `SELECT skill_id, name, last_used_at
+            FROM (
+              SELECT s.id AS skill_id,
+                     s.name AS name,
+                     (SELECT MAX(l.start_time) FROM logs l
+                       WHERE l.skill_id = s.id) AS last_used_at
+              FROM skills s
+              WHERE s.agent_id = ?
+            )
+            WHERE last_used_at IS NOT NULL
+            ORDER BY last_used_at DESC
+            LIMIT ?`,
+      args: [agentId, limit],
+    });
+    return result.rows.map((row) => ({
+      skill_id: String(row.skill_id),
+      name: String(row.name),
+      last_used_at: Number(row.last_used_at),
     }));
   },
 

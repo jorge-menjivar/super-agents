@@ -37,6 +37,7 @@ import type {
   ModelUpdateParams,
 } from '@shared/types/data/model';
 import type {
+  RecentSkill,
   Skill,
   SkillCreateParams,
   SkillQueryParams,
@@ -218,6 +219,21 @@ export interface UserDataStorageConnector {
     c: AppContext,
     agentId: string,
   ): Promise<SkillReadiness[]> | SkillReadiness[];
+  /**
+   * The agent's skills that served most recently, newest first, at most
+   * `limit` of them. A skill that has never served is left out.
+   *
+   * Ordered by the last log each skill has, which is the only record of when
+   * a skill actually answered -- `total_requests` says how often and
+   * `updated_at` moves for clustering too. Both backends answer per skill
+   * rather than over a window of the agent's logs, so the two agree however
+   * long ago the fifth skill was last used.
+   */
+  getRecentSkills(
+    c: AppContext,
+    agentId: string,
+    limit: number,
+  ): Promise<RecentSkill[]> | RecentSkill[];
   getSkillsByModelId(
     c: AppContext,
     modelId: string,

@@ -106,6 +106,25 @@ export const SkillReadiness = z.object({
 
 export type SkillReadiness = z.infer<typeof SkillReadiness>;
 
+/**
+ * A skill of an agent and when it last served, for the dashboard's "recently
+ * used" list.
+ *
+ * The skill row does not know this: `total_requests` counts them and
+ * `updated_at` moves for clustering and edits alike, so the last time a skill
+ * actually answered is only in its logs. It is asked for per agent, five rows
+ * at a time, so that a card listing the newest few costs one small request
+ * rather than a page of skills and a page of logs.
+ */
+export const RecentSkill = z.object({
+  skill_id: z.uuid(),
+  name: z.string(),
+  /** Unix milliseconds: the `start_time` of the skill's most recent request. */
+  last_used_at: z.number(),
+});
+
+export type RecentSkill = z.infer<typeof RecentSkill>;
+
 export const SkillQueryParams = z
   .object({
     id: z.uuid().optional(),

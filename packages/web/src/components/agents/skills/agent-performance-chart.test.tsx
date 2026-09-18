@@ -252,6 +252,19 @@ describe('AgentPerformanceChart', () => {
     );
   });
 
+  it('draws no title at all when the caller gives an empty one', () => {
+    render(<AgentPerformanceChart evaluationScores={[]} title="" />);
+
+    const chart = screen.getByTestId('line-chart');
+    const chartOptions = JSON.parse(
+      chart.getAttribute('data-chart-options') || '{}',
+    );
+
+    // The card above the chart names it; drawing it again cost a heading's
+    // height on a page whose point is the chart.
+    expect(chartOptions.plugins.title.display).toBe(false);
+  });
+
   it('should display custom chart title when provided', () => {
     const customTitle = 'Custom Performance Chart';
     render(

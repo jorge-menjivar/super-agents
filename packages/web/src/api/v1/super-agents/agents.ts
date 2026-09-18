@@ -5,6 +5,7 @@ import {
   type AgentQueryParams,
   type AgentUpdateParams,
   Model,
+  RecentSkill,
   SkillOptimizationEvaluationRun,
   SkillReadiness,
 } from '@shared/types/data';
@@ -151,6 +152,25 @@ export async function getAgentSkillReadiness(
   }
 
   return SkillReadiness.array().parse(await response.json());
+}
+
+/**
+ * The agent's skills that served most recently, newest first: names and
+ * times, not the skill rows, which carry the prompts they were seeded from.
+ */
+export async function getAgentRecentSkills(
+  agentId: string,
+  limit: number,
+): Promise<RecentSkill[]> {
+  const response = await client.v1['super-agents'].agents[':agentId'][
+    'recent-skills'
+  ].$get({ param: { agentId }, query: { limit: String(limit) } });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch recent skills for agent');
+  }
+
+  return RecentSkill.array().parse(await response.json());
 }
 
 export async function getAgentModels(agentId: string): Promise<Model[]> {

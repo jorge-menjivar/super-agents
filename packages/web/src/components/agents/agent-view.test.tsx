@@ -23,6 +23,7 @@ vi.mock('@web/api/v1/super-agents/agents', () => ({
   getAgents: vi.fn(),
   getAgentModels: vi.fn().mockResolvedValue([]),
   getAgentSkillReadiness: vi.fn().mockResolvedValue([]),
+  getAgentRecentSkills: vi.fn().mockResolvedValue([]),
   getAgentEvaluationScoresByTimeBucket: vi.fn().mockResolvedValue([]),
 }));
 
@@ -72,6 +73,7 @@ vi.mock('@web/providers/system-settings', () => ({
 
 import {
   getAgentModels,
+  getAgentRecentSkills,
   getAgentSkillReadiness,
   getAgents,
 } from '@web/api/v1/super-agents/agents';
@@ -99,6 +101,22 @@ const mockAgent: Agent = {
   review_fail_closed: false,
   review_expose_reason: false,
 };
+
+/** One row per skill, which is what the card counts. */
+const mockReadiness = [
+  {
+    skill_id: 'skill-1',
+    model_count: 1,
+    evaluation_count: 1,
+    optimize: false,
+  },
+  {
+    skill_id: 'skill-2',
+    model_count: 1,
+    evaluation_count: 1,
+    optimize: false,
+  },
+];
 
 const mockSkills: Skill[] = [
   {
@@ -222,7 +240,8 @@ describe('AgentView', () => {
     setMockPathname('/agents/Test%20Agent');
     vi.mocked(getAgents).mockResolvedValue([mockAgent]);
     vi.mocked(getSkills).mockResolvedValue(mockSkills);
-    vi.mocked(getAgentSkillReadiness).mockResolvedValue([]);
+    vi.mocked(getAgentSkillReadiness).mockResolvedValue(mockReadiness);
+    vi.mocked(getAgentRecentSkills).mockResolvedValue([]);
     vi.mocked(useSkills).mockReturnValue(createSkillsCtx());
     mockLocalStorage.getItem.mockReturnValue(null);
   });
@@ -240,6 +259,79 @@ describe('AgentView', () => {
     await user.click(screen.getByRole('button', { name: /view skills/i }));
     expect(routerMockState.navigate).toHaveBeenCalledWith({
       to: '/agents/Test%20Agent/skills',
+    });
+  });
+
+  it('lists the skills the agent used most recently, newest first', async () => {
+    const now = Date.now();
+    vi.mocked(getAgentRecentSkills).mockResolvedValue([
+      {
+        skill_id: 'skill-2',
+        name: 'Chat Support',
+        last_used_at: now - 60 * 1000,
+      },
+      {
+        skill_id: 'skill-1',
+        name: 'Email Response',
+        last_used_at: now - 3 * 60 * 60 * 1000,
+      },
+    ]);
+
+    const { user } = renderWithProviders(<AgentView />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Chat Support')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole('list', { name: 'Recently used skills' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('1 minute ago')).toBeInTheDocument();
+    expect(screen.getByText('3 hours ago')).toBeInTheDocument();
+    // Five rows at most, so the card is asked for exactly what it can draw.
+    expect(getAgentRecentSkills).toHaveBeenCalledWith('agent-1', 5);
+
+    await user.click(screen.getByRole('button', { name: /chat support/i }));
+    expect(routerMockState.navigate).toHaveBeenCalledWith({
+      to: '/agents/Test%20Agent/skills/Chat%20Support',
+    });
+  });
+
+  it('says so when the agent has skills but none has served', async () => {
+    renderWithProviders(<AgentView />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('None of these skills has served a request yet.'),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole('list', { name: 'Recently used skills' }),
+    ).toBeNull();
+  });
+
+  it('marks a recently used skill that is not ready', async () => {
+    vi.mocked(getAgentSkillReadiness).mockResolvedValue([
+      {
+        skill_id: 'skill-1',
+        model_count: 0,
+        evaluation_count: 0,
+        optimize: false,
+      },
+    ]);
+    vi.mocked(getAgentRecentSkills).mockResolvedValue([
+      {
+        skill_id: 'skill-1',
+        name: 'Email Response',
+        last_used_at: Date.now() - 60 * 1000,
+      },
+    ]);
+
+    renderWithProviders(<AgentView />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText('Email Response is not ready'),
+      ).toBeInTheDocument();
     });
   });
 
@@ -268,6 +360,7 @@ describe('AgentView', () => {
 
   describe('without skills', () => {
     beforeEach(() => {
+      vi.mocked(getAgentSkillReadiness).mockResolvedValue([]);
       vi.mocked(useSkills).mockReturnValue(
         createSkillsCtx({ skills: [], isLoading: false }),
       );

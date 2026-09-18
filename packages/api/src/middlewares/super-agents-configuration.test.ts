@@ -192,6 +192,7 @@ describe('saConfigurationInjectorMiddleware', () => {
       getSkillOptimizationArms: vi.fn().mockResolvedValue([]),
       getSkillModels: vi.fn().mockResolvedValue([]),
       getSkillReadiness: vi.fn(),
+      getRecentSkills: vi.fn(),
     });
     const next = vi.fn();
 
