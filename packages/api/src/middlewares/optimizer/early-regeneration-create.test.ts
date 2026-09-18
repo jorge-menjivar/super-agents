@@ -130,6 +130,7 @@ const connectors = (
     } as unknown as UserDataStorageConnector,
     logsStore: {
       getLogs: vi.fn().mockResolvedValue(Array.from({ length: 5 }, usableLog)),
+      getLogSummaries: vi.fn(),
     } as unknown as LogsStorageConnector,
   };
 };

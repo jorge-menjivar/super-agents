@@ -189,6 +189,59 @@ export const isCompletedLog = (log: Log): log is CompletedLog =>
   log.ai_provider_request_log !== null &&
   log.cache_status !== null;
 
+/**
+ * A request as a list reads it: every scalar a row shows, and none of the
+ * conversation.
+ *
+ * A log row is mostly conversation -- the body the caller sent, the body that
+ * reached the provider, and the embedding of the request -- and no list
+ * renders any of it. Fifty rows of a busy agent are tens of megabytes whole,
+ * and tens of kilobytes as summaries; the query that reads them never touches
+ * the pages the bodies live on.
+ *
+ * `provider_request_params` is the one thing kept from the provider exchange,
+ * because the request-logs table shows the temperature and the thinking
+ * effort a request was sent with, and those are inference parameters rather
+ * than conversation. It is the body that reached the provider with the
+ * conversation removed, and `null` means what `ai_provider_request_log: null`
+ * means -- no provider was asked -- so a running request still reads as
+ * running rather than as a model without temperature.
+ *
+ * `hook_logs` and `metadata` stay because they are about the request rather
+ * than in it -- what each hook made of it, how routing chose the skill,
+ * which configuration served it -- and because the `arm_id` filter is a
+ * lookup inside `metadata`.
+ *
+ * Optional rather than required so that a whole `Log` satisfies this type:
+ * the cells a row is drawn with take a summary, and the log detail hands them
+ * its own full row.
+ */
+export const LogSummary = Log.omit({
+  base_sa_config: true,
+  request_body: true,
+  ai_provider_request_log: true,
+  hook_logs: true,
+  embedding: true,
+  original_system_prompt: true,
+  served_system_prompt: true,
+}).extend({
+  provider_request_params: z
+    .record(z.string(), z.unknown())
+    .nullable()
+    .optional(),
+  /**
+   * Every hook's verdict, without what it judged. A hook that withheld or
+   * replaced a response keeps that response on its own log, which is the
+   * conversation again -- and the only reader here is `outcomeOf`, which
+   * colours a row by the verdict and never opens the bodies. Omitted from
+   * the type rather than merely absent, because on a whole `Log` an absent
+   * `response_body` means the hook allowed the response.
+   */
+  hook_logs: z.array(HookLog.omit({ request_body: true, response_body: true })),
+});
+
+export type LogSummary = z.infer<typeof LogSummary>;
+
 export type LogMessage = {
   data: string;
   event: string;

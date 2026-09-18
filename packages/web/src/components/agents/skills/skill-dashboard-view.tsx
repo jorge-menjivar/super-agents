@@ -45,10 +45,10 @@ import {
 } from '@web/components/ui/tooltip';
 import { eventLabels } from '@web/constants';
 import { usePermissiveNavigate } from '@web/hooks/use-permissive-navigate';
+import { useRecentLogs } from '@web/hooks/use-recent-logs';
 import { useSkillValidation } from '@web/hooks/use-skill-validation';
 import { useToast } from '@web/hooks/use-toast';
 import { useAgents } from '@web/providers/agents';
-import { useLogs } from '@web/providers/logs';
 import { useModels } from '@web/providers/models';
 import { useNavigation } from '@web/providers/navigation';
 import { useSkillEvents } from '@web/providers/skill-events';
@@ -135,14 +135,12 @@ export function SkillDashboardView(): ReactElement {
   // Skill validation
   const { isReady, missingRequirements } = useSkillValidation(selectedSkill);
 
-  // Logs via provider
-  const {
-    logs: recentLogs = [],
-    isLoading: isLoadingLogs,
-    setAgentId: setLogsAgentId,
-    setSkillId: setLogsSkillId,
-    setAgentWide: setLogsAgentWide,
-  } = useLogs();
+  // This skill's last few requests, on a query of their own: the card shows
+  // five rows and has no use for the logs page's scope or its page size.
+  const { logs: recentLogs, isLoading: isLoadingLogs } = useRecentLogs({
+    agentId: selectedAgent?.id,
+    skillId: selectedSkill?.id,
+  });
 
   // Models via provider
   const { setSkillId } = useModels();
@@ -220,24 +218,6 @@ export function SkillDashboardView(): ReactElement {
   // Skill events via provider
   const { events: skillEvents = [], setSkillId: setSkillEventsSkillId } =
     useSkillEvents();
-
-  // The recent logs are this skill's, whatever scope the logs page left
-  useEffect(() => {
-    setLogsAgentWide(false);
-    if (selectedAgent && selectedSkill) {
-      setLogsAgentId(selectedAgent.id);
-      setLogsSkillId(selectedSkill.id);
-    } else {
-      setLogsAgentId(null);
-      setLogsSkillId(null);
-    }
-  }, [
-    selectedAgent,
-    selectedSkill,
-    setLogsAgentId,
-    setLogsSkillId,
-    setLogsAgentWide,
-  ]);
 
   // Update models query params
   useEffect(() => {

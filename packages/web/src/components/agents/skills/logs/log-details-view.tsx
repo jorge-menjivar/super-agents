@@ -2,7 +2,7 @@
 
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import { PrettyAIProvider } from '@shared/types/constants';
-import type { Log } from '@shared/types/data/log';
+import type { LogSummary } from '@shared/types/data/log';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
 import { CompletionViewer } from '@web/components/agents/skills/logs/components/completion-viewer';
@@ -405,11 +405,11 @@ export function LogDetailsView(): ReactElement {
     evaluationDetails.length > 0 ||
     averageScore !== null;
 
-  const skillNameOf = (log: Log): string | null =>
+  const skillNameOf = (log: LogSummary): string | null =>
     skills.find((skill) => skill.id === log.skill_id)?.name ?? null;
   const logSkillName = selectedLog ? skillNameOf(selectedLog) : null;
 
-  const openLog = (log: Log): void => {
+  const openLog = (log: LogSummary): void => {
     if (selectedAgent) replaceToLogDetail(selectedAgent.name, log.id);
   };
 
@@ -419,7 +419,7 @@ export function LogDetailsView(): ReactElement {
     new Set(session.logs.map((log) => log.skill_id)).size > 1;
   const sessionSpansModels =
     new Set(session.logs.map((log) => log.model)).size > 1;
-  const sessionLabelOf = (log: Log): string | null => {
+  const sessionLabelOf = (log: LogSummary): string | null => {
     if (log.span_name) return log.span_name;
     const parts = [
       sessionSpansSkills ? skillNameOf(log) : null,

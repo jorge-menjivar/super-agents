@@ -1,9 +1,20 @@
 'use client';
-import { type Log, LogsQueryParams } from '@shared/types/data/log';
+import {
+  type Log,
+  type LogSummary,
+  LogsQueryParams,
+} from '@shared/types/data/log';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { queryLogs } from '@web/api/v1/super-agents/observability/logs';
+import {
+  queryLogSummaries,
+  queryLogs,
+} from '@web/api/v1/super-agents/observability/logs';
 import { useToast } from '@web/hooks/use-toast';
+import { logsQueryKeys } from '@web/providers/logs-query-keys';
 import { useNavigation } from '@web/providers/navigation';
+
+export { logsQueryKeys };
+
 import type React from 'react';
 import {
   createContext,
@@ -15,8 +26,11 @@ import {
 } from 'react';
 
 interface LogsContextType {
-  // Query state
-  logs: Log[];
+  /**
+   * The current page, as summaries: what a table of requests draws. The
+   * conversation is not here -- `selectedLog` is the row read whole.
+   */
+  logs: LogSummary[];
   selectedLog?: Log;
   /**
    * The logs on either side of the selected one in the list's order (newest
@@ -24,8 +38,8 @@ interface LogsContextType {
    * up by time within the current scope, so they are found across pages and
    * from a deep link.
    */
-  newerLog?: Log;
-  olderLog?: Log;
+  newerLog?: LogSummary;
+  olderLog?: LogSummary;
   isLoading: boolean;
   error: Error | null;
   refetch: () => void;
@@ -53,48 +67,11 @@ interface LogsContextType {
   setPageSize: (pageSize: number) => void;
 
   // Helper functions
-  getLogById: (id: string) => Log | undefined;
+  getLogById: (id: string) => LogSummary | undefined;
   refreshLogs: () => void;
 }
 
 const LogsContext = createContext<LogsContextType | undefined>(undefined);
-
-// Query keys for React Query caching
-export const logsQueryKeys = {
-  all: ['logs'] as const,
-  lists: () => [...logsQueryKeys.all, 'list'] as const,
-  list: (
-    agentId: string | null,
-    skillId: string | null,
-    agentWide: boolean,
-    page: number,
-    pageSize: number,
-  ) =>
-    [
-      ...logsQueryKeys.lists(),
-      agentId,
-      skillId,
-      agentWide,
-      page,
-      pageSize,
-    ] as const,
-  detail: (logId: string | undefined) =>
-    [...logsQueryKeys.all, 'detail', logId] as const,
-  neighbors: (
-    agentId: string | null,
-    skillId: string | null,
-    agentWide: boolean,
-    logId: string | undefined,
-  ) =>
-    [
-      ...logsQueryKeys.all,
-      'neighbors',
-      agentId,
-      skillId,
-      agentWide,
-      logId,
-    ] as const,
-};
 
 export const LogsProvider = ({
   children,
@@ -149,7 +126,7 @@ export const LogsProvider = ({
     queryFn: async () => {
       if (!scope) return [];
       const offset = (page - 1) * pageSize;
-      return await queryLogs(
+      return await queryLogSummaries(
         LogsQueryParams.parse({
           ...scope,
           limit: String(pageSize),
@@ -171,14 +148,10 @@ export const LogsProvider = ({
     return page + 1;
   }, [logs.length, page, pageSize]);
 
-  // Resolve selectedLog from navigationState.logId. The list only holds the
-  // current page, so a log reached from elsewhere -- a deep link, or a row
-  // on a later page of the agent-wide view -- is fetched by id instead.
-  const listedLog = useMemo(() => {
-    if (!navigationState.logId) return undefined;
-    return logs.find((log) => log.id === navigationState.logId);
-  }, [navigationState.logId, logs]);
-
+  // The log the detail view shows, always fetched whole by its id. The list
+  // holds summaries, which is every column a table draws and none of the
+  // conversation, so there is no row in it to open -- and one row read whole
+  // costs a fraction of what a page of them did.
   const { data: fetchedLog, isLoading: isDetailLoading } = useQuery({
     queryKey: logsQueryKeys.detail(navigationState.logId),
     queryFn: async () => {
@@ -188,18 +161,18 @@ export const LogsProvider = ({
       );
       return found[0] ?? null;
     },
-    enabled: !!navigationState.logId && !isListLoading && !listedLog,
+    enabled: !!navigationState.logId,
   });
 
-  const selectedLog = listedLog ?? fetchedLog ?? undefined;
+  const selectedLog = fetchedLog ?? undefined;
   // A log still being fetched by id is loading, not missing
   const isLoading = isListLoading || isDetailLoading;
 
   // The selected log's neighbors: the nearest log strictly after it, oldest
   // first, and the nearest strictly before it, newest first. Strictly, so a
   // log sharing its start_time with another is stepped over rather than
-  // looped back to. Each is seeded into the detail cache, so stepping to it
-  // renders at once and only refreshes in the background.
+  // looped back to. Summaries, because the arrows need a log's id and not its
+  // conversation; stepping to one fetches that row whole.
   const { data: neighbors } = useQuery({
     queryKey: logsQueryKeys.neighbors(
       agentId,
@@ -207,10 +180,13 @@ export const LogsProvider = ({
       agentWide,
       selectedLog?.id,
     ),
-    queryFn: async (): Promise<{ newerLog?: Log; olderLog?: Log }> => {
+    queryFn: async (): Promise<{
+      newerLog?: LogSummary;
+      olderLog?: LogSummary;
+    }> => {
       if (!selectedLog || !scope) return {};
       const [newerRows, olderRows] = await Promise.all([
-        queryLogs(
+        queryLogSummaries(
           LogsQueryParams.parse({
             ...scope,
             after: String(selectedLog.start_time + 1),
@@ -218,7 +194,7 @@ export const LogsProvider = ({
             limit: '1',
           }),
         ),
-        queryLogs(
+        queryLogSummaries(
           LogsQueryParams.parse({
             ...scope,
             before: String(selectedLog.start_time - 1),
@@ -226,11 +202,8 @@ export const LogsProvider = ({
           }),
         ),
       ]);
-      const newerLog: Log | undefined = newerRows[0];
-      const olderLog: Log | undefined = olderRows[0];
-      for (const log of [newerLog, olderLog]) {
-        if (log) queryClient.setQueryData(logsQueryKeys.detail(log.id), log);
-      }
+      const newerLog: LogSummary | undefined = newerRows[0];
+      const olderLog: LogSummary | undefined = olderRows[0];
       return { newerLog, olderLog };
     },
     enabled: !!selectedLog && !!scope,
@@ -252,8 +225,8 @@ export const LogsProvider = ({
 
   // Helper functions
   const getLogById = useCallback(
-    (id: string): Log | undefined => {
-      return logs?.find((log: Log) => log.id === id);
+    (id: string): LogSummary | undefined => {
+      return logs?.find((log: LogSummary) => log.id === id);
     },
     [logs],
   );

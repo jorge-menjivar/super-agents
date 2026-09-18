@@ -49,6 +49,7 @@ const mockUserDataStorageConnector = {
 
   // Log methods (required by interface)
   getLogs: vi.fn(),
+  getLogSummaries: vi.fn(),
   deleteLog: vi.fn(),
 
   // Dataset-Log Bridge methods (required by interface)

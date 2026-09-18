@@ -1,6 +1,6 @@
 'use client';
 
-import type { Log } from '@shared/types/data/log';
+import type { LogSummary } from '@shared/types/data/log';
 import { Button } from '@web/components/ui/button';
 import {
   Tooltip,
@@ -22,9 +22,9 @@ export function LogNavigation({
   olderLog,
   onNavigate,
 }: {
-  newerLog?: Log;
-  olderLog?: Log;
-  onNavigate: (log: Log) => void;
+  newerLog?: LogSummary;
+  olderLog?: LogSummary;
+  onNavigate: (log: LogSummary) => void;
 }): ReactElement {
   return (
     <TooltipProvider>
