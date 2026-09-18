@@ -11,43 +11,25 @@ import {
 } from '@web/components/ui/card';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { usePermissiveNavigate } from '@web/hooks/use-permissive-navigate';
+import { useRecentLogs } from '@web/hooks/use-recent-logs';
 import { useAgents } from '@web/providers/agents';
-import { useLogs } from '@web/providers/logs';
 import { useSkills } from '@web/providers/skills';
 import { FileTextIcon } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import type { ReactElement } from 'react';
-import { useEffect } from 'react';
 
 /**
  * The agent dashboard's counterpart of the skill dashboard's "Recent
  * requests" card: the agent's latest logs across all of its skills, opening
- * the agent-wide logs page. It wires the logs provider itself, so it only
- * belongs on views that want the agent-wide scope.
+ * the agent-wide logs page.
  */
 export function AgentRecentLogsCard(): ReactElement | null {
   const navigate = usePermissiveNavigate();
   const { selectedAgent } = useAgents();
   const { skills } = useSkills();
-  const {
-    logs: recentLogs,
-    isLoading,
-    setAgentId,
-    setSkillId,
-    setAgentWide,
-  } = useLogs();
-
-  useEffect(() => {
-    if (selectedAgent) {
-      setAgentId(selectedAgent.id);
-      setSkillId(null);
-      setAgentWide(true);
-    } else {
-      setAgentId(null);
-      setSkillId(null);
-      setAgentWide(false);
-    }
-  }, [selectedAgent, setAgentId, setSkillId, setAgentWide]);
+  const { logs: recentLogs, isLoading } = useRecentLogs({
+    agentId: selectedAgent?.id,
+  });
 
   if (!selectedAgent) {
     return null;

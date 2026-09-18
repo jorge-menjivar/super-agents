@@ -35,6 +35,7 @@ import {
   type LogCreateParams,
   type LogFailParams,
   type LogStartParams,
+  LogSummary,
   type LogsQueryParams,
 } from '@shared/types/data/log';
 import {
@@ -1413,92 +1414,116 @@ export const supabaseCacheStorageConnector: CacheStorageConnector = {
   },
 };
 
-export const supabaseLogsStorageConnector: LogsStorageConnector = {
-  getLogs: async (
-    c: AppContext,
-    queryParams: LogsQueryParams,
-  ): Promise<Log[]> => {
-    const postgRESTQuery: Record<string, string> = {
-      order: queryParams.order === 'asc' ? 'start_time.asc' : 'start_time.desc',
-    };
+/**
+ * The PostgREST query a list of logs is read by, against whichever relation
+ * the caller wants its columns from: `logs_with_eval_scores` for whole rows,
+ * `logs_summary` for the scalars a table draws.
+ */
+const logsPostgRESTQuery = (
+  relation: 'logs_with_eval_scores' | 'logs_summary',
+  queryParams: LogsQueryParams,
+): Record<string, string> => {
+  const postgRESTQuery: Record<string, string> = {
+    order: queryParams.order === 'asc' ? 'start_time.asc' : 'start_time.desc',
+  };
 
-    if (queryParams.agent_id) {
-      postgRESTQuery.agent_id = `eq.${queryParams.agent_id}`;
-    }
-    if (queryParams.skill_id) {
-      postgRESTQuery.skill_id = `eq.${queryParams.skill_id}`;
-    }
-    if (queryParams.cluster_id) {
-      postgRESTQuery.cluster_id = `eq.${queryParams.cluster_id}`;
-    }
-    if (queryParams.arm_id) {
-      // As in the libSQL connector: the arm is not a column, it is recorded
-      // on the log as `metadata.served_configuration`.
-      postgRESTQuery['metadata->served_configuration->>id'] =
-        `eq.${queryParams.arm_id}`;
-    }
-    if (queryParams.app_id) {
-      postgRESTQuery.app_id = `eq.${queryParams.app_id}`;
-    }
-    if (queryParams.trace_id) {
-      postgRESTQuery.trace_id = `eq.${queryParams.trace_id}`;
-    }
-    if (queryParams.id) {
-      postgRESTQuery.id = `eq.${queryParams.id}`;
-    }
-    if (queryParams.method) {
-      postgRESTQuery.method = `eq.${queryParams.method}`;
-    }
-    if (queryParams.endpoint) {
-      postgRESTQuery.endpoint = `eq.${queryParams.endpoint}`;
-    }
-    if (queryParams.function_name) {
-      postgRESTQuery.function_name = `eq.${queryParams.function_name}`;
-    }
-    if (queryParams.status) {
-      postgRESTQuery.status = `eq.${queryParams.status}`;
-    }
-    if (queryParams.cache_status) {
-      postgRESTQuery.cache_status = `eq.${queryParams.cache_status}`;
-    }
-    if (queryParams.limit) {
-      postgRESTQuery.limit = queryParams.limit.toString();
-    }
-    if (queryParams.offset) {
-      postgRESTQuery.offset = queryParams.offset.toString();
-    }
+  if (queryParams.agent_id) {
+    postgRESTQuery.agent_id = `eq.${queryParams.agent_id}`;
+  }
+  if (queryParams.skill_id) {
+    postgRESTQuery.skill_id = `eq.${queryParams.skill_id}`;
+  }
+  if (queryParams.cluster_id) {
+    postgRESTQuery.cluster_id = `eq.${queryParams.cluster_id}`;
+  }
+  if (queryParams.arm_id) {
+    // As in the libSQL connector: the arm is not a column, it is recorded
+    // on the log as `metadata.served_configuration`.
+    postgRESTQuery['metadata->served_configuration->>id'] =
+      `eq.${queryParams.arm_id}`;
+  }
+  if (queryParams.app_id) {
+    postgRESTQuery.app_id = `eq.${queryParams.app_id}`;
+  }
+  if (queryParams.trace_id) {
+    postgRESTQuery.trace_id = `eq.${queryParams.trace_id}`;
+  }
+  if (queryParams.id) {
+    postgRESTQuery.id = `eq.${queryParams.id}`;
+  }
+  if (queryParams.method) {
+    postgRESTQuery.method = `eq.${queryParams.method}`;
+  }
+  if (queryParams.endpoint) {
+    postgRESTQuery.endpoint = `eq.${queryParams.endpoint}`;
+  }
+  if (queryParams.function_name) {
+    postgRESTQuery.function_name = `eq.${queryParams.function_name}`;
+  }
+  if (queryParams.status) {
+    postgRESTQuery.status = `eq.${queryParams.status}`;
+  }
+  if (queryParams.cache_status) {
+    postgRESTQuery.cache_status = `eq.${queryParams.cache_status}`;
+  }
+  if (queryParams.limit) {
+    postgRESTQuery.limit = queryParams.limit.toString();
+  }
+  if (queryParams.offset) {
+    postgRESTQuery.offset = queryParams.offset.toString();
+  }
 
-    if (queryParams.unjudged) {
-      postgRESTQuery.eval_run_count = 'eq.0';
-    }
-    if (queryParams.embedding_not_null) {
+  if (queryParams.unjudged) {
+    postgRESTQuery.eval_run_count = 'eq.0';
+  }
+  if (queryParams.embedding_not_null) {
+    // The summary view leaves the embedding out, and answers for whether
+    // there is one with a column of its own.
+    if (relation === 'logs_summary') {
+      postgRESTQuery.has_embedding = 'is.true';
+    } else {
       postgRESTQuery.embedding = 'not.is.null';
     }
+  }
 
-    if (queryParams.after) {
-      postgRESTQuery.start_time = `gte.${queryParams.after}`;
+  if (queryParams.after) {
+    postgRESTQuery.start_time = `gte.${queryParams.after}`;
+  }
+  if (queryParams.before) {
+    // If we already have a start_time filter, we need to combine them
+    if (postgRESTQuery.start_time) {
+      // For range queries, we'll use PostgREST's and operator syntax
+      postgRESTQuery.and = `(start_time.gte.${queryParams.after},start_time.lte.${queryParams.before})`;
+      delete postgRESTQuery.start_time;
+    } else {
+      postgRESTQuery.start_time = `lte.${queryParams.before}`;
     }
-    if (queryParams.before) {
-      // If we already have a start_time filter, we need to combine them
-      if (postgRESTQuery.start_time) {
-        // For range queries, we'll use PostgREST's and operator syntax
-        postgRESTQuery.and = `(start_time.gte.${queryParams.after},start_time.lte.${queryParams.before})`;
-        delete postgRESTQuery.start_time;
-      } else {
-        postgRESTQuery.start_time = `lte.${queryParams.before}`;
-      }
-    }
+  }
 
-    // Use the logs_with_eval_scores view to include computed evaluation scores
-    const logs = await selectFromSupabase(
+  return postgRESTQuery;
+};
+
+export const supabaseLogsStorageConnector: LogsStorageConnector = {
+  // Reads go through the logs_with_eval_scores view, which carries the
+  // computed avg_eval_score and eval_run_count.
+  getLogs: (c: AppContext, queryParams: LogsQueryParams): Promise<Log[]> =>
+    selectFromSupabase(
       c,
       'logs_with_eval_scores',
-      postgRESTQuery,
+      logsPostgRESTQuery('logs_with_eval_scores', queryParams),
       z.array(Log),
-    );
+    ),
 
-    return logs;
-  },
+  getLogSummaries: (
+    c: AppContext,
+    queryParams: LogsQueryParams,
+  ): Promise<LogSummary[]> =>
+    selectFromSupabase(
+      c,
+      'logs_summary',
+      logsPostgRESTQuery('logs_summary', queryParams),
+      z.array(LogSummary),
+    ),
 
   startLog: async (
     c: AppContext,

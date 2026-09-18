@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const queryLogs = vi.fn();
+const queryLogSummaries = vi.fn();
 vi.mock('@web/api/v1/super-agents/observability/logs', () => ({
-  queryLogs: (...args: unknown[]) => queryLogs(...args),
+  queryLogSummaries: (...args: unknown[]) => queryLogSummaries(...args),
 }));
 
 vi.mock('@shared/types/data/log', () => ({
@@ -38,7 +38,7 @@ const renderSession = (current: Log | undefined) => {
 describe('useLogSession', () => {
   it('fetches a window around the log on each side of its trace', async () => {
     const current = log('b', 2000);
-    queryLogs.mockImplementation((params: { before?: string }) =>
+    queryLogSummaries.mockImplementation((params: { before?: string }) =>
       Promise.resolve(
         params.before
           ? [current, log('a', 1000)] // newest first
@@ -59,21 +59,23 @@ describe('useLogSession', () => {
       trace_id: 'ses_1',
       limit: String(SESSION_WINDOW),
     };
-    expect(queryLogs).toHaveBeenCalledWith({ ...scope, before: '2000' });
-    expect(queryLogs).toHaveBeenCalledWith({
+    expect(queryLogSummaries).toHaveBeenCalledWith({
+      ...scope,
+      before: '2000',
+    });
+    expect(queryLogSummaries).toHaveBeenCalledWith({
       ...scope,
       after: '2000',
       order: 'asc',
     });
-    // The others are seeded, so stepping to one renders without a fetch
-    expect(queryClient.getQueryData(['logs', 'detail', 'c'])).toMatchObject({
-      id: 'c',
-    });
+    // Summaries, so nothing here is seeded into the detail cache: a summary
+    // has no conversation, and the detail view is what reads one.
+    expect(queryClient.getQueryData(['logs', 'detail', 'c'])).toBeUndefined();
   });
 
   it('says when the session goes on past the window', async () => {
     const current = log('x', 100_000);
-    queryLogs.mockImplementation((params: { before?: string }) =>
+    queryLogSummaries.mockImplementation((params: { before?: string }) =>
       Promise.resolve(
         params.before
           ? Array.from({ length: SESSION_WINDOW }, (_, i) =>
@@ -97,7 +99,7 @@ describe('useLogSession', () => {
     // arrives, or the rail unmounts and the page jumps for a moment.
     const a = log('a', 1000);
     const b = log('b', 2000);
-    queryLogs.mockImplementation((params: { before?: string }) =>
+    queryLogSummaries.mockImplementation((params: { before?: string }) =>
       Promise.resolve(params.before ? [b, a] : [b, log('c', 3000)]),
     );
     const { result, rerender } = renderSession(b);
@@ -105,7 +107,7 @@ describe('useLogSession', () => {
       expect(result.current.logs).toHaveLength(3);
     });
 
-    queryLogs.mockImplementation(() => new Promise(() => undefined)); // never lands
+    queryLogSummaries.mockImplementation(() => new Promise(() => undefined)); // never lands
     rerender(a);
     expect(result.current.logs.map((l) => l.id)).toEqual(['a', 'b', 'c']);
 
@@ -115,7 +117,7 @@ describe('useLogSession', () => {
   });
 
   it('has no session for a log without a trace', () => {
-    queryLogs.mockClear();
+    queryLogSummaries.mockClear();
     const { result } = renderSession({
       ...log('lone', 1000),
       trace_id: null,
@@ -123,6 +125,6 @@ describe('useLogSession', () => {
 
     expect(result.current.logs).toEqual([]);
     expect(result.current.isLoading).toBe(false);
-    expect(queryLogs).not.toHaveBeenCalled();
+    expect(queryLogSummaries).not.toHaveBeenCalled();
   });
 });

@@ -27,6 +27,7 @@ import type {
   LogCreateParams,
   LogFailParams,
   LogStartParams,
+  LogSummary,
   LogsQueryParams,
 } from '@shared/types/data/log';
 import type {
@@ -410,6 +411,17 @@ export interface UserDataStorageConnector {
 
 export interface LogsStorageConnector {
   getLogs(c: AppContext, queryParams: LogsQueryParams): Promise<Log[]> | Log[];
+  /**
+   * The same rows as `getLogs`, read as a list rather than as conversations.
+   *
+   * Everything that renders a table of requests wants this one: most of a log
+   * row is the bodies, no list draws them, and reading fifty rows whole costs
+   * hundreds of times what reading fifty summaries does.
+   */
+  getLogSummaries(
+    c: AppContext,
+    queryParams: LogsQueryParams,
+  ): Promise<LogSummary[]> | LogSummary[];
   /**
    * Opens a row for a request that has just arrived, so that work in progress
    * is visible and a request that never finishes still leaves a trace.

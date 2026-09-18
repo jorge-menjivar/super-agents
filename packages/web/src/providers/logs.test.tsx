@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock dependencies - must be before other imports
 vi.mock('@web/api/v1/super-agents/observability/logs', () => ({
+  // The list and the neighbours read summaries; only the detail reads a
+  // whole row, by id.
+  queryLogSummaries: vi.fn().mockResolvedValue([{ id: '1' }]),
   queryLogs: vi.fn().mockResolvedValue([
     {
       id: '1',
@@ -75,7 +78,10 @@ vi.mock('@web/providers/navigation', () => ({
 import type { Log } from '@shared/types/data/log';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { queryLogs } from '@web/api/v1/super-agents/observability/logs';
+import {
+  queryLogSummaries,
+  queryLogs,
+} from '@web/api/v1/super-agents/observability/logs';
 // Now import everything
 import { LogsProvider, useLogs } from '@web/providers/logs';
 import React from 'react';
@@ -194,7 +200,7 @@ describe('LogsProvider', (): void => {
     delete mockNavigationState.logId;
   });
 
-  it('provides logs from queryLogs', async (): Promise<void> => {
+  it('provides logs from queryLogSummaries', async (): Promise<void> => {
     await act(async (): Promise<void> => {
       await Promise.resolve();
       render(
@@ -241,7 +247,7 @@ describe('LogsProvider', (): void => {
     });
 
     const listCall = vi
-      .mocked(queryLogs)
+      .mocked(queryLogSummaries)
       .mock.calls.find(([params]) => !('id' in (params as object)));
     expect(listCall?.[0]).toMatchObject({ agent_id: 'test-agent' });
     expect(listCall?.[0]).not.toHaveProperty('skill_id');
@@ -251,16 +257,7 @@ describe('LogsProvider', (): void => {
     // A deep link, or a row clicked on a later page of the agent-wide view,
     // names a log the one-page list does not hold.
     mockNavigationState.logId = 'log-9';
-    vi.mocked(queryLogs).mockImplementation((params) => {
-      if ((params as { id?: string }).id === 'log-9') {
-        return Promise.resolve([{ id: 'log-9' }] as Awaited<
-          ReturnType<typeof queryLogs>
-        >);
-      }
-      return Promise.resolve([{ id: '1' }] as Awaited<
-        ReturnType<typeof queryLogs>
-      >);
-    });
+    vi.mocked(queryLogs).mockResolvedValue(asLogs([{ id: 'log-9' }]));
 
     await act(async (): Promise<void> => {
       await Promise.resolve();
@@ -286,10 +283,7 @@ describe('LogsProvider', (): void => {
     const detail = new Promise<Log[]>((resolve) => {
       resolveDetail = resolve;
     });
-    vi.mocked(queryLogs).mockImplementation((params) => {
-      if ((params as { id?: string }).id === 'log-9') return detail;
-      return Promise.resolve(asLogs([{ id: '1' }]));
-    });
+    vi.mocked(queryLogs).mockImplementation(() => detail);
 
     await act(async (): Promise<void> => {
       await Promise.resolve();
@@ -325,7 +319,10 @@ describe('LogsProvider', (): void => {
     // than in the page: the nearest log strictly after it, oldest first,
     // and the nearest strictly before it, newest first.
     mockNavigationState.logId = 'log-2';
-    vi.mocked(queryLogs).mockImplementation(neighborsOfLog2);
+    vi.mocked(queryLogSummaries).mockImplementation(neighborsOfLog2);
+    vi.mocked(queryLogs).mockResolvedValue(
+      asLogs([{ id: 'log-2', start_time: 2000 }]),
+    );
 
     await act(async (): Promise<void> => {
       await Promise.resolve();
@@ -343,7 +340,9 @@ describe('LogsProvider', (): void => {
       expect(screen.getByTestId('older-log').textContent).toBe('log-1');
     });
 
-    const sent = vi.mocked(queryLogs).mock.calls.map(([params]) => params);
+    const sent = vi
+      .mocked(queryLogSummaries)
+      .mock.calls.map(([params]) => params);
     expect(sent).toContainEqual({
       agent_id: 'test-agent',
       skill_id: 'test-skill',
@@ -358,21 +357,24 @@ describe('LogsProvider', (): void => {
       limit: '1',
     });
 
-    // Both are seeded into the detail cache, so stepping to one renders it
-    // without waiting on a fetch by id.
-    expect(queryClient.getQueryData(['logs', 'detail', 'log-3'])).toMatchObject(
-      { id: 'log-3' },
-    );
-    expect(queryClient.getQueryData(['logs', 'detail', 'log-1'])).toMatchObject(
-      { id: 'log-1' },
-    );
+    // Summaries, so neither is seeded into the detail cache: stepping to one
+    // fetches that row whole, which is what the detail view draws.
+    expect(
+      queryClient.getQueryData(['logs', 'detail', 'log-3']),
+    ).toBeUndefined();
+    expect(
+      queryClient.getQueryData(['logs', 'detail', 'log-1']),
+    ).toBeUndefined();
   });
 
   it('looks up neighbors across the agent when the view is agent-wide', async (): Promise<void> => {
     // A log opened from the agent's logs page steps through the agent's
     // logs, whatever skill they belong to.
     mockNavigationState.logId = 'log-2';
-    vi.mocked(queryLogs).mockImplementation(neighborsOfLog2);
+    vi.mocked(queryLogSummaries).mockImplementation(neighborsOfLog2);
+    vi.mocked(queryLogs).mockResolvedValue(
+      asLogs([{ id: 'log-2', start_time: 2000 }]),
+    );
 
     await act(async (): Promise<void> => {
       await Promise.resolve();
@@ -390,7 +392,9 @@ describe('LogsProvider', (): void => {
       expect(screen.getByTestId('older-log').textContent).toBe('log-1');
     });
 
-    const sent = vi.mocked(queryLogs).mock.calls.map(([params]) => params);
+    const sent = vi
+      .mocked(queryLogSummaries)
+      .mock.calls.map(([params]) => params);
     expect(sent).toContainEqual({
       agent_id: 'test-agent',
       after: '2001',

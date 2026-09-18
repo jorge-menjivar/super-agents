@@ -1,4 +1,4 @@
-import type { Log } from '@shared/types/data/log';
+import type { LogSummary } from '@shared/types/data/log';
 import {
   HOOK_DENIED_STATUS,
   HookProvider,
@@ -24,7 +24,7 @@ export interface LogOutcome {
   title?: string;
 }
 
-export function outcomeOf(log: Log): LogOutcome {
+export function outcomeOf(log: LogSummary): LogOutcome {
   if (log.end_time === null || log.status === null) {
     return { tone: 'running', label: 'Running' };
   }

@@ -96,7 +96,7 @@ const setup = (
     updateSkillOptimizationCluster: vi.fn().mockResolvedValue(undefined),
     // No models: the rebuild stops after the evaluation step, the one under test
     getSkillModels: vi.fn().mockResolvedValue([]),
-  } as unknown as UserDataStorageConnector;
+    } as unknown as UserDataStorageConnector;
   const logsStore = {
     getLogs: vi
       .fn()

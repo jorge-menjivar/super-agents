@@ -54,6 +54,7 @@ beforeEach(() => {
   } as unknown as UserDataStorageConnector;
   logsStore = {
     getLogs: vi.fn().mockResolvedValue([log]),
+    getLogSummaries: vi.fn(),
   } as unknown as LogsStorageConnector;
 
   const values: Record<string, unknown> = {

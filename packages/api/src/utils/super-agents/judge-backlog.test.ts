@@ -67,6 +67,7 @@ const setup = (): {
   } as unknown as UserDataStorageConnector,
   logsStore: {
     getLogs: vi.fn().mockResolvedValue([skipped, raced, later]),
+    getLogSummaries: vi.fn(),
   } as unknown as LogsStorageConnector,
 });
 

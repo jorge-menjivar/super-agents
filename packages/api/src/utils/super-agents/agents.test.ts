@@ -73,6 +73,7 @@ describe('getAgent', () => {
 
       // Log methods (required by interface)
       getLogs: vi.fn(),
+      getLogSummaries: vi.fn(),
       deleteLog: vi.fn(),
       // Dataset-Log Bridge methods (required by interface)
       getDatasetLogs: vi.fn(),
@@ -101,7 +102,7 @@ describe('getAgent', () => {
       deleteModel: vi.fn(),
       // Skill-Model relationship methods
       getSkillModels: vi.fn(),
-      getSkillsByModelId: vi.fn(),
+          getSkillsByModelId: vi.fn(),
       addModelsToSkill: vi.fn(),
       removeModelsFromSkill: vi.fn(),
       // Skill Optimization Arm methods

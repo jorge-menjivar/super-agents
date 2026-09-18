@@ -4,7 +4,7 @@ import { type Log, LogsQueryParams } from '@shared/types/data/log';
 import { HookProvider } from '@shared/types/middleware/hooks';
 import { useQuery } from '@tanstack/react-query';
 import { queryLogs } from '@web/api/v1/super-agents/observability/logs';
-import { logsQueryKeys } from '@web/providers/logs';
+import { logsQueryKeys } from '@web/providers/logs-query-keys';
 import { reviewsAmong } from '@web/utils/reviews';
 
 /** More reviews than a request has hooks to ask for. */

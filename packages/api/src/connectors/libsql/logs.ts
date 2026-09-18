@@ -5,6 +5,7 @@ import {
   type LogCreateParams,
   type LogFailParams,
   type LogStartParams,
+  LogSummary,
   type LogsQueryParams,
 } from '@shared/types/data/log';
 import { v4 as uuidv4 } from 'uuid';
@@ -12,6 +13,85 @@ import { z } from 'zod';
 import { getLibsqlClient } from './client';
 import { insertInto, parseRows } from './query';
 import { asColumns, toJsonColumn } from './rows';
+
+/**
+ * The query a list of logs is read by, against whichever relation the caller
+ * wants its columns from: `logs_with_eval_scores` for whole rows,
+ * `logs_summary` for the scalars a table draws. Both carry the computed
+ * `avg_eval_score` and `eval_run_count`, and every filter below names a
+ * column both of them have.
+ */
+const logsQuery = (
+  relation: 'logs_with_eval_scores' | 'logs_summary',
+  queryParams: LogsQueryParams,
+): { sql: string; args: (string | number)[] } => {
+  const conditions: string[] = [];
+  const args: (string | number)[] = [];
+
+  const eq = (column: string, value: string | number | undefined) => {
+    if (value !== undefined) {
+      conditions.push(`${column} = ?`);
+      args.push(value);
+    }
+  };
+
+  eq('agent_id', queryParams.agent_id);
+  eq('skill_id', queryParams.skill_id);
+  eq('cluster_id', queryParams.cluster_id);
+  // The arm is not a column. The row keeps `cluster_id`, which names the
+  // partition but not which of its configurations was pulled, so the
+  // gateway records that on the log as `metadata.served_configuration`.
+  if (queryParams.arm_id !== undefined) {
+    conditions.push("json_extract(metadata, '$.served_configuration.id') = ?");
+    args.push(queryParams.arm_id);
+  }
+  eq('app_id', queryParams.app_id);
+  eq('trace_id', queryParams.trace_id);
+  eq('id', queryParams.id);
+  eq('method', queryParams.method);
+  eq('endpoint', queryParams.endpoint);
+  eq('function_name', queryParams.function_name);
+  eq('status', queryParams.status);
+  eq('cache_status', queryParams.cache_status);
+
+  if (queryParams.embedding_not_null) {
+    conditions.push(
+      relation === 'logs_summary' ? 'has_embedding' : 'embedding IS NOT NULL',
+    );
+  }
+  if (queryParams.unjudged) {
+    conditions.push('eval_run_count = 0');
+  }
+  if (queryParams.after !== undefined) {
+    conditions.push('start_time >= ?');
+    args.push(queryParams.after);
+  }
+  if (queryParams.before !== undefined) {
+    conditions.push('start_time <= ?');
+    args.push(queryParams.before);
+  }
+
+  let sql = `SELECT * FROM ${relation}`;
+  if (conditions.length > 0) {
+    sql += ` WHERE ${conditions.join(' AND ')}`;
+  }
+  const direction = queryParams.order === 'asc' ? 'ASC' : 'DESC';
+  sql += ` ORDER BY start_time ${direction}`;
+
+  if (queryParams.limit !== undefined) {
+    sql += ' LIMIT ?';
+    args.push(queryParams.limit);
+  }
+  if (queryParams.offset !== undefined) {
+    if (queryParams.limit === undefined) {
+      sql += ' LIMIT -1';
+    }
+    sql += ' OFFSET ?';
+    args.push(queryParams.offset);
+  }
+
+  return { sql, args };
+};
 
 /**
  * Reads go through `logs_with_eval_scores`, which carries the computed
@@ -23,73 +103,20 @@ export const libsqlLogsStorageConnector: LogsStorageConnector = {
     c: AppContext,
     queryParams: LogsQueryParams,
   ): Promise<Log[]> => {
-    const conditions: string[] = [];
-    const args: (string | number)[] = [];
-
-    const eq = (column: string, value: string | number | undefined) => {
-      if (value !== undefined) {
-        conditions.push(`${column} = ?`);
-        args.push(value);
-      }
-    };
-
-    eq('agent_id', queryParams.agent_id);
-    eq('skill_id', queryParams.skill_id);
-    eq('cluster_id', queryParams.cluster_id);
-    // The arm is not a column. The row keeps `cluster_id`, which names the
-    // partition but not which of its configurations was pulled, so the
-    // gateway records that on the log as `metadata.served_configuration`.
-    if (queryParams.arm_id !== undefined) {
-      conditions.push(
-        "json_extract(metadata, '$.served_configuration.id') = ?",
-      );
-      args.push(queryParams.arm_id);
-    }
-    eq('app_id', queryParams.app_id);
-    eq('trace_id', queryParams.trace_id);
-    eq('id', queryParams.id);
-    eq('method', queryParams.method);
-    eq('endpoint', queryParams.endpoint);
-    eq('function_name', queryParams.function_name);
-    eq('status', queryParams.status);
-    eq('cache_status', queryParams.cache_status);
-
-    if (queryParams.embedding_not_null) {
-      conditions.push('embedding IS NOT NULL');
-    }
-    if (queryParams.unjudged) {
-      conditions.push('eval_run_count = 0');
-    }
-    if (queryParams.after !== undefined) {
-      conditions.push('start_time >= ?');
-      args.push(queryParams.after);
-    }
-    if (queryParams.before !== undefined) {
-      conditions.push('start_time <= ?');
-      args.push(queryParams.before);
-    }
-
-    let sql = 'SELECT * FROM logs_with_eval_scores';
-    if (conditions.length > 0) {
-      sql += ` WHERE ${conditions.join(' AND ')}`;
-    }
-    const direction = queryParams.order === 'asc' ? 'ASC' : 'DESC';
-    sql += ` ORDER BY start_time ${direction}`;
-
-    if (queryParams.limit !== undefined) {
-      sql += ' LIMIT ?';
-      args.push(queryParams.limit);
-    }
-    if (queryParams.offset !== undefined) {
-      if (queryParams.limit === undefined) {
-        sql += ' LIMIT -1';
-      }
-      sql += ' OFFSET ?';
-      args.push(queryParams.offset);
-    }
-
-    const result = await getLibsqlClient(c).execute({ sql, args });
+    const result = await getLibsqlClient(c).execute(
+      logsQuery('logs_with_eval_scores', queryParams),
+    );
     return parseRows('logs_with_eval_scores', result.rows, z.array(Log));
+  },
+
+  getLogSummaries: async (
+    c: AppContext,
+    queryParams: LogsQueryParams,
+  ): Promise<LogSummary[]> => {
+    const result = await getLibsqlClient(c).execute(
+      logsQuery('logs_summary', queryParams),
+    );
+    return parseRows('logs_summary', result.rows, z.array(LogSummary));
   },
 
   startLog: async (
