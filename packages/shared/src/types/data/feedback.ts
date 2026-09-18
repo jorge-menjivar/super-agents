@@ -41,6 +41,21 @@ export const FeedbackCreateParams = z
 export type FeedbackCreateParams = z.infer<typeof FeedbackCreateParams>;
 
 // Query parameters schema
+/**
+ * How many logs one feedback query may name.
+ *
+ * A uuid is 36 characters and an encoded comma is three, so a hundred of them
+ * is a 3.9 KB request line -- and the same list is built a second time as
+ * PostgREST's `log_id=in.(...)`. Four kilobytes is comfortable everywhere: the
+ * tightest limit in the usual path is nginx's 8 KB request line, and Node's
+ * own budget is 16 KB for the request line and every header together.
+ *
+ * It is a cap rather than a target. Callers with more logs than this ask in
+ * batches, so the ceiling is a property of the request rather than of how much
+ * a caller is allowed to know.
+ */
+export const FEEDBACK_LOG_IDS_LIMIT = 100;
+
 export const FeedbackQueryParams = z
   .object({
     id: z.uuid().optional(),
@@ -51,6 +66,10 @@ export const FeedbackQueryParams = z
      * query rather than one per row. An empty list is not a query -- it would
      * read as no filter at all, which is every verdict on the deployment --
      * so it is rejected rather than widened.
+     *
+     * Capped at `FEEDBACK_LOG_IDS_LIMIT`, because the list travels as a URL
+     * twice over: once from the browser, and again as PostgREST's
+     * `log_id=in.(...)`. See that constant for the arithmetic.
      */
     log_ids: z
       .string()
@@ -60,7 +79,7 @@ export const FeedbackQueryParams = z
           ? value.split(',').map((id) => id.trim())
           : value,
       )
-      .pipe(z.array(z.uuid()).min(1))
+      .pipe(z.array(z.uuid()).min(1).max(FEEDBACK_LOG_IDS_LIMIT))
       .optional(),
     limit: z.coerce.number().int().positive().optional(),
     offset: z.coerce.number().int().min(0).optional(),

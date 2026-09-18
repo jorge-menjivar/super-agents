@@ -1,6 +1,9 @@
 'use client';
 
-import type { Feedback } from '@shared/types/data/feedback';
+import {
+  FEEDBACK_LOG_IDS_LIMIT,
+  type Feedback,
+} from '@shared/types/data/feedback';
 import type { LogSummary } from '@shared/types/data/log';
 import { useQuery } from '@tanstack/react-query';
 import { getFeedback } from '@web/api/v1/super-agents/feedbacks';
@@ -11,9 +14,15 @@ const NO_FEEDBACK = new Map<string, Feedback>();
 /**
  * The thumbs a reviewer gave the requests of a session, by log id.
  *
- * Asked for the whole window in one query rather than one per row, which is
+ * Asked for the whole window at once rather than one query per row, which is
  * what `log_ids` on the feedback query is for: a session rail is up to a
  * hundred requests, and a hundred requests must not be a hundred fetches.
+ *
+ * In batches of `FEEDBACK_LOG_IDS_LIMIT`, because the ids travel as a URL --
+ * a uuid and its separator is 39 characters, so the list is the request. A
+ * window of fifty either side of a request is 101 logs and so two batches
+ * today; the batching is what keeps a wider window from quietly becoming a
+ * request line no proxy will carry.
  *
  * The key starts with `feedback`, the prefix the stream invalidates when a
  * verdict is saved (`feedback:created`) and the one the composer invalidates
@@ -24,7 +33,16 @@ export function useSessionFeedback(logs: LogSummary[]): Map<string, Feedback> {
   const ids = logs.map((log) => log.id);
   const { data } = useQuery({
     queryKey: ['feedback', 'logs', ids] as const,
-    queryFn: () => getFeedback({ log_ids: ids }),
+    queryFn: async () => {
+      const batches: string[][] = [];
+      for (let from = 0; from < ids.length; from += FEEDBACK_LOG_IDS_LIMIT) {
+        batches.push(ids.slice(from, from + FEEDBACK_LOG_IDS_LIMIT));
+      }
+      const answered = await Promise.all(
+        batches.map((batch) => getFeedback({ log_ids: batch })),
+      );
+      return answered.flat();
+    },
     enabled: ids.length > 0,
     // Stepping through a session re-centres the window, which changes the
     // ids and so the key. The verdicts are the same ones; keep showing them

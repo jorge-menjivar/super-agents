@@ -1,4 +1,5 @@
 import {
+  FEEDBACK_LOG_IDS_LIMIT,
   Feedback,
   FeedbackCreateParams,
   FeedbackQueryParams,
@@ -205,6 +206,35 @@ describe('Feedback Data Transforms and Validation', () => {
 
       const result = FeedbackQueryParams.parse(validParams);
       expect(result.id).toBe(validParams.id);
+    });
+
+    /**
+     * The ids travel as a URL twice: from the browser, and again as
+     * PostgREST's `log_id=in.(...)`. A uuid and its encoded comma is 39
+     * characters, so an uncapped list is a request line a proxy refuses --
+     * and refusing it here is what makes a caller batch instead.
+     */
+    it('takes a list of logs up to the cap, and no more', () => {
+      const ids = (count: number): string[] =>
+        Array.from(
+          { length: count },
+          (_, i) => `123e4567-e89b-12d3-a456-${String(i).padStart(12, '0')}`,
+        );
+
+      const full = ids(FEEDBACK_LOG_IDS_LIMIT);
+      expect(FeedbackQueryParams.parse({ log_ids: full }).log_ids).toEqual(
+        full,
+      );
+      // Read back out of the query string the same way.
+      expect(
+        FeedbackQueryParams.parse({ log_ids: full.join(',') }).log_ids,
+      ).toEqual(full);
+
+      expect(() =>
+        FeedbackQueryParams.parse({ log_ids: ids(FEEDBACK_LOG_IDS_LIMIT + 1) }),
+      ).toThrow();
+      // An empty list is every verdict on the deployment, not a filter.
+      expect(() => FeedbackQueryParams.parse({ log_ids: [] })).toThrow();
     });
 
     it('should validate optional log_id as UUID', () => {
