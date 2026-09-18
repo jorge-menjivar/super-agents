@@ -21,6 +21,7 @@ import {
   type ModelUpdateParams,
   mergeAgentOptions,
   mergeSystemSettingsOptions,
+  type RecentSkill,
   type Skill,
   type SkillCreateParams,
   type SkillEvent,
@@ -47,6 +48,7 @@ import {
   SkillOptimizationEvaluation as SkillOptimizationEvaluationSchema,
   type SkillOptimizationEvaluationUpdateParams,
   type SkillQueryParams,
+  type SkillReadiness,
   type SkillRouting,
   type SkillRoutingQueryParams,
   SkillRouting as SkillRoutingSchema,
@@ -613,6 +615,67 @@ export const libsqlUserDataStorageConnector: UserDataStorageConnector = {
       args: [skillId],
     });
     return parseRows('models', result.rows, z.array(ModelSchema));
+  },
+
+  /**
+   * One query: a row per skill of the agent, with what it has. The counts are
+   * correlated subqueries rather than two joins, so a skill with neither a
+   * model nor an evaluation still comes back -- as zeroes, which is exactly
+   * the skill the caller is looking for.
+   */
+  getSkillReadiness: async (
+    c: AppContext,
+    agentId: string,
+  ): Promise<SkillReadiness[]> => {
+    const result = await getLibsqlClient(c).execute({
+      sql: `SELECT s.id AS skill_id, s.optimize,
+                   (SELECT COUNT(*) FROM skill_models sm
+                     WHERE sm.skill_id = s.id) AS model_count,
+                   (SELECT COUNT(*) FROM skill_optimization_evaluations e
+                     WHERE e.skill_id = s.id) AS evaluation_count
+            FROM skills s
+            WHERE s.agent_id = ?`,
+      args: [agentId],
+    });
+    return result.rows.map((row) => ({
+      skill_id: String(row.skill_id),
+      // SQLite stores booleans as 0/1.
+      optimize: Boolean(row.optimize),
+      model_count: Number(row.model_count),
+      evaluation_count: Number(row.evaluation_count),
+    }));
+  },
+
+  /**
+   * One index seek per skill: `idx_logs_skill_start_time` is
+   * `(skill_id, start_time DESC)`, so each `MAX(start_time)` reads the head
+   * of that skill's slice rather than scanning the agent's logs.
+   */
+  getRecentSkills: async (
+    c: AppContext,
+    agentId: string,
+    limit: number,
+  ): Promise<RecentSkill[]> => {
+    const result = await getLibsqlClient(c).execute({
+      sql: `SELECT skill_id, name, last_used_at
+            FROM (
+              SELECT s.id AS skill_id,
+                     s.name AS name,
+                     (SELECT MAX(l.start_time) FROM logs l
+                       WHERE l.skill_id = s.id) AS last_used_at
+              FROM skills s
+              WHERE s.agent_id = ?
+            )
+            WHERE last_used_at IS NOT NULL
+            ORDER BY last_used_at DESC
+            LIMIT ?`,
+      args: [agentId, limit],
+    });
+    return result.rows.map((row) => ({
+      skill_id: String(row.skill_id),
+      name: String(row.name),
+      last_used_at: Number(row.last_used_at),
+    }));
   },
 
   getSkillsByModelId: async (

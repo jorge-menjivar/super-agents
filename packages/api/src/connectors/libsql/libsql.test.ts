@@ -81,6 +81,7 @@ describe('libsql migrations', () => {
       '0002_feedbacks_updated_at',
       '0003_default_system_settings',
       '0004_evaluation_run_lookup_indexes',
+      '0005_log_summaries',
     ]);
   });
 

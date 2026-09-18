@@ -1,4 +1,3 @@
-import { expect, test } from '@playwright/test';
 import {
   AGENTS_PATH,
   createAgent,
@@ -6,6 +5,7 @@ import {
   SAMPLE_DESCRIPTION,
   uniqueAgentName,
 } from '../fixtures/agents';
+import { expect, test } from '../fixtures/test';
 
 /**
  * The agent lifecycle against a real libSQL database.

@@ -1,7 +1,7 @@
 'use client';
 
 import type { Feedback } from '@shared/types/data/feedback';
-import type { Log } from '@shared/types/data/log';
+import type { LogSummary } from '@shared/types/data/log';
 import { Button } from '@web/components/ui/button';
 import { type LogOutcomeTone, outcomeOf } from '@web/utils/log-outcome';
 import { formatClockTime, formatDuration } from '@web/utils/time';
@@ -42,7 +42,7 @@ const BAR_TONE: Record<LogOutcomeTone, string> = {
 
 interface SessionMapProps {
   /** The session's requests, oldest first */
-  logs: Log[];
+  logs: LogSummary[];
   currentId: string;
   /** The session goes on past what is shown, on that side */
   hasEarlier: boolean;
@@ -50,10 +50,10 @@ interface SessionMapProps {
   traceId: string;
   appId?: string | null;
   /** A line under a request's time: what it was, when that is known */
-  labelOf: (log: Log) => string | null;
+  labelOf: (log: LogSummary) => string | null;
   /** A reviewer's thumb on a request, by log id; empty until they load */
   feedback?: Map<string, Feedback>;
-  onSelect: (log: Log) => void;
+  onSelect: (log: LogSummary) => void;
 }
 
 const NO_FEEDBACK = new Map<string, Feedback>();

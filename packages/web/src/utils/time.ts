@@ -1,4 +1,4 @@
-import { format } from 'date-fns';
+import { format, formatDistanceToNowStrict } from 'date-fns';
 
 /**
  * When a request happened, as every log surface writes it: the log's page
@@ -32,4 +32,12 @@ export function formatDuration(ms: number): string {
   const hours = Math.floor(ms / 3_600_000);
   const minutes = Math.floor((ms % 3_600_000) / 60_000);
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+/**
+ * How long ago something happened, in one unit: what a card prints beside a
+ * name when the recency is the point and the exact moment is not.
+ */
+export function formatTimeAgo(ms: number): string {
+  return formatDistanceToNowStrict(new Date(ms), { addSuffix: true });
 }

@@ -191,6 +191,8 @@ describe('saConfigurationInjectorMiddleware', () => {
         .mockResolvedValue([{ id: 'cluster-1', centroid: [1, 0] }]),
       getSkillOptimizationArms: vi.fn().mockResolvedValue([]),
       getSkillModels: vi.fn().mockResolvedValue([]),
+      getSkillReadiness: vi.fn(),
+      getRecentSkills: vi.fn(),
     });
     const next = vi.fn();
 

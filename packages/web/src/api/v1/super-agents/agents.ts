@@ -5,7 +5,9 @@ import {
   type AgentQueryParams,
   type AgentUpdateParams,
   Model,
+  RecentSkill,
   SkillOptimizationEvaluationRun,
+  SkillReadiness,
 } from '@shared/types/data';
 import { API_URL } from '@web/constants';
 import { hc } from 'hono/client';
@@ -134,6 +136,43 @@ export async function getAgentEvaluationScoresByTimeBucket(
 }
 
 /** The agent's default models: what a skill the gateway creates for it starts with. */
+/**
+ * What each of the agent's skills has: the counts `isSkillReady` decides
+ * from, for every skill in one request.
+ */
+export async function getAgentSkillReadiness(
+  agentId: string,
+): Promise<SkillReadiness[]> {
+  const response = await client.v1['super-agents'].agents[':agentId'][
+    'skill-readiness'
+  ].$get({ param: { agentId } });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch skill readiness for agent');
+  }
+
+  return SkillReadiness.array().parse(await response.json());
+}
+
+/**
+ * The agent's skills that served most recently, newest first: names and
+ * times, not the skill rows, which carry the prompts they were seeded from.
+ */
+export async function getAgentRecentSkills(
+  agentId: string,
+  limit: number,
+): Promise<RecentSkill[]> {
+  const response = await client.v1['super-agents'].agents[':agentId'][
+    'recent-skills'
+  ].$get({ param: { agentId }, query: { limit: String(limit) } });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch recent skills for agent');
+  }
+
+  return RecentSkill.array().parse(await response.json());
+}
+
 export async function getAgentModels(agentId: string): Promise<Model[]> {
   const response = await client.v1['super-agents'].agents[
     ':agentId'

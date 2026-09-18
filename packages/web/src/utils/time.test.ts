@@ -2,6 +2,7 @@ import {
   formatClockTime,
   formatDuration,
   formatLogTimestamp,
+  formatTimeAgo,
 } from '@web/utils/time';
 import { describe, expect, it } from 'vitest';
 
@@ -30,5 +31,15 @@ describe('formatDuration', () => {
     expect(formatDuration(252_000)).toBe('4m 12s');
     expect(formatDuration(240_000)).toBe('4m');
     expect(formatDuration(5_400_000)).toBe('1h 30m');
+  });
+});
+
+describe('formatTimeAgo', () => {
+  it('says how long ago in one unit', () => {
+    const now = Date.now();
+    expect(formatTimeAgo(now - 40 * 1_000)).toBe('40 seconds ago');
+    expect(formatTimeAgo(now - 60 * 1_000)).toBe('1 minute ago');
+    expect(formatTimeAgo(now - 3 * 3_600_000)).toBe('3 hours ago');
+    expect(formatTimeAgo(now - 2 * 86_400_000)).toBe('2 days ago');
   });
 });

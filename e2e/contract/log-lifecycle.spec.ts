@@ -1,4 +1,3 @@
-import { expect, test } from '@playwright/test';
 import { createAgent, uniqueAgentName } from '../fixtures/agents';
 import {
   CHAT_COMPLETIONS_PATH,
@@ -9,6 +8,7 @@ import {
   uniqueModelName,
 } from '../fixtures/gateway';
 import { createSkill } from '../fixtures/skills';
+import { expect, test } from '../fixtures/test';
 
 /**
  * The log row a request opens on arrival.
@@ -264,17 +264,21 @@ test.describe('the log row a request opens', () => {
       });
       expect(response.status()).toBeGreaterThanOrEqual(400);
 
+      // Closed, not merely present: the row is opened when the request
+      // arrives and closed when it fails, so waiting for it to exist can
+      // catch it still running and read a null `end_time` as a failure to
+      // close it.
       await expect
         .poll(
           async () => {
-            const logs = await request
+            const logs = (await request
               .get(`${LOGS_PATH}?agent_id=${agent.id}`)
-              .then((r) => r.json());
-            return logs.length;
+              .then((r) => r.json())) as { end_time: number | null }[];
+            return logs.filter((row) => row.end_time !== null).length;
           },
           {
             timeout: 15_000,
-            message: 'the failed request left no trace',
+            message: 'the failed request left no closed trace',
           },
         )
         .toBe(1);

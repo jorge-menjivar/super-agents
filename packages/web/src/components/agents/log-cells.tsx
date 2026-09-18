@@ -1,7 +1,7 @@
 'use client';
 
 import { PrettyFunctionName } from '@shared/types/api/request/function-name';
-import type { Log } from '@shared/types/data';
+import type { LogSummary } from '@shared/types/data';
 import { Badge } from '@web/components/ui/badge';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import type { ReactElement } from 'react';
@@ -10,6 +10,10 @@ import { useEffect, useState } from 'react';
 /**
  * The cells a log is read by, shared between the logs table and the dashboard
  * cards that summarise it.
+ *
+ * They take a `LogSummary` -- the row without the conversation, which is what
+ * a list fetches -- and a whole `Log` satisfies that, so the log detail can
+ * draw its own row with the same cells.
  *
  * They live together because they answer one question between them -- how did
  * this request go -- and because a row is now written when a request arrives
@@ -46,7 +50,7 @@ const statusVariant = (status: number | null) => {
 };
 
 /** Whether the request this log describes is still running. */
-export const isRunning = (log: Log): boolean => log.end_time === null;
+export const isRunning = (log: LogSummary): boolean => log.end_time === null;
 
 /**
  * The duration of a request that has not finished, counting up.
@@ -72,7 +76,7 @@ function TickingDuration({ startTime }: { startTime: number }): ReactElement {
 }
 
 /** How long the request took, or how long it has been going. */
-export function LogDuration({ log }: { log: Log }): ReactElement {
+export function LogDuration({ log }: { log: LogSummary }): ReactElement {
   return (
     <span className={`font-mono text-xs tabular-nums ${DURATION_WIDTH}`}>
       {isRunning(log) ? (
@@ -93,7 +97,7 @@ export function LogDuration({ log }: { log: Log }): ReactElement {
  * caller was given, so a failure reads the same here whether it came from the
  * provider or from the gateway ahead of it.
  */
-export function LogStatusBadge({ log }: { log: Log }): ReactElement {
+export function LogStatusBadge({ log }: { log: LogSummary }): ReactElement {
   if (isRunning(log)) {
     return (
       <Badge variant="secondary" className={`gap-1.5 ${STATUS_WIDTH}`}>
@@ -111,7 +115,7 @@ export function LogStatusBadge({ log }: { log: Log }): ReactElement {
 }
 
 /** The judges' verdict, once there is one. */
-export function LogEvalScore({ log }: { log: Log }): ReactElement {
+export function LogEvalScore({ log }: { log: LogSummary }): ReactElement {
   const score = log.avg_eval_score;
 
   if (score === null || score === undefined) {
@@ -138,14 +142,14 @@ export function LogEvalScore({ log }: { log: Log }): ReactElement {
  * The pretty name rather than the raw one: `chat_complete` is the wire
  * spelling, not something anyone reads a table by.
  */
-export function LogFunction({ log }: { log: Log }): ReactElement {
+export function LogFunction({ log }: { log: LogSummary }): ReactElement {
   return (
     <>{PrettyFunctionName[log.function_name] || log.function_name || 'N/A'}</>
   );
 }
 
 /** The model that served it, once one has. */
-export function LogModel({ log }: { log: Log }): ReactElement {
+export function LogModel({ log }: { log: LogSummary }): ReactElement {
   return <span className="text-xs">{log.model ?? '—'}</span>;
 }
 

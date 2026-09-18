@@ -35,6 +35,7 @@ import {
   type LogCreateParams,
   type LogFailParams,
   type LogStartParams,
+  LogSummary,
   type LogsQueryParams,
 } from '@shared/types/data/log';
 import {
@@ -45,8 +46,10 @@ import {
 } from '@shared/types/data/model';
 import type { SkillQueryParams } from '@shared/types/data/skill';
 import {
+  type RecentSkill,
   Skill,
   type SkillCreateParams,
+  type SkillReadiness,
   type SkillUpdateParams,
 } from '@shared/types/data/skill';
 import {
@@ -630,6 +633,107 @@ export const supabaseUserDataStorageConnector: UserDataStorageConnector = {
       z.array(z.object({ models: Model })),
     );
     return models.map((item) => item.models);
+  },
+
+  /**
+   * Three reads rather than one query, because PostgREST has no GROUP BY: the
+   * agent's skills, then the rows that hang off them, counted here. The rows
+   * carry one column each, so what comes back is a list of ids however many
+   * models a skill has.
+   *
+   * Every skill of the agent is in the result, including the ones with
+   * nothing -- which are the ones the caller is looking for.
+   */
+  getSkillReadiness: async (
+    c: AppContext,
+    agentId: string,
+  ): Promise<SkillReadiness[]> => {
+    const skills = await selectFromSupabase(
+      c,
+      'skills',
+      { agent_id: `eq.${agentId}`, select: 'id,optimize' },
+      z.array(z.object({ id: z.uuid(), optimize: z.boolean() })),
+    );
+    if (skills.length === 0) return [];
+
+    const skillIds = skills.map((skill) => skill.id);
+    const [modelRows, evaluationRows] = await Promise.all([
+      selectFromSupabase(
+        c,
+        'skill_models',
+        { skill_id: `in.(${skillIds.join(',')})`, select: 'skill_id' },
+        z.array(z.object({ skill_id: z.uuid() })),
+      ),
+      // This table names the agent itself, so it needs no id list.
+      selectFromSupabase(
+        c,
+        'skill_optimization_evaluations',
+        { agent_id: `eq.${agentId}`, select: 'skill_id' },
+        z.array(z.object({ skill_id: z.uuid() })),
+      ),
+    ]);
+
+    const tally = (rows: { skill_id: string }[]): Map<string, number> => {
+      const counts = new Map<string, number>();
+      for (const row of rows) {
+        counts.set(row.skill_id, (counts.get(row.skill_id) ?? 0) + 1);
+      }
+      return counts;
+    };
+    const models = tally(modelRows);
+    const evaluations = tally(evaluationRows);
+
+    return skills.map(({ id, optimize }) => ({
+      skill_id: id,
+      optimize,
+      model_count: models.get(id) ?? 0,
+      evaluation_count: evaluations.get(id) ?? 0,
+    }));
+  },
+
+  /**
+   * One read, because PostgREST can limit an embedded resource: the agent's
+   * skills, each with the single newest of its logs. The ordering is done
+   * here rather than by the database, since the column it sorts on lives
+   * inside the embed.
+   */
+  getRecentSkills: async (
+    c: AppContext,
+    agentId: string,
+    limit: number,
+  ): Promise<RecentSkill[]> => {
+    const skills = await selectFromSupabase(
+      c,
+      'skills',
+      {
+        agent_id: `eq.${agentId}`,
+        select: 'id,name,logs(start_time)',
+        'logs.order': 'start_time.desc',
+        'logs.limit': '1',
+      },
+      z.array(
+        z.object({
+          id: z.uuid(),
+          name: z.string(),
+          logs: z.array(z.object({ start_time: z.number() })),
+        }),
+      ),
+    );
+
+    return skills
+      .flatMap((skill) =>
+        skill.logs.length === 0
+          ? []
+          : [
+              {
+                skill_id: skill.id,
+                name: skill.name,
+                last_used_at: skill.logs[0].start_time,
+              },
+            ],
+      )
+      .sort((a, b) => b.last_used_at - a.last_used_at)
+      .slice(0, limit);
   },
 
   getSkillsByModelId: async (
@@ -1413,92 +1517,116 @@ export const supabaseCacheStorageConnector: CacheStorageConnector = {
   },
 };
 
-export const supabaseLogsStorageConnector: LogsStorageConnector = {
-  getLogs: async (
-    c: AppContext,
-    queryParams: LogsQueryParams,
-  ): Promise<Log[]> => {
-    const postgRESTQuery: Record<string, string> = {
-      order: queryParams.order === 'asc' ? 'start_time.asc' : 'start_time.desc',
-    };
+/**
+ * The PostgREST query a list of logs is read by, against whichever relation
+ * the caller wants its columns from: `logs_with_eval_scores` for whole rows,
+ * `logs_summary` for the scalars a table draws.
+ */
+const logsPostgRESTQuery = (
+  relation: 'logs_with_eval_scores' | 'logs_summary',
+  queryParams: LogsQueryParams,
+): Record<string, string> => {
+  const postgRESTQuery: Record<string, string> = {
+    order: queryParams.order === 'asc' ? 'start_time.asc' : 'start_time.desc',
+  };
 
-    if (queryParams.agent_id) {
-      postgRESTQuery.agent_id = `eq.${queryParams.agent_id}`;
-    }
-    if (queryParams.skill_id) {
-      postgRESTQuery.skill_id = `eq.${queryParams.skill_id}`;
-    }
-    if (queryParams.cluster_id) {
-      postgRESTQuery.cluster_id = `eq.${queryParams.cluster_id}`;
-    }
-    if (queryParams.arm_id) {
-      // As in the libSQL connector: the arm is not a column, it is recorded
-      // on the log as `metadata.served_configuration`.
-      postgRESTQuery['metadata->served_configuration->>id'] =
-        `eq.${queryParams.arm_id}`;
-    }
-    if (queryParams.app_id) {
-      postgRESTQuery.app_id = `eq.${queryParams.app_id}`;
-    }
-    if (queryParams.trace_id) {
-      postgRESTQuery.trace_id = `eq.${queryParams.trace_id}`;
-    }
-    if (queryParams.id) {
-      postgRESTQuery.id = `eq.${queryParams.id}`;
-    }
-    if (queryParams.method) {
-      postgRESTQuery.method = `eq.${queryParams.method}`;
-    }
-    if (queryParams.endpoint) {
-      postgRESTQuery.endpoint = `eq.${queryParams.endpoint}`;
-    }
-    if (queryParams.function_name) {
-      postgRESTQuery.function_name = `eq.${queryParams.function_name}`;
-    }
-    if (queryParams.status) {
-      postgRESTQuery.status = `eq.${queryParams.status}`;
-    }
-    if (queryParams.cache_status) {
-      postgRESTQuery.cache_status = `eq.${queryParams.cache_status}`;
-    }
-    if (queryParams.limit) {
-      postgRESTQuery.limit = queryParams.limit.toString();
-    }
-    if (queryParams.offset) {
-      postgRESTQuery.offset = queryParams.offset.toString();
-    }
+  if (queryParams.agent_id) {
+    postgRESTQuery.agent_id = `eq.${queryParams.agent_id}`;
+  }
+  if (queryParams.skill_id) {
+    postgRESTQuery.skill_id = `eq.${queryParams.skill_id}`;
+  }
+  if (queryParams.cluster_id) {
+    postgRESTQuery.cluster_id = `eq.${queryParams.cluster_id}`;
+  }
+  if (queryParams.arm_id) {
+    // As in the libSQL connector: the arm is not a column, it is recorded
+    // on the log as `metadata.served_configuration`.
+    postgRESTQuery['metadata->served_configuration->>id'] =
+      `eq.${queryParams.arm_id}`;
+  }
+  if (queryParams.app_id) {
+    postgRESTQuery.app_id = `eq.${queryParams.app_id}`;
+  }
+  if (queryParams.trace_id) {
+    postgRESTQuery.trace_id = `eq.${queryParams.trace_id}`;
+  }
+  if (queryParams.id) {
+    postgRESTQuery.id = `eq.${queryParams.id}`;
+  }
+  if (queryParams.method) {
+    postgRESTQuery.method = `eq.${queryParams.method}`;
+  }
+  if (queryParams.endpoint) {
+    postgRESTQuery.endpoint = `eq.${queryParams.endpoint}`;
+  }
+  if (queryParams.function_name) {
+    postgRESTQuery.function_name = `eq.${queryParams.function_name}`;
+  }
+  if (queryParams.status) {
+    postgRESTQuery.status = `eq.${queryParams.status}`;
+  }
+  if (queryParams.cache_status) {
+    postgRESTQuery.cache_status = `eq.${queryParams.cache_status}`;
+  }
+  if (queryParams.limit) {
+    postgRESTQuery.limit = queryParams.limit.toString();
+  }
+  if (queryParams.offset) {
+    postgRESTQuery.offset = queryParams.offset.toString();
+  }
 
-    if (queryParams.unjudged) {
-      postgRESTQuery.eval_run_count = 'eq.0';
-    }
-    if (queryParams.embedding_not_null) {
+  if (queryParams.unjudged) {
+    postgRESTQuery.eval_run_count = 'eq.0';
+  }
+  if (queryParams.embedding_not_null) {
+    // The summary view leaves the embedding out, and answers for whether
+    // there is one with a column of its own.
+    if (relation === 'logs_summary') {
+      postgRESTQuery.has_embedding = 'is.true';
+    } else {
       postgRESTQuery.embedding = 'not.is.null';
     }
+  }
 
-    if (queryParams.after) {
-      postgRESTQuery.start_time = `gte.${queryParams.after}`;
+  if (queryParams.after) {
+    postgRESTQuery.start_time = `gte.${queryParams.after}`;
+  }
+  if (queryParams.before) {
+    // If we already have a start_time filter, we need to combine them
+    if (postgRESTQuery.start_time) {
+      // For range queries, we'll use PostgREST's and operator syntax
+      postgRESTQuery.and = `(start_time.gte.${queryParams.after},start_time.lte.${queryParams.before})`;
+      delete postgRESTQuery.start_time;
+    } else {
+      postgRESTQuery.start_time = `lte.${queryParams.before}`;
     }
-    if (queryParams.before) {
-      // If we already have a start_time filter, we need to combine them
-      if (postgRESTQuery.start_time) {
-        // For range queries, we'll use PostgREST's and operator syntax
-        postgRESTQuery.and = `(start_time.gte.${queryParams.after},start_time.lte.${queryParams.before})`;
-        delete postgRESTQuery.start_time;
-      } else {
-        postgRESTQuery.start_time = `lte.${queryParams.before}`;
-      }
-    }
+  }
 
-    // Use the logs_with_eval_scores view to include computed evaluation scores
-    const logs = await selectFromSupabase(
+  return postgRESTQuery;
+};
+
+export const supabaseLogsStorageConnector: LogsStorageConnector = {
+  // Reads go through the logs_with_eval_scores view, which carries the
+  // computed avg_eval_score and eval_run_count.
+  getLogs: (c: AppContext, queryParams: LogsQueryParams): Promise<Log[]> =>
+    selectFromSupabase(
       c,
       'logs_with_eval_scores',
-      postgRESTQuery,
+      logsPostgRESTQuery('logs_with_eval_scores', queryParams),
       z.array(Log),
-    );
+    ),
 
-    return logs;
-  },
+  getLogSummaries: (
+    c: AppContext,
+    queryParams: LogsQueryParams,
+  ): Promise<LogSummary[]> =>
+    selectFromSupabase(
+      c,
+      'logs_summary',
+      logsPostgRESTQuery('logs_summary', queryParams),
+      z.array(LogSummary),
+    ),
 
   startLog: async (
     c: AppContext,

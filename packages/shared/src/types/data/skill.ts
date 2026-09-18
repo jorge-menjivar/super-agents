@@ -81,6 +81,50 @@ export const Skill = z.object({
 });
 export type Skill = z.infer<typeof Skill>;
 
+/**
+ * What a skill needs before it can serve, counted: `isSkillReady` decides
+ * from these two numbers and the skill's own `optimize`.
+ *
+ * Counted for a whole agent at once, because that is the question every
+ * surface actually asks. The sidebar draws a warning on an agent whose skills
+ * are not all ready, a card draws one per skill, and answering those one
+ * skill at a time meant two requests per skill on every page that listed any.
+ */
+export const SkillReadiness = z.object({
+  skill_id: z.uuid(),
+  model_count: z.int().min(0),
+  evaluation_count: z.int().min(0),
+  /**
+   * Whether the skill is being optimized, which is what decides that a
+   * missing evaluation matters. It travels with the counts so that deciding
+   * readiness needs nothing else: without it every caller had to fetch the
+   * agent's skills as well, and a skill row carries the seed system prompt
+   * the gateway created it from -- hundreds of kilobytes to read one boolean.
+   */
+  optimize: z.boolean(),
+});
+
+export type SkillReadiness = z.infer<typeof SkillReadiness>;
+
+/**
+ * A skill of an agent and when it last served, for the dashboard's "recently
+ * used" list.
+ *
+ * The skill row does not know this: `total_requests` counts them and
+ * `updated_at` moves for clustering and edits alike, so the last time a skill
+ * actually answered is only in its logs. It is asked for per agent, five rows
+ * at a time, so that a card listing the newest few costs one small request
+ * rather than a page of skills and a page of logs.
+ */
+export const RecentSkill = z.object({
+  skill_id: z.uuid(),
+  name: z.string(),
+  /** Unix milliseconds: the `start_time` of the skill's most recent request. */
+  last_used_at: z.number(),
+});
+
+export type RecentSkill = z.infer<typeof RecentSkill>;
+
 export const SkillQueryParams = z
   .object({
     id: z.uuid().optional(),

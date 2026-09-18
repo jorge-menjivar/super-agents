@@ -112,6 +112,7 @@ describe('toolMiddleware', () => {
       // Evaluation runs
       // Log methods (required by interface)
       getLogs: vi.fn(),
+      getLogSummaries: vi.fn(),
       deleteLog: vi.fn(),
       // Dataset-Log Bridge methods (required by interface)
       getDatasetLogs: vi.fn(),
@@ -139,6 +140,8 @@ describe('toolMiddleware', () => {
       deleteModel: vi.fn(),
       // Skill-Model relationship methods
       getSkillModels: vi.fn(),
+      getSkillReadiness: vi.fn(),
+      getRecentSkills: vi.fn(),
       getSkillsByModelId: vi.fn(),
       addModelsToSkill: vi.fn(),
       removeModelsFromSkill: vi.fn(),

@@ -40,6 +40,15 @@ const JSON_COLUMNS: Record<string, string[]> = {
 // The view is `SELECT l.*` plus two computed columns, so it decodes like logs.
 JSON_COLUMNS.logs_with_eval_scores = JSON_COLUMNS.logs;
 
+// The summary view leaves the bodies out and keeps the provider's parameters
+// with the conversation removed, so it decodes a different set.
+JSON_COLUMNS.logs_summary = [
+  'hook_logs',
+  'metadata',
+  'user_metadata',
+  'provider_request_params',
+];
+
 /** Columns stored as INTEGER 0/1 that the schemas expect as booleans. */
 const BOOL_COLUMNS: Record<string, string[]> = {
   agents: ['auto_create_skills', 'review_fail_closed', 'review_expose_reason'],

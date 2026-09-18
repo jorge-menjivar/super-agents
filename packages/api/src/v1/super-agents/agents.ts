@@ -146,6 +146,66 @@ export const agentsRouter = new Hono<AppEnv>()
       }
     },
   )
+  /**
+   * What each of the agent's skills has, for deciding whether it is ready.
+   *
+   * One answer for every skill, because the dashboard asks about all of them
+   * at once: a page of skill cards, and a sidebar that marks an agent whose
+   * skills are not all ready. Asking per skill meant two requests each, on
+   * every page that listed any.
+   */
+  .get(
+    '/:agentId/skill-readiness',
+    zValidator('param', z.object({ agentId: z.uuid() })),
+    async (c) => {
+      try {
+        const { agentId } = c.req.valid('param');
+        const readiness = await c
+          .get('user_data_storage_connector')
+          .getSkillReadiness(c, agentId);
+
+        return c.json(readiness, 200);
+      } catch (error) {
+        console.error('Error fetching skill readiness:', error);
+        const errorInfo = parseDatabaseError(error);
+        return c.json({ error: errorInfo.message }, errorInfo.statusCode);
+      }
+    },
+  )
+  /**
+   * The agent's skills that served most recently, newest first.
+   *
+   * The skills themselves cannot answer this: a skill row counts its
+   * requests but does not remember when the last one was, and its
+   * `updated_at` moves for clustering and edits as well. So it is read from
+   * the logs, and answered as a handful of names rather than as skill rows,
+   * which carry the system prompts the gateway seeded them from.
+   */
+  .get(
+    '/:agentId/recent-skills',
+    zValidator('param', z.object({ agentId: z.uuid() })),
+    zValidator(
+      'query',
+      z.object({
+        limit: z.coerce.number().int().min(1).max(25).default(5),
+      }),
+    ),
+    async (c) => {
+      try {
+        const { agentId } = c.req.valid('param');
+        const { limit } = c.req.valid('query');
+        const recent = await c
+          .get('user_data_storage_connector')
+          .getRecentSkills(c, agentId, limit);
+
+        return c.json(recent, 200);
+      } catch (error) {
+        console.error('Error fetching recent skills:', error);
+        const errorInfo = parseDatabaseError(error);
+        return c.json({ error: errorInfo.message }, errorInfo.statusCode);
+      }
+    },
+  )
   // The agent's default models: what a skill the gateway creates for it
   // starts with. Same shape as the skill's own model routes.
   .get(

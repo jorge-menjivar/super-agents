@@ -2,7 +2,7 @@ import type { Agent } from '@shared/types/data';
 import { validateAgent } from '@shared/utils/agent-validation';
 import { useQuery } from '@tanstack/react-query';
 import { getAgentModels } from '@web/api/v1/super-agents/agents';
-import { getSkills } from '@web/api/v1/super-agents/skills';
+import { useAgentSkillReadiness } from '@web/hooks/use-skill-readiness';
 
 export interface UseAgentValidationResult {
   isReady: boolean;
@@ -22,15 +22,13 @@ export interface UseAgentValidationResult {
 export function useAgentValidation(
   agent: Agent | null | undefined,
 ): UseAgentValidationResult {
-  const { data: skills = [], isLoading: isLoadingSkills } = useQuery({
-    queryKey: ['agent-validation', agent?.id],
-    queryFn: async () => {
-      if (!agent) return [];
-      return await getSkills({ agent_id: agent.id });
-    },
-    enabled: !!agent,
-    staleTime: 30 * 1000, // Cache for 30 seconds
-  });
+  // How many skills there are is all this needs, and the readiness answer is
+  // a row per skill -- so it is counted from the answer the readiness marks
+  // already read rather than by fetching the skills themselves, which carry
+  // the seed system prompts the gateway created them from.
+  const { readiness, isLoading: isLoadingSkills } = useAgentSkillReadiness(
+    agent?.id,
+  );
 
   // Only decisive for an agent without skills that creates them.
   const { data: defaultModels = [], isLoading: isLoadingModels } = useQuery({
@@ -43,7 +41,7 @@ export function useAgentValidation(
     staleTime: 30 * 1000,
   });
 
-  const skillsCount = skills.length;
+  const skillsCount = readiness.size;
   const defaultModelsCount = defaultModels.length;
   const { isReady, missingRequirements } = agent
     ? validateAgent(agent, skillsCount, defaultModelsCount)
