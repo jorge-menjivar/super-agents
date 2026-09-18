@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * a card cannot end up unable to show a failure the table shows.
  */
 
+const navigateToLogDetail = vi.fn();
+
 const logs = vi.hoisted(() => ({
   value: [
     {
@@ -42,6 +44,10 @@ vi.mock('@web/providers/agents', () => ({
       name: 'menjivar-website',
     },
   }),
+}));
+
+vi.mock('@web/providers/navigation', () => ({
+  useNavigation: () => ({ navigateToLogDetail }),
 }));
 
 vi.mock('@web/providers/skills', () => ({
@@ -86,6 +92,7 @@ describe('AgentRecentLogsCard', () => {
   };
 
   beforeEach(() => {
+    vi.clearAllMocks();
     logs.value = [completedLog];
     queryLogSummaries.mockImplementation(() => Promise.resolve(logs.value));
   });
@@ -165,15 +172,42 @@ describe('AgentRecentLogsCard', () => {
     expect(await screen.findByText('502')).toBeInTheDocument();
   });
 
-  it('opens the agent-wide logs page', async () => {
+  it('opens the agent-wide logs page from a button of its own', async () => {
     renderCard();
 
-    fireEvent.click(
-      await screen.findByText('Recent requests across all skills'),
-    );
+    // The card itself is not the control: a card that swallowed every click
+    // could not have rows that went anywhere else, and a div with an onClick
+    // is reachable by pointer alone.
+    fireEvent.click(await screen.findByRole('button', { name: /view all/i }));
 
     expect(navigate).toHaveBeenCalledWith({
       to: '/agents/menjivar-website/logs',
     });
+  });
+
+  it('opens one request from its own row', async () => {
+    renderCard();
+
+    const row = await screen.findByRole('button', {
+      name: /chat_complete at .*200/i,
+    });
+    fireEvent.click(row);
+
+    expect(navigateToLogDetail).toHaveBeenCalledWith(
+      'menjivar-website',
+      'log-1',
+    );
+    // And the row does not also take the reader to the list.
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('reaches every row by keyboard, not by pointer alone', async () => {
+    renderCard();
+
+    const row = await screen.findByRole('button', {
+      name: /chat_complete at .*200/i,
+    });
+    row.focus();
+    expect(row).toHaveFocus();
   });
 });

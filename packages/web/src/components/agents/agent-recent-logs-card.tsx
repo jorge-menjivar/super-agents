@@ -2,6 +2,7 @@
 
 import { LogTagBadge } from '@web/components/agents/log-cells';
 import { RecentLogsTable } from '@web/components/agents/recent-logs-table';
+import { Button } from '@web/components/ui/button';
 import {
   Card,
   CardContent,
@@ -13,6 +14,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { usePermissiveNavigate } from '@web/hooks/use-permissive-navigate';
 import { useRecentLogs } from '@web/hooks/use-recent-logs';
 import { useAgents } from '@web/providers/agents';
+import { useNavigation } from '@web/providers/navigation';
 import { useSkills } from '@web/providers/skills';
 import { FileTextIcon } from 'lucide-react';
 import { nanoid } from 'nanoid';
@@ -25,6 +27,7 @@ import type { ReactElement } from 'react';
  */
 export function AgentRecentLogsCard(): ReactElement | null {
   const navigate = usePermissiveNavigate();
+  const { navigateToLogDetail } = useNavigation();
   const { selectedAgent } = useAgents();
   const { skills } = useSkills();
   const { logs: recentLogs, isLoading } = useRecentLogs({
@@ -35,21 +38,24 @@ export function AgentRecentLogsCard(): ReactElement | null {
     return null;
   }
 
+  const viewAllLogs = () =>
+    navigate({
+      to: `/agents/${encodeURIComponent(selectedAgent.name)}/logs`,
+    });
+
   return (
-    <Card
-      className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all"
-      onClick={() =>
-        navigate({
-          to: `/agents/${encodeURIComponent(selectedAgent.name)}/logs`,
-        })
-      }
-    >
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <div>
-          <CardTitle className="text-base font-medium">Logs</CardTitle>
-          <CardDescription>Recent requests across all skills</CardDescription>
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+        <div className="flex items-center gap-2">
+          <FileTextIcon className="h-5 w-5 text-muted-foreground" />
+          <div>
+            <CardTitle className="text-lg">Logs</CardTitle>
+            <CardDescription>Recent requests across all skills</CardDescription>
+          </div>
         </div>
-        <FileTextIcon className="h-4 w-4 text-muted-foreground" />
+        <Button variant="outline" size="sm" onClick={viewAllLogs}>
+          View all
+        </Button>
       </CardHeader>
       <CardContent className="p-0">
         {isLoading ? (
@@ -64,6 +70,9 @@ export function AgentRecentLogsCard(): ReactElement | null {
           <div className="m-4 border rounded-lg overflow-hidden">
             <RecentLogsTable
               logs={recentLogs}
+              onLogSelect={(log) =>
+                navigateToLogDetail(selectedAgent.name, log.id)
+              }
               context={{
                 header: 'Skill',
                 render: (log) => (
