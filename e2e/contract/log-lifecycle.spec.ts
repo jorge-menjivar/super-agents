@@ -1,4 +1,3 @@
-import { expect, test } from '@playwright/test';
 import { createAgent, uniqueAgentName } from '../fixtures/agents';
 import {
   CHAT_COMPLETIONS_PATH,
@@ -9,6 +8,7 @@ import {
   uniqueModelName,
 } from '../fixtures/gateway';
 import { createSkill } from '../fixtures/skills';
+import { expect, test } from '../fixtures/test';
 
 /**
  * The log row a request opens on arrival.

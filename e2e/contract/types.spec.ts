@@ -1,4 +1,3 @@
-import { expect, test } from '@playwright/test';
 import {
   AGENTS_PATH,
   createAgent,
@@ -7,6 +6,7 @@ import {
   uniqueAgentName,
 } from '../fixtures/agents';
 import { createSkill, getSkills, SKILLS_PATH } from '../fixtures/skills';
+import { expect, test } from '../fixtures/test';
 
 /**
  * The column-type contract both storage backends have to satisfy.
