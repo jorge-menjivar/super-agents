@@ -48,6 +48,7 @@ import type { SkillQueryParams } from '@shared/types/data/skill';
 import {
   Skill,
   type SkillCreateParams,
+  type SkillReadiness,
   type SkillUpdateParams,
 } from '@shared/types/data/skill';
 import {
@@ -631,6 +632,62 @@ export const supabaseUserDataStorageConnector: UserDataStorageConnector = {
       z.array(z.object({ models: Model })),
     );
     return models.map((item) => item.models);
+  },
+
+  /**
+   * Three reads rather than one query, because PostgREST has no GROUP BY: the
+   * agent's skills, then the rows that hang off them, counted here. The rows
+   * carry one column each, so what comes back is a list of ids however many
+   * models a skill has.
+   *
+   * Every skill of the agent is in the result, including the ones with
+   * nothing -- which are the ones the caller is looking for.
+   */
+  getSkillReadiness: async (
+    c: AppContext,
+    agentId: string,
+  ): Promise<SkillReadiness[]> => {
+    const skills = await selectFromSupabase(
+      c,
+      'skills',
+      { agent_id: `eq.${agentId}`, select: 'id,optimize' },
+      z.array(z.object({ id: z.uuid(), optimize: z.boolean() })),
+    );
+    if (skills.length === 0) return [];
+
+    const skillIds = skills.map((skill) => skill.id);
+    const [modelRows, evaluationRows] = await Promise.all([
+      selectFromSupabase(
+        c,
+        'skill_models',
+        { skill_id: `in.(${skillIds.join(',')})`, select: 'skill_id' },
+        z.array(z.object({ skill_id: z.uuid() })),
+      ),
+      // This table names the agent itself, so it needs no id list.
+      selectFromSupabase(
+        c,
+        'skill_optimization_evaluations',
+        { agent_id: `eq.${agentId}`, select: 'skill_id' },
+        z.array(z.object({ skill_id: z.uuid() })),
+      ),
+    ]);
+
+    const tally = (rows: { skill_id: string }[]): Map<string, number> => {
+      const counts = new Map<string, number>();
+      for (const row of rows) {
+        counts.set(row.skill_id, (counts.get(row.skill_id) ?? 0) + 1);
+      }
+      return counts;
+    };
+    const models = tally(modelRows);
+    const evaluations = tally(evaluationRows);
+
+    return skills.map(({ id, optimize }) => ({
+      skill_id: id,
+      optimize,
+      model_count: models.get(id) ?? 0,
+      evaluation_count: evaluations.get(id) ?? 0,
+    }));
   },
 
   getSkillsByModelId: async (

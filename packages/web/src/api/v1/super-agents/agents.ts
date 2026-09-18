@@ -6,6 +6,7 @@ import {
   type AgentUpdateParams,
   Model,
   SkillOptimizationEvaluationRun,
+  SkillReadiness,
 } from '@shared/types/data';
 import { API_URL } from '@web/constants';
 import { hc } from 'hono/client';
@@ -134,6 +135,24 @@ export async function getAgentEvaluationScoresByTimeBucket(
 }
 
 /** The agent's default models: what a skill the gateway creates for it starts with. */
+/**
+ * What each of the agent's skills has: the counts `isSkillReady` decides
+ * from, for every skill in one request.
+ */
+export async function getAgentSkillReadiness(
+  agentId: string,
+): Promise<SkillReadiness[]> {
+  const response = await client.v1['super-agents'].agents[':agentId'][
+    'skill-readiness'
+  ].$get({ param: { agentId } });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch skill readiness for agent');
+  }
+
+  return SkillReadiness.array().parse(await response.json());
+}
+
 export async function getAgentModels(agentId: string): Promise<Model[]> {
   const response = await client.v1['super-agents'].agents[
     ':agentId'

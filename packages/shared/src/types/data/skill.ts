@@ -81,6 +81,31 @@ export const Skill = z.object({
 });
 export type Skill = z.infer<typeof Skill>;
 
+/**
+ * What a skill needs before it can serve, counted: `isSkillReady` decides
+ * from these two numbers and the skill's own `optimize`.
+ *
+ * Counted for a whole agent at once, because that is the question every
+ * surface actually asks. The sidebar draws a warning on an agent whose skills
+ * are not all ready, a card draws one per skill, and answering those one
+ * skill at a time meant two requests per skill on every page that listed any.
+ */
+export const SkillReadiness = z.object({
+  skill_id: z.uuid(),
+  model_count: z.int().min(0),
+  evaluation_count: z.int().min(0),
+  /**
+   * Whether the skill is being optimized, which is what decides that a
+   * missing evaluation matters. It travels with the counts so that deciding
+   * readiness needs nothing else: without it every caller had to fetch the
+   * agent's skills as well, and a skill row carries the seed system prompt
+   * the gateway created it from -- hundreds of kilobytes to read one boolean.
+   */
+  optimize: z.boolean(),
+});
+
+export type SkillReadiness = z.infer<typeof SkillReadiness>;
+
 export const SkillQueryParams = z
   .object({
     id: z.uuid().optional(),
