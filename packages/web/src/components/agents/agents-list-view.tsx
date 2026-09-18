@@ -16,6 +16,7 @@ import { PageHeader } from '@web/components/ui/page-header';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { usePermissiveNavigate } from '@web/hooks/use-permissive-navigate';
 import { useAgents } from '@web/providers/agents';
+import { buttonLike } from '@web/utils/ui/button-like';
 import { PlusIcon, SearchIcon } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import type { ReactElement } from 'react';
@@ -129,8 +130,12 @@ export function AgentsListView(): ReactElement {
               return (
                 <Card
                   key={agent.id}
-                  className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all"
-                  onClick={() => handleAgentSelect(agent)}
+                  {...buttonLike({
+                    onActivate: () => handleAgentSelect(agent),
+                    label: `${agent.name} agent`,
+                    className:
+                      'cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all',
+                  })}
                 >
                   <CardHeader className="pb-3">
                     <div className="flex items-start gap-3 mb-2">

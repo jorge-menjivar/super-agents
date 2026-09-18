@@ -56,6 +56,7 @@ import { useSkillOptimizationClusters } from '@web/providers/skill-optimization-
 import { useSkills } from '@web/providers/skills';
 import { createClusterAvatar, createSkillAvatar } from '@web/utils/avatars';
 import { scoreRangeForWindow } from '@web/utils/chart-window';
+import { buttonLike } from '@web/utils/ui/button-like';
 import {
   AlertCircle,
   CalendarIcon,
@@ -597,14 +598,19 @@ export function SkillDashboardView(): ReactElement {
               {clusterStates.map((cluster) => (
                 <Card
                   key={cluster.id}
-                  className="min-w-[300px] cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all"
-                  onClick={() =>
-                    navigateToClusterArms(
-                      selectedAgent.name,
-                      selectedSkill.name,
-                      cluster.name,
-                    )
-                  }
+                  {...buttonLike({
+                    onActivate: () =>
+                      navigateToClusterArms(
+                        selectedAgent.name,
+                        selectedSkill.name,
+                        cluster.name,
+                      ),
+                    // The card holds a chart, and a button is named by what
+                    // is inside it unless it says otherwise.
+                    label: `Partition ${cluster.name}`,
+                    className:
+                      'min-w-[300px] cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all',
+                  })}
                 >
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg leading-none mb-2 flex items-center gap-2">
@@ -734,24 +740,30 @@ export function SkillDashboardView(): ReactElement {
           </Card>
 
           {/* Events Card */}
-          <Card
-            className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all"
-            onClick={() =>
-              navigate({
-                to: '/agents/$agentName/skills/$skillName/events',
-                params: {
-                  agentName: selectedAgent.name,
-                  skillName: selectedSkill.name,
-                },
-              })
-            }
-          >
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div>
-                <CardTitle className="text-base font-medium">Events</CardTitle>
-                <CardDescription>Skill changes and updates</CardDescription>
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+              <div className="flex items-center gap-2">
+                <CalendarIcon className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <CardTitle className="text-lg">Events</CardTitle>
+                  <CardDescription>Skill changes and updates</CardDescription>
+                </div>
               </div>
-              <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  navigate({
+                    to: '/agents/$agentName/skills/$skillName/events',
+                    params: {
+                      agentName: selectedAgent.name,
+                      skillName: selectedSkill.name,
+                    },
+                  })
+                }
+              >
+                View all
+              </Button>
             </CardHeader>
             <CardContent className="p-0">
               {skillEvents.length === 0 ? (

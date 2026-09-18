@@ -7,6 +7,7 @@ import {
   LogEvalScore,
   LogFunction,
   LogModel,
+  LogRowHandle,
   LogStatusBadge,
 } from '@web/components/agents/log-cells';
 import {
@@ -48,12 +49,6 @@ export interface RecentLogsTableProps {
   onLogSelect?: (log: LogSummary) => void;
 }
 
-/** What a row's control is called, since the row itself is seven cells. */
-const requestLabel = (log: LogSummary): string =>
-  `${log.function_name} at ${formatClockTime(log.start_time)}, ${
-    isRunning(log) ? 'running' : (log.status ?? 'no status')
-  }`;
-
 export function RecentLogsTable({
   logs,
   context,
@@ -88,26 +83,7 @@ export function RecentLogsTable({
           >
             <TableCell>
               {onLogSelect ? (
-                /**
-                 * The status badge is the row's handle rather than the row
-                 * itself: a `tr` is a row, and calling it a button would take
-                 * the table apart for anyone reading it as one. A real button
-                 * in the row is what a keyboard tabs to and what a
-                 * keyboard-driven browser can find -- React delegates the
-                 * row's own click at the document root, so there is no
-                 * `onclick` in the DOM for anything to see.
-                 */
-                <button
-                  type="button"
-                  aria-label={requestLabel(log)}
-                  className="rounded-md outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onLogSelect(log);
-                  }}
-                >
-                  <LogStatusBadge log={log} />
-                </button>
+                <LogRowHandle log={log} onSelect={() => onLogSelect(log)} />
               ) : (
                 <LogStatusBadge log={log} />
               )}

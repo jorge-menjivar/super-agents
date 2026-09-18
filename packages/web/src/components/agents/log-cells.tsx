@@ -3,6 +3,7 @@
 import { PrettyFunctionName } from '@shared/types/api/request/function-name';
 import type { LogSummary } from '@shared/types/data';
 import { Badge } from '@web/components/ui/badge';
+import { formatClockTime } from '@web/utils/time';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { useEffect, useState } from 'react';
@@ -111,6 +112,45 @@ export function LogStatusBadge({ log }: { log: LogSummary }): ReactElement {
     <Badge variant={statusVariant(log.status)} className={STATUS_WIDTH}>
       {log.status ?? '—'}
     </Badge>
+  );
+}
+
+/** What a row's control is called, since the row itself is a line of cells. */
+const requestLabel = (log: LogSummary): string =>
+  `${log.function_name} at ${formatClockTime(log.start_time)}, ${
+    isRunning(log) ? 'running' : (log.status ?? 'no status')
+  }`;
+
+/**
+ * The control that opens a request, wrapped around the status badge every
+ * row starts with.
+ *
+ * In the row rather than as the row: a `tr` is a row, and calling it a button
+ * would take the table apart for anyone reading it as one. It has to be a
+ * real control all the same -- React delegates the row's own click at the
+ * document root, so there is no `onclick` in the DOM for a keyboard-driven
+ * browser to find, and the row is reachable by pointer alone.
+ */
+export function LogRowHandle({
+  log,
+  onSelect,
+}: {
+  log: LogSummary;
+  onSelect: () => void;
+}): ReactElement {
+  return (
+    <button
+      type="button"
+      aria-label={requestLabel(log)}
+      className="rounded-md outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+      onClick={(event) => {
+        // The row opens the same request; once is enough.
+        event.stopPropagation();
+        onSelect();
+      }}
+    >
+      <LogStatusBadge log={log} />
+    </button>
   );
 }
 

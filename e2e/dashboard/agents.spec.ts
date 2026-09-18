@@ -328,6 +328,28 @@ test.describe('reaching the dashboard from the keyboard', () => {
       await expect(page).toHaveURL(
         new RegExp(`/agents/${name}/logs/[0-9a-f-]+$`),
       );
+
+      // The logs page itself: its rows were the same div with an onClick.
+      await page.goto(`/agents/${name}/logs`);
+      const listed = page
+        .getByRole('button', { name: /chat_complete at .*200/ })
+        .first();
+      await expect(listed).toBeVisible();
+      await listed.focus();
+      await expect(listed).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(
+        new RegExp(`/agents/${name}/logs/[0-9a-f-]+$`),
+      );
+
+      // And the agents list, which every visitor lands on first.
+      await page.goto('/agents');
+      const agentCard = page.getByRole('button', { name: `${name} agent` });
+      await expect(agentCard).toBeVisible();
+      await agentCard.focus();
+      await expect(agentCard).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(new RegExp(`/agents/${name}$`));
     } finally {
       await deleteAgent(request, agent.id);
     }
