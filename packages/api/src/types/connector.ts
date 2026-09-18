@@ -42,6 +42,7 @@ import type {
   SkillCreateParams,
   SkillQueryParams,
   SkillReadiness,
+  SkillSummary,
   SkillUpdateParams,
 } from '@shared/types/data/skill';
 import type {
@@ -234,6 +235,19 @@ export interface UserDataStorageConnector {
     agentId: string,
     limit: number,
   ): Promise<RecentSkill[]> | RecentSkill[];
+  /**
+   * The same skills with `seed_system_prompt` left out -- tens of kilobytes
+   * per skill, and almost all of what listing an agent's skills transfers.
+   *
+   * A second way to read them rather than a narrowing of the first: the
+   * gateway needs whole skills from a list, since `routeRequestToSkill` seeds
+   * a skill's identity centroid from that prompt. It is the dashboard, which
+   * renders the column nowhere, that should not be paying for it.
+   */
+  getSkillSummaries(
+    c: AppContext,
+    queryParams: SkillQueryParams,
+  ): Promise<SkillSummary[]> | SkillSummary[];
   getSkillsByModelId(
     c: AppContext,
     modelId: string,

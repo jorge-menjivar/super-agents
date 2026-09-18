@@ -111,6 +111,7 @@ const mockUserDataStorageConnector = {
   getSkillModels: vi.fn(),
   getSkillReadiness: vi.fn(),
   getRecentSkills: vi.fn(),
+  getSkillSummaries: vi.fn(),
   getSkillsByModelId: vi.fn(),
   addModelsToSkill: vi.fn(),
   removeModelsFromSkill: vi.fn(),

@@ -1,7 +1,9 @@
 import {
+  SKILL_SUMMARY_COLUMNS,
   Skill,
   SkillCreateParams,
   SkillQueryParams,
+  SkillSummary,
   SkillUpdateParams,
 } from '@shared/types/data/skill';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -746,5 +748,55 @@ describe('skills the gateway creates', () => {
         updated_at: '2026-01-01T00:00:00.000Z',
       }),
     ).toThrow();
+  });
+});
+
+describe('SkillSummary', () => {
+  const whole = {
+    id: '123e4567-e89b-12d3-a456-426614174000',
+    agent_id: '123e4567-e89b-12d3-a456-426614174001',
+    name: 'concierge',
+    description: 'z'.repeat(30),
+    metadata: {},
+    optimize: false,
+    configuration_count: 3,
+    clustering_interval: 15,
+    reflection_min_requests_per_arm: 3,
+    exploration_temperature: 3.0,
+    last_clustering_at: null,
+    last_clustering_log_start_time: null,
+    evaluations_regenerated_at: null,
+    evaluation_lock_acquired_at: null,
+    total_requests: 0,
+    allowed_template_variables: [],
+    auto_created: true,
+    seed_system_prompt: 'You are the concierge.',
+    created_at: '2023-01-01T00:00:00.000Z',
+    updated_at: '2023-01-01T00:00:00.000Z',
+  };
+
+  it('reads a row that left the seed prompt out', () => {
+    const { seed_system_prompt, ...summary } = whole;
+    expect(seed_system_prompt).toBe('You are the concierge.');
+
+    const parsed = SkillSummary.parse(summary);
+    expect(parsed.name).toBe('concierge');
+    expect(parsed.seed_system_prompt).toBeUndefined();
+  });
+
+  it('accepts a whole skill too, so one type serves both reads', () => {
+    const parsed = SkillSummary.parse(whole);
+    expect(parsed.seed_system_prompt).toBe('You are the concierge.');
+  });
+
+  it('names every column of a skill but that one', () => {
+    expect(SKILL_SUMMARY_COLUMNS).toEqual(
+      Object.keys(Skill.shape).filter((key) => key !== 'seed_system_prompt'),
+    );
+    // Derived from the schema, so a column added to `Skill` is read without
+    // anyone remembering to add it here.
+    expect(SKILL_SUMMARY_COLUMNS).toHaveLength(
+      Object.keys(Skill.shape).length - 1,
+    );
   });
 });

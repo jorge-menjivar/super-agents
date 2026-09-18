@@ -28,12 +28,13 @@ vi.mock('@web/providers/agents', () => ({
 // Mock the API module
 vi.mock('@web/api/v1/super-agents/skills', () => ({
   getSkills: vi.fn(),
+  getSkillSummaries: vi.fn(),
   createSkill: vi.fn(),
   updateSkill: vi.fn(),
   deleteSkill: vi.fn(),
 }));
 
-import { getSkills } from '@web/api/v1/super-agents/skills';
+import { getSkillSummaries } from '@web/api/v1/super-agents/skills';
 
 const mockSkills: Skill[] = [
   {
@@ -90,7 +91,7 @@ describe('SkillsProvider', () => {
     const secondPage = [mockSkills[1]];
 
     let callCount = 0;
-    vi.mocked(getSkills).mockImplementation((params) => {
+    vi.mocked(getSkillSummaries).mockImplementation((params) => {
       callCount++;
       if (callCount === 1) {
         expect(params).toEqual({ limit: 20, offset: 0 });
@@ -128,7 +129,7 @@ describe('SkillsProvider', () => {
   );
 
   it('should fetch skills', async () => {
-    vi.mocked(getSkills).mockResolvedValue(mockSkills);
+    vi.mocked(getSkillSummaries).mockResolvedValue(mockSkills);
 
     const { result } = renderHook(() => useSkills(), { wrapper });
 
@@ -137,7 +138,7 @@ describe('SkillsProvider', () => {
     });
 
     expect(result.current.skills).toEqual(mockSkills);
-    expect(getSkills).toHaveBeenCalledWith({
+    expect(getSkillSummaries).toHaveBeenCalledWith({
       limit: 20,
       offset: 0,
     });
@@ -145,7 +146,7 @@ describe('SkillsProvider', () => {
 
   it('should fetch with custom limit', async () => {
     const firstPage = [mockSkills[0]];
-    vi.mocked(getSkills).mockResolvedValue(firstPage);
+    vi.mocked(getSkillSummaries).mockResolvedValue(firstPage);
 
     const { result } = renderHook(() => useSkills(), { wrapper });
 
@@ -160,7 +161,7 @@ describe('SkillsProvider', () => {
 
     expect(result.current.skills).toEqual(firstPage);
     expect(result.current.hasNextPage).toBe(true);
-    expect(getSkills).toHaveBeenCalledWith({
+    expect(getSkillSummaries).toHaveBeenCalledWith({
       limit: 1,
       offset: 0,
     });
@@ -196,12 +197,12 @@ describe('SkillsProvider', () => {
       expect(result.current.skills).toEqual(mockSkills);
     });
 
-    expect(getSkills).toHaveBeenCalledTimes(3);
+    expect(getSkillSummaries).toHaveBeenCalledTimes(3);
   });
 
   it('should handle pagination with no more pages', async () => {
     const lastPage: Skill[] = [];
-    vi.mocked(getSkills).mockResolvedValue(lastPage);
+    vi.mocked(getSkillSummaries).mockResolvedValue(lastPage);
 
     const { result } = renderHook(() => useSkills(), { wrapper });
 
@@ -215,7 +216,7 @@ describe('SkillsProvider', () => {
 
   it('should filter skills by agent_id', async () => {
     const filteredSkills = [mockSkills[0]];
-    vi.mocked(getSkills).mockResolvedValue(filteredSkills);
+    vi.mocked(getSkillSummaries).mockResolvedValue(filteredSkills);
 
     const { result } = renderHook(() => useSkills(), { wrapper });
 
@@ -229,7 +230,7 @@ describe('SkillsProvider', () => {
     });
 
     expect(result.current.skills).toEqual(filteredSkills);
-    expect(getSkills).toHaveBeenCalledWith({
+    expect(getSkillSummaries).toHaveBeenCalledWith({
       agent_id: 'agent-1',
       limit: 20,
       offset: 0,
@@ -238,7 +239,7 @@ describe('SkillsProvider', () => {
 
   it('should filter skills by name', async () => {
     const filteredSkills = [mockSkills[0]];
-    vi.mocked(getSkills).mockResolvedValue(filteredSkills);
+    vi.mocked(getSkillSummaries).mockResolvedValue(filteredSkills);
 
     const { result } = renderHook(() => useSkills(), { wrapper });
 
@@ -252,7 +253,7 @@ describe('SkillsProvider', () => {
     });
 
     expect(result.current.skills).toEqual(filteredSkills);
-    expect(getSkills).toHaveBeenCalledWith({
+    expect(getSkillSummaries).toHaveBeenCalledWith({
       name: 'Skill 1',
       limit: 20,
       offset: 0,
@@ -260,7 +261,7 @@ describe('SkillsProvider', () => {
   });
 
   it('should get skill by id', async () => {
-    vi.mocked(getSkills).mockResolvedValue(mockSkills);
+    vi.mocked(getSkillSummaries).mockResolvedValue(mockSkills);
 
     const { result } = renderHook(() => useSkills(), { wrapper });
 
