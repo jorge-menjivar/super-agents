@@ -1,4 +1,4 @@
-import type { Skill } from '@shared/types/data';
+import type { SkillSummary } from '@shared/types/data';
 import { isSkillReady } from '@shared/utils/skill-validation';
 import { useAgentSkillReadiness } from '@web/hooks/use-skill-readiness';
 
@@ -19,7 +19,7 @@ export interface UseSkillValidationResult {
  * them. See `useAgentSkillReadiness`.
  */
 export function useSkillValidation(
-  skill: Skill | null | undefined,
+  skill: SkillSummary | null | undefined,
 ): UseSkillValidationResult {
   const { readiness, isLoading } = useAgentSkillReadiness(skill?.agent_id);
 

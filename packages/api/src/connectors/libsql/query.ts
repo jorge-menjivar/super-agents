@@ -68,6 +68,11 @@ export interface SelectOptions {
   orderBy?: string;
   limit?: number;
   offset?: number;
+  /**
+   * The columns to read, for a caller that wants fewer than all of them.
+   * Applied verbatim, never user input -- callers derive it from a schema.
+   */
+  columns?: string[];
 }
 
 const whereClause = (filters: Filters): { sql: string; args: InValue[] } => {
@@ -129,7 +134,8 @@ export const selectFrom = async <T extends z.ZodType>(
   const where = whereClause(filters);
   const args: InValue[] = [...where.args];
 
-  let sql = `SELECT * FROM ${table}${where.sql}`;
+  const selection = options.columns?.length ? options.columns.join(', ') : '*';
+  let sql = `SELECT ${selection} FROM ${table}${where.sql}`;
   if (options.orderBy) {
     sql += ` ORDER BY ${options.orderBy}`;
   }

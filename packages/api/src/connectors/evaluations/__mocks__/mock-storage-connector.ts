@@ -74,6 +74,7 @@ export function createMockStorageConnector(): UserDataStorageConnector {
     getSkillModels: vi.fn(),
     getSkillReadiness: vi.fn(),
     getRecentSkills: vi.fn(),
+    getSkillSummaries: vi.fn(),
     addSkillModel: vi.fn(),
     removeSkillModel: vi.fn(),
     createAIProviderAPIKey: vi.fn(),

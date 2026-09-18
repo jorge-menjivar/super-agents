@@ -47,9 +47,11 @@ import {
 import type { SkillQueryParams } from '@shared/types/data/skill';
 import {
   type RecentSkill,
+  SKILL_SUMMARY_COLUMNS,
   Skill,
   type SkillCreateParams,
   type SkillReadiness,
+  SkillSummary,
   type SkillUpdateParams,
 } from '@shared/types/data/skill';
 import {
@@ -103,6 +105,31 @@ import {
   selectFromSupabase,
   updateInSupabase,
 } from './base';
+
+/** The filters and paging a skills read carries, whichever columns it wants. */
+const skillsPostgRESTQuery = (
+  queryParams: SkillQueryParams,
+): Record<string, string> => {
+  const postgrestParams: Record<string, string> = {};
+
+  if (queryParams.id) {
+    postgrestParams.id = `eq.${queryParams.id}`;
+  }
+  if (queryParams.agent_id) {
+    postgrestParams.agent_id = `eq.${queryParams.agent_id}`;
+  }
+  if (queryParams.name) {
+    postgrestParams.name = `eq.${queryParams.name}`;
+  }
+  if (queryParams.limit) {
+    postgrestParams.limit = queryParams.limit.toString();
+  }
+  if (queryParams.offset) {
+    postgrestParams.offset = queryParams.offset.toString();
+  }
+
+  return postgrestParams;
+};
 
 export const supabaseUserDataStorageConnector: UserDataStorageConnector = {
   getFeedback: async (
@@ -299,34 +326,33 @@ export const supabaseUserDataStorageConnector: UserDataStorageConnector = {
   getSkills: async (
     c: AppContext,
     queryParams: SkillQueryParams,
-  ): Promise<Skill[]> => {
-    const postgrestParams: Record<string, string> = {};
-
-    if (queryParams.id) {
-      postgrestParams.id = `eq.${queryParams.id}`;
-    }
-    if (queryParams.agent_id) {
-      postgrestParams.agent_id = `eq.${queryParams.agent_id}`;
-    }
-    if (queryParams.name) {
-      postgrestParams.name = `eq.${queryParams.name}`;
-    }
-    if (queryParams.limit) {
-      postgrestParams.limit = queryParams.limit.toString();
-    }
-    if (queryParams.offset) {
-      postgrestParams.offset = queryParams.offset.toString();
-    }
-
-    const skills = await selectFromSupabase(
+  ): Promise<Skill[]> =>
+    selectFromSupabase(
       c,
       'skills',
-      postgrestParams,
+      skillsPostgRESTQuery(queryParams),
       z.array(Skill),
-    );
+    ),
 
-    return skills;
-  },
+  /**
+   * The same query with the columns named: PostgREST has no way to ask for
+   * every column but one, so `select` spells out the rest. The list comes
+   * from the schema, so a column added to `Skill` is read here without
+   * anyone remembering to.
+   */
+  getSkillSummaries: async (
+    c: AppContext,
+    queryParams: SkillQueryParams,
+  ): Promise<SkillSummary[]> =>
+    selectFromSupabase(
+      c,
+      'skills',
+      {
+        ...skillsPostgRESTQuery(queryParams),
+        select: SKILL_SUMMARY_COLUMNS.join(','),
+      },
+      z.array(SkillSummary),
+    ),
 
   createSkill: async (
     c: AppContext,

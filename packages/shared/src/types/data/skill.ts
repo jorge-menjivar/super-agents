@@ -81,6 +81,39 @@ export const Skill = z.object({
 });
 export type Skill = z.infer<typeof Skill>;
 
+/** Every column of a skill but the one the dashboard never draws. */
+const SkillWithoutSeed = Skill.omit({ seed_system_prompt: true });
+
+/**
+ * The columns a summary is read with, taken from the schema rather than
+ * written out, so a column added to `Skill` is in the summary by default and
+ * the two backends cannot drift from each other or from the type.
+ */
+export const SKILL_SUMMARY_COLUMNS = Object.keys(
+  SkillWithoutSeed.shape,
+) as (keyof z.infer<typeof SkillWithoutSeed>)[];
+
+/**
+ * A skill read as a list row: everything but `seed_system_prompt`.
+ *
+ * That one column is the caller's whole system prompt, kept so that a skill
+ * the gateway created starts as a pass-through -- tens of kilobytes each, and
+ * 96% of what listing an agent's skills transfers. Nothing in the dashboard
+ * renders it: the lists want a name, an id and the counts.
+ *
+ * It is declared here as optional rather than left out, so a whole `Skill` is
+ * still a `SkillSummary` and one type serves both the lists and the pages
+ * that hold a single skill. The gateway keeps reading whole skills --
+ * `routeRequestToSkill` seeds a skill's identity centroid from this prompt --
+ * which is why this is a second way to read them rather than a narrowing of
+ * the first.
+ */
+export const SkillSummary = SkillWithoutSeed.extend({
+  seed_system_prompt: z.string().nullable().optional(),
+});
+
+export type SkillSummary = z.infer<typeof SkillSummary>;
+
 /**
  * What a skill needs before it can serve, counted: `isSkillReady` decides
  * from these two numbers and the skill's own `optimize`.

@@ -6,6 +6,7 @@ import {
   SkillOptimizationArm,
   SkillOptimizationEvaluationRun,
   type SkillQueryParams,
+  SkillSummary,
   type SkillUpdateParams,
 } from '@shared/types/data';
 import { SkillOptimizationArmStat } from '@shared/types/data/skill-optimization-arm-stats';
@@ -37,7 +38,8 @@ export async function createSkill(params: SkillCreateParams): Promise<Skill> {
   return Skill.parse(await response.json());
 }
 
-export async function getSkills(params: SkillQueryParams): Promise<Skill[]> {
+/** The query a skills read carries, whichever columns it asks for. */
+const asQuery = (params: SkillQueryParams): Record<string, string> => {
   const query: Record<string, string> = {};
 
   if (params.id) query.id = params.id;
@@ -48,8 +50,12 @@ export async function getSkills(params: SkillQueryParams): Promise<Skill[]> {
   if (params.limit) query.limit = params.limit.toString();
   if (params.offset) query.offset = params.offset.toString();
 
+  return query;
+};
+
+export async function getSkills(params: SkillQueryParams): Promise<Skill[]> {
   const response = await client.v1['super-agents'].skills.$get({
-    query,
+    query: asQuery(params),
   });
 
   if (!response.ok) {
@@ -57,6 +63,24 @@ export async function getSkills(params: SkillQueryParams): Promise<Skill[]> {
   }
 
   return Skill.array().parse(await response.json());
+}
+
+/**
+ * The same skills without the system prompts the gateway seeded them from:
+ * what every list in the dashboard reads, since no list draws them.
+ */
+export async function getSkillSummaries(
+  params: SkillQueryParams,
+): Promise<SkillSummary[]> {
+  const response = await client.v1['super-agents'].skills.summaries.$get({
+    query: asQuery(params),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch skill summaries');
+  }
+
+  return SkillSummary.array().parse(await response.json());
 }
 
 export async function updateSkill(
