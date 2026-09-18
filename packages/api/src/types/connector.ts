@@ -40,6 +40,7 @@ import type {
   Skill,
   SkillCreateParams,
   SkillQueryParams,
+  SkillReadiness,
   SkillUpdateParams,
 } from '@shared/types/data/skill';
 import type {
@@ -205,6 +206,18 @@ export interface UserDataStorageConnector {
 
   // Skill-Model Relationships
   getSkillModels(c: AppContext, skillId: string): Promise<Model[]> | Model[];
+  /**
+   * How many models and evaluations each of an agent's skills has -- what
+   * `isSkillReady` decides from -- for every skill at once.
+   *
+   * A whole agent rather than a skill because the dashboard asks about all of
+   * them together: a list of skill cards, and a sidebar that marks an agent
+   * whose skills are not all ready.
+   */
+  getSkillReadiness(
+    c: AppContext,
+    agentId: string,
+  ): Promise<SkillReadiness[]> | SkillReadiness[];
   getSkillsByModelId(
     c: AppContext,
     modelId: string,

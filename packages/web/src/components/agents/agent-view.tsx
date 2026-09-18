@@ -2,20 +2,15 @@
 
 import { botttsNeutral } from '@dicebear/collection';
 import { createAvatar } from '@dicebear/core';
-import type { Skill } from '@shared/types/data';
 import { useQuery } from '@tanstack/react-query';
 import { getAgentEvaluationScoresByTimeBucket } from '@web/api/v1/super-agents/agents';
 import { getSkillEvents } from '@web/api/v1/super-agents/skill-events';
-import { getSkillEvaluationScoresByTimeBucket } from '@web/api/v1/super-agents/skills';
 import { AgentPerformanceChart } from '@web/components/agents/agent-performance-chart';
 import { AgentRecentLogsCard } from '@web/components/agents/agent-recent-logs-card';
 import { AgentStatusIndicator } from '@web/components/agents/agent-status-indicator';
 import { DeleteAgentDialog } from '@web/components/agents/delete-agent-dialog';
 import { ManageAgentModelsDialog } from '@web/components/agents/manage-agent-models-dialog';
-import { SkillPerformanceChart } from '@web/components/agents/skills/skill-performance-chart';
-import { SkillStatusIndicator } from '@web/components/agents/skills/skill-status-indicator';
 import { Alert, AlertDescription, AlertTitle } from '@web/components/ui/alert';
-import { Badge } from '@web/components/ui/badge';
 import { Button } from '@web/components/ui/button';
 import {
   Card,
@@ -32,7 +27,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@web/components/ui/dropdown-menu';
-import { Input } from '@web/components/ui/input';
 import { PageHeader } from '@web/components/ui/page-header';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@web/components/ui/toggle-group';
@@ -41,12 +35,18 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@web/components/ui/tooltip';
+import { useAgentUnreadySkills } from '@web/hooks/use-agent-unready-skills';
 import { useAgentValidation } from '@web/hooks/use-agent-validation';
 import { usePermissiveNavigate } from '@web/hooks/use-permissive-navigate';
 import { useAgents } from '@web/providers/agents';
-import { useNavigation } from '@web/providers/navigation';
 import { useSkills } from '@web/providers/skills';
-import { createSkillAvatar } from '@web/utils/avatars';
+import {
+  INTERVAL_CONFIG,
+  rememberInterval,
+  storedInterval,
+  TIME_INTERVALS,
+  type TimeInterval,
+} from '@web/utils/chart-interval';
 import { scoreRangeForWindow } from '@web/utils/chart-window';
 import {
   BarChart3Icon,
@@ -55,13 +55,12 @@ import {
   Edit,
   EyeIcon,
   EyeOffIcon,
+  LayersIcon,
   MoreVertical,
   PlusIcon,
   ScrollTextIcon,
-  SearchIcon,
   Trash2,
 } from 'lucide-react';
-import { nanoid } from 'nanoid';
 import type { ReactElement } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -94,11 +93,12 @@ const createAgentAvatar = (agentName: string) => {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 };
 
+/** How the reader last cut time on this page, shared with the skills page. */
+const INTERVAL_KEY = 'agent-performance-interval';
+
 export function AgentView(): ReactElement {
-  const { navigateToSkillDashboard } = useNavigation();
   const { selectedAgent, deleteAgent } = useAgents();
   const navigate = usePermissiveNavigate();
-  const [searchQuery, setSearchQuery] = useState('');
 
   const agentAvatar = useMemo(() => {
     if (!selectedAgent) return '';
@@ -114,39 +114,16 @@ export function AgentView(): ReactElement {
     !!selectedAgent?.auto_create_skills &&
     !isLoadingValidation &&
     defaultModelsCount === 0;
+  // Already answered for the sidebar's mark on this agent, so the card below
+  // costs nothing to fill in.
+  const { unreadySkillsCount } = useAgentUnreadySkills(selectedAgent);
 
-  // Time interval controls for chart (30 buckets fixed)
-  type TimeInterval = '1min' | '5min' | '15min' | '1hour' | '6hour' | '24hour';
-  const BUCKETS = 30; // Fixed number of buckets
-  const INTERVAL_CONFIG = {
-    '1min': { label: '1 Min', minutes: 1, hours: (BUCKETS * 1) / 60 },
-    '5min': { label: '5 Min', minutes: 5, hours: (BUCKETS * 5) / 60 },
-    '15min': { label: '15 Min', minutes: 15, hours: (BUCKETS * 15) / 60 },
-    '1hour': { label: '1 Hour', minutes: 60, hours: (BUCKETS * 60) / 60 },
-    '6hour': { label: '6 Hours', minutes: 360, hours: (BUCKETS * 360) / 60 },
-    '24hour': { label: '1 Day', minutes: 1440, hours: (BUCKETS * 1440) / 60 },
-  } as const;
+  const [selectedInterval, setSelectedInterval] = useState<TimeInterval>(() =>
+    storedInterval(INTERVAL_KEY),
+  );
 
-  const [selectedInterval, setSelectedInterval] = useState<TimeInterval>(() => {
-    if (typeof window === 'undefined') return '1hour';
-    try {
-      const stored = localStorage.getItem('agent-performance-interval');
-      if (stored && stored in INTERVAL_CONFIG) {
-        return stored as TimeInterval;
-      }
-    } catch {
-      // localStorage not available
-    }
-    return '1hour';
-  });
-
-  // Save interval preference
   useEffect(() => {
-    try {
-      localStorage.setItem('agent-performance-interval', selectedInterval);
-    } catch {
-      // localStorage not available
-    }
+    rememberInterval(INTERVAL_KEY, selectedInterval);
   }, [selectedInterval]);
 
   // Whether the chart draws the skills that scored nothing in the window,
@@ -235,64 +212,11 @@ export function AgentView(): ReactElement {
     refetchInterval: 60000, // Refetch every minute
   });
 
-  // Fetch skill-level evaluation scores for all skills (small charts).
-  //
-  // The cards follow the interval chosen for the chart above them rather than
-  // a window of their own. A card that always showed the last two hours said
-  // nothing about a skill that runs weekly, and disagreed with the chart it
-  // sits under: the reader picks a day and the cards keep answering in
-  // minutes.
-  const {
-    data: skillEvaluationScores = {},
-    isLoading: isLoadingSkillEvaluationScores,
-  } = useQuery({
-    queryKey: [
-      'skillEvaluationScores',
-      selectedAgent?.id,
-      skills.map((s) => s.id).join(','),
-      selectedInterval,
-      endTime.toISOString(),
-    ],
-    queryFn: async () => {
-      if (!selectedAgent || skills.length === 0) return {};
-
-      // Fetch scores for all skills in parallel
-      const scoresPromises = skills.map(async (skill) => {
-        const scores = await getSkillEvaluationScoresByTimeBucket(skill.id, {
-          interval_minutes: INTERVAL_CONFIG[selectedInterval].minutes,
-          ...scoreRangeForWindow(
-            endTime,
-            INTERVAL_CONFIG[selectedInterval].hours,
-            INTERVAL_CONFIG[selectedInterval].minutes,
-          ),
-        }).catch(() => []);
-        return [skill.id, scores] as const;
-      });
-
-      const scoresArray = await Promise.all(scoresPromises);
-      return Object.fromEntries(scoresArray);
-    },
-    enabled: !!selectedAgent && skills.length > 0,
-    refetchInterval: 60000, // Refetch every minute
-  });
-
-  const filteredSkills = useMemo(() => {
-    const filtered = searchQuery
-      ? skills.filter(
-          (skill) =>
-            skill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            skill.description
-              ?.toLowerCase()
-              .includes(searchQuery.toLowerCase()),
-        )
-      : skills;
-
-    return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
-  }, [skills, searchQuery]);
-
-  const handleSkillSelect = (skill: Skill) => {
+  const handleViewSkills = () => {
     if (selectedAgent) {
-      navigateToSkillDashboard(selectedAgent.name, skill.name);
+      navigate({
+        to: `/agents/${encodeURIComponent(selectedAgent.name)}/skills`,
+      });
     }
   };
 
@@ -374,6 +298,10 @@ export function AgentView(): ReactElement {
         onBack={() => navigate({ to: '/agents' })}
         actions={
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={handleViewSkills}>
+              <LayersIcon className="h-4 w-4 mr-2" />
+              Skills
+            </Button>
             <Button variant="outline" onClick={handleViewLogs}>
               <ScrollTextIcon className="h-4 w-4 mr-2" />
               Logs
@@ -507,18 +435,16 @@ export function AgentView(): ReactElement {
                     size="sm"
                     className="border rounded-lg gap-0 overflow-hidden"
                   >
-                    {(Object.keys(INTERVAL_CONFIG) as TimeInterval[]).map(
-                      (interval) => (
-                        <ToggleGroupItem
-                          key={interval}
-                          value={interval}
-                          aria-label={`Toggle ${INTERVAL_CONFIG[interval].label} interval`}
-                          className="text-xs rounded-none"
-                        >
-                          {INTERVAL_CONFIG[interval].label}
-                        </ToggleGroupItem>
-                      ),
-                    )}
+                    {TIME_INTERVALS.map((interval) => (
+                      <ToggleGroupItem
+                        key={interval}
+                        value={interval}
+                        aria-label={`Toggle ${INTERVAL_CONFIG[interval].label} interval`}
+                        className="text-xs rounded-none"
+                      >
+                        {INTERVAL_CONFIG[interval].label}
+                      </ToggleGroupItem>
+                    ))}
                   </ToggleGroup>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
@@ -549,136 +475,49 @@ export function AgentView(): ReactElement {
         {/* Recent Logs across all skills */}
         <AgentRecentLogsCard />
 
-        <div className="flex justify-between items-center gap-4">
-          <div className="relative flex-1">
-            <SearchIcon className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search skills..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          <Button onClick={handleCreateSkill}>
-            <PlusIcon className="h-4 w-4 mr-2" />
-            Create Skill
-          </Button>
-        </div>
-
-        {isLoadingSkills ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 gap-4">
-            {Array.from({ length: 6 }).map(() => (
-              <Card key={nanoid()}>
-                <CardHeader>
-                  <Skeleton className="h-6 w-3/4" />
-                  <Skeleton className="h-4 w-full" />
-                </CardHeader>
-              </Card>
-            ))}
-          </div>
-        ) : filteredSkills.length === 0 ? (
-          <div className="text-center py-12">
-            <h3 className="text-lg font-semibold mb-2">
-              {searchQuery ? 'No skills found' : 'No skills yet'}
-            </h3>
-            <p className="text-muted-foreground mb-4 max-w-xl mx-auto">
-              {searchQuery
-                ? 'No skills match your search criteria.'
-                : !selectedAgent.auto_create_skills
-                  ? "This agent doesn't have any skills yet."
-                  : needsDefaultModels
-                    ? 'Skills are created from requests automatically and take the default models of the agent. Add those first: without them a created skill cannot serve requests.'
-                    : 'Skills are created from requests automatically: the first request to this agent makes its first skill. You can also create one by hand.'}
-            </p>
-            {!searchQuery && (
-              <div className="flex justify-center gap-2">
-                {needsDefaultModels && (
-                  <Button onClick={() => setIsModelsDialogOpen(true)}>
-                    <CpuIcon className="h-4 w-4 mr-2" />
-                    Add default models
-                  </Button>
-                )}
-                <Button
-                  variant={needsDefaultModels ? 'outline' : 'default'}
-                  onClick={handleCreateSkill}
-                >
-                  <PlusIcon className="h-4 w-4 mr-2" />
-                  {selectedAgent.auto_create_skills
-                    ? 'Create a skill by hand'
-                    : 'Create your first skill'}
-                </Button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 gap-4">
-            {filteredSkills.map((skill) => {
-              return (
-                <Card
-                  key={skill.id}
-                  className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all"
-                  onClick={() => handleSkillSelect(skill)}
-                >
-                  <CardHeader className="pb-2">
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <img
-                          src={createSkillAvatar(skill.name)}
-                          alt={`${skill.name} icon`}
-                          width={24}
-                          height={24}
-                          className="size-6 rounded-sm shrink-0"
-                        />
-                        <CardTitle className="text-base truncate leading-normal">
-                          {skill.name}
-                        </CardTitle>
-                        {skill.auto_created && (
-                          <Badge
-                            variant="outline"
-                            className="text-xs shrink-0"
-                            title="Created by the gateway for a request that named only the agent"
-                          >
-                            auto
-                          </Badge>
-                        )}
-                      </div>
-                      <SkillStatusIndicator
-                        skill={skill}
-                        variant="badge"
-                        tooltipSide="left"
-                      />
-                    </div>
-                    <CardDescription className="line-clamp-2 text-sm">
-                      {skill.description || 'No description available'}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="pt-2 border-t">
-                      <div className="text-xs text-muted-foreground mb-2">
-                        Performance
-                      </div>
-                      {isLoadingSkillEvaluationScores ? (
-                        <Skeleton className="h-32 w-full" />
-                      ) : (
-                        <SkillPerformanceChart
-                          evaluationScores={
-                            skillEvaluationScores[skill.id] || []
-                          }
-                          size="small"
-                          intervalMinutes={
-                            INTERVAL_CONFIG[selectedInterval].minutes
-                          }
-                          windowHours={INTERVAL_CONFIG[selectedInterval].hours}
-                          endTime={endTime}
-                        />
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
+        {/* The skills themselves live on their own page */}
+        <Card
+          className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all"
+          onClick={handleViewSkills}
+        >
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <div>
+              <CardTitle className="text-base font-medium">Skills</CardTitle>
+              <CardDescription>
+                {isLoadingSkills
+                  ? 'Counting…'
+                  : skills.length === 0
+                    ? selectedAgent.auto_create_skills
+                      ? 'None yet — the first request to this agent makes one'
+                      : 'None yet'
+                    : `${skills.length} skill${skills.length === 1 ? '' : 's'}${
+                        unreadySkillsCount > 0
+                          ? `, ${unreadySkillsCount} not ready`
+                          : ''
+                      }`}
+              </CardDescription>
+            </div>
+            <LayersIcon className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleViewSkills}>
+                View skills
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleCreateSkill();
+                }}
+              >
+                <PlusIcon className="h-4 w-4 mr-2" />
+                Create Skill
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <DeleteAgentDialog

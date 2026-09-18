@@ -1,11 +1,6 @@
 import type { Agent } from '@shared/types/data';
 import { isSkillReady } from '@shared/utils/skill-validation';
-import { useQuery } from '@tanstack/react-query';
-import {
-  getSkillEvaluations,
-  getSkillModels,
-  getSkills,
-} from '@web/api/v1/super-agents/skills';
+import { useAgentSkillReadiness } from '@web/hooks/use-skill-readiness';
 
 export interface UseAgentUnreadySkillsResult {
   hasUnreadySkills: boolean;
@@ -14,65 +9,32 @@ export interface UseAgentUnreadySkillsResult {
 }
 
 /**
- * Hook to check if an agent has any skills that are not ready.
- * A skill is not ready if it's missing models or evaluations (when optimization is enabled).
+ * How many of an agent's skills are not ready -- missing models, or missing
+ * evaluations while being optimized.
  *
- * @param agent - The agent to check
- * @returns Result with unready skills status and count
+ * One request for the whole agent. The sidebar draws this for every agent at
+ * once, so what it costs is what every page of the dashboard pays: reading
+ * the skills themselves to find out which are optimized meant hundreds of
+ * kilobytes per agent, most of it the seed system prompts the gateway created
+ * them from. `optimize` travels with the counts instead.
  */
 export function useAgentUnreadySkills(
   agent: Agent | null | undefined,
 ): UseAgentUnreadySkillsResult {
-  // Fetch all skills for the agent
-  const { data: skills = [], isLoading: isLoadingSkills } = useQuery({
-    queryKey: ['agent-unready-skills', agent?.id],
-    queryFn: async () => {
-      if (!agent) return [];
-      return await getSkills({ agent_id: agent.id });
-    },
-    enabled: !!agent,
-    staleTime: 30 * 1000, // Cache for 30 seconds
-  });
+  const { readiness, isLoading } = useAgentSkillReadiness(agent?.id);
 
-  // Fetch models and evaluations for each skill
-  const { data: skillsData = [], isLoading: isLoadingSkillsData } = useQuery({
-    queryKey: ['agent-unready-skills-data', agent?.id, skills.map((s) => s.id)],
-    queryFn: async () => {
-      if (!agent || skills.length === 0) return [];
-
-      // Fetch models and evaluations for all skills in parallel
-      const skillsWithData = await Promise.all(
-        skills.map(async (skill) => {
-          const [models, evaluations] = await Promise.all([
-            getSkillModels(skill.id),
-            getSkillEvaluations(skill.id),
-          ]);
-
-          return {
-            skill,
-            modelsCount: models.length,
-            evaluationsCount: evaluations.length,
-          };
-        }),
-      );
-
-      return skillsWithData;
-    },
-    enabled: !!agent && skills.length > 0,
-    staleTime: 30 * 1000, // Cache for 30 seconds
-  });
-
-  // Count unready skills
-  const unreadySkillsCount = skillsData.filter(
-    ({ skill, modelsCount, evaluationsCount }) => {
-      const optimize = skill.optimize ?? false;
-      return !isSkillReady(modelsCount, evaluationsCount, optimize);
-    },
+  const unreadySkillsCount = [...readiness.values()].filter(
+    (counts) =>
+      !isSkillReady(
+        counts.model_count,
+        counts.evaluation_count,
+        counts.optimize,
+      ),
   ).length;
 
   return {
     hasUnreadySkills: unreadySkillsCount > 0,
     unreadySkillsCount,
-    isLoading: isLoadingSkills || isLoadingSkillsData,
+    isLoading,
   };
 }

@@ -102,7 +102,8 @@ describe('getAgent', () => {
       deleteModel: vi.fn(),
       // Skill-Model relationship methods
       getSkillModels: vi.fn(),
-          getSkillsByModelId: vi.fn(),
+      getSkillReadiness: vi.fn(),
+      getSkillsByModelId: vi.fn(),
       addModelsToSkill: vi.fn(),
       removeModelsFromSkill: vi.fn(),
       // Skill Optimization Arm methods

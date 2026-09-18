@@ -1,10 +1,6 @@
 import type { Skill } from '@shared/types/data';
 import { isSkillReady } from '@shared/utils/skill-validation';
-import { useQuery } from '@tanstack/react-query';
-import {
-  getSkillEvaluations,
-  getSkillModels,
-} from '@web/api/v1/super-agents/skills';
+import { useAgentSkillReadiness } from '@web/hooks/use-skill-readiness';
 
 export interface UseSkillValidationResult {
   isReady: boolean;
@@ -15,39 +11,24 @@ export interface UseSkillValidationResult {
 }
 
 /**
- * Hook to check if a skill is ready (has required models and evaluations).
- * Fetches the models and evaluations count for the skill and returns validation status.
+ * Whether a skill is ready: it has a model, and an evaluation if it is being
+ * optimized.
  *
- * @param skill - The skill to validate
- * @returns Validation result with readiness status, counts, and loading state
+ * The counts come from the agent's readiness answer rather than from two
+ * requests of this skill's own, so a page of skill cards asks once for all of
+ * them. See `useAgentSkillReadiness`.
  */
 export function useSkillValidation(
   skill: Skill | null | undefined,
 ): UseSkillValidationResult {
-  const { data: models = [], isLoading: isLoadingModels } = useQuery({
-    queryKey: ['skill-validation-models', skill?.id],
-    queryFn: async () => {
-      if (!skill) return [];
-      return await getSkillModels(skill.id);
-    },
-    enabled: !!skill,
-    staleTime: 30 * 1000, // Cache for 30 seconds
-  });
+  const { readiness, isLoading } = useAgentSkillReadiness(skill?.agent_id);
 
-  const { data: evaluations = [], isLoading: isLoadingEvaluations } = useQuery({
-    queryKey: ['skill-validation-evaluations', skill?.id],
-    queryFn: async () => {
-      if (!skill) return [];
-      return await getSkillEvaluations(skill.id);
-    },
-    enabled: !!skill,
-    staleTime: 30 * 1000, // Cache for 30 seconds
-  });
-
-  const modelsCount = models.length;
-  const evaluationsCount = evaluations.length;
+  const counts = skill ? readiness.get(skill.id) : undefined;
+  const modelsCount = counts?.model_count ?? 0;
+  const evaluationsCount = counts?.evaluation_count ?? 0;
+  // The skill's own flag, since the caller holds the row; the readiness
+  // answer carries it too, for callers that do not.
   const optimize = skill?.optimize ?? false;
-  const isLoading = isLoadingModels || isLoadingEvaluations;
   const ready = isSkillReady(modelsCount, evaluationsCount, optimize);
 
   const missingRequirements: string[] = [];

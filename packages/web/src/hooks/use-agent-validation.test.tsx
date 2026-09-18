@@ -5,15 +5,23 @@ import { useAgentValidation } from '@web/hooks/use-agent-validation';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockGetSkills = vi.fn();
+const mockGetAgentSkillReadiness = vi.fn();
 const mockGetAgentModels = vi.fn();
 
-vi.mock('@web/api/v1/super-agents/skills', () => ({
-  getSkills: (...args: unknown[]) => mockGetSkills(...args),
-}));
 vi.mock('@web/api/v1/super-agents/agents', () => ({
   getAgentModels: (...args: unknown[]) => mockGetAgentModels(...args),
+  getAgentSkillReadiness: (...args: unknown[]) =>
+    mockGetAgentSkillReadiness(...args),
 }));
+
+/** One row per skill: what the readiness endpoint answers with. */
+const skillRows = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    skill_id: `00000000-0000-4000-8000-00000000000${index}`,
+    model_count: 1,
+    evaluation_count: 1,
+    optimize: false,
+  }));
 
 describe('useAgentValidation', () => {
   let queryClient: QueryClient;
@@ -53,7 +61,7 @@ describe('useAgentValidation', () => {
   });
 
   it('is ready once an agent that keeps its skills has one', async () => {
-    mockGetSkills.mockResolvedValue([{ id: 'skill-1' }]);
+    mockGetAgentSkillReadiness.mockResolvedValue(skillRows(1));
 
     const { result } = renderHook(() => useAgentValidation(agent(false)), {
       wrapper,
@@ -66,7 +74,7 @@ describe('useAgentValidation', () => {
   });
 
   it('asks for default models even when the agent has skills', async () => {
-    mockGetSkills.mockResolvedValue([{ id: 'skill-1' }]);
+    mockGetAgentSkillReadiness.mockResolvedValue(skillRows(1));
     mockGetAgentModels.mockResolvedValue([]);
 
     const { result } = renderHook(() => useAgentValidation(agent(true)), {
@@ -81,7 +89,7 @@ describe('useAgentValidation', () => {
   });
 
   it('is ready without skills when the gateway can create them', async () => {
-    mockGetSkills.mockResolvedValue([]);
+    mockGetAgentSkillReadiness.mockResolvedValue(skillRows(0));
     mockGetAgentModels.mockResolvedValue([{ id: 'model-1' }]);
 
     const { result } = renderHook(() => useAgentValidation(agent(true)), {
@@ -94,7 +102,7 @@ describe('useAgentValidation', () => {
   });
 
   it('asks for default models when there is nothing to create skills with', async () => {
-    mockGetSkills.mockResolvedValue([]);
+    mockGetAgentSkillReadiness.mockResolvedValue(skillRows(0));
     mockGetAgentModels.mockResolvedValue([]);
 
     const { result } = renderHook(() => useAgentValidation(agent(true)), {
@@ -107,7 +115,7 @@ describe('useAgentValidation', () => {
   });
 
   it('does not look at default models for an agent that keeps its skills', async () => {
-    mockGetSkills.mockResolvedValue([]);
+    mockGetAgentSkillReadiness.mockResolvedValue(skillRows(0));
 
     const { result } = renderHook(() => useAgentValidation(agent(false)), {
       wrapper,
