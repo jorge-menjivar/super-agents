@@ -93,7 +93,7 @@ export function NavigationProvider({
     )
       return 'log-detail'; // /agents/[agentName]/logs/[logId]
     if (pathSegments.length === 3 && agentName && pathSegments[2] === 'skills')
-      return 'agent-view'; // /agents/[agentName]/skills
+      return 'skills-list'; // /agents/[agentName]/skills
     if (
       pathSegments.length === 4 &&
       agentName &&
@@ -279,6 +279,21 @@ export function NavigationProvider({
         breadcrumbs.push({
           label: 'Logs',
           path: `/agents/${encodeURIComponent(newState.selectedAgentName)}/logs`,
+        });
+      }
+
+      // The skills page, and everything that sits under it: a skill is
+      // reached through that page now, so the path says so and the page is a
+      // click away from any skill.
+      if (
+        newState.selectedAgentName &&
+        (currentView === 'skills-list' ||
+          currentView === 'create-skill' ||
+          newState.selectedSkillName)
+      ) {
+        breadcrumbs.push({
+          label: 'Skills',
+          path: `/agents/${encodeURIComponent(newState.selectedAgentName)}/skills`,
         });
       }
 
