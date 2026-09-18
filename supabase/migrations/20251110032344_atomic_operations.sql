@@ -369,7 +369,11 @@ CREATE OR REPLACE FUNCTION get_evaluation_scores_by_time_bucket(
   p_cluster_id UUID DEFAULT NULL,
   p_interval INTERVAL DEFAULT '1 hour',
   p_start_time TIMESTAMPTZ DEFAULT NOW() - INTERVAL '24 hours',
-  p_end_time TIMESTAMPTZ DEFAULT NOW()
+  p_end_time TIMESTAMPTZ DEFAULT NOW(),
+  -- Also return the bucket nearest outside each end of the range, per series:
+  -- what a chart needs to draw a line as it crosses its window rather than as
+  -- it starts. Off by default, so every existing caller is unaffected.
+  p_edge_buckets BOOLEAN DEFAULT FALSE
 )
 RETURNS TABLE (
   time_bucket TIMESTAMPTZ,
@@ -382,21 +386,89 @@ RETURNS TABLE (
 ) AS $$
 BEGIN
   RETURN QUERY
-  WITH bucketed_runs AS (
+  WITH edge_runs AS (
+    -- The nearest run beyond each end of the range, one per series.
+    --
+    -- Two ordered lookups rather than a pass over the series' history: this is
+    -- the whole point of the flag, so it must not cost what asking for a wider
+    -- range cost. `idx_evaluation_runs_series_created` matches this key order,
+    -- which is what keeps it a seek.
+    (
+      SELECT DISTINCT ON (ers.agent_id, ers.skill_id, ers.cluster_id)
+        ers.agent_id AS aid,
+        ers.skill_id AS sid,
+        ers.cluster_id AS cid,
+        ers.created_at AS at
+      FROM evaluation_runs_with_scores ers
+      WHERE p_edge_buckets
+        AND ers.created_at < p_start_time
+        AND (p_agent_id IS NULL OR ers.agent_id = p_agent_id)
+        AND (p_skill_id IS NULL OR ers.skill_id = p_skill_id)
+        AND (p_cluster_id IS NULL OR ers.cluster_id = p_cluster_id)
+      ORDER BY ers.agent_id, ers.skill_id, ers.cluster_id, ers.created_at DESC
+    )
+    UNION ALL
+    (
+      SELECT DISTINCT ON (ers.agent_id, ers.skill_id, ers.cluster_id)
+        ers.agent_id, ers.skill_id, ers.cluster_id, ers.created_at
+      FROM evaluation_runs_with_scores ers
+      WHERE p_edge_buckets
+        AND ers.created_at > p_end_time
+        AND (p_agent_id IS NULL OR ers.agent_id = p_agent_id)
+        AND (p_skill_id IS NULL OR ers.skill_id = p_skill_id)
+        AND (p_cluster_id IS NULL OR ers.cluster_id = p_cluster_id)
+      ORDER BY ers.agent_id, ers.skill_id, ers.cluster_id, ers.created_at ASC
+    )
+  ),
+  edge_buckets AS (
+    -- Those runs name a bucket; the bucket is then read whole below, because
+    -- its score is the mean of every run in it and not of the one that found it.
     SELECT
-      date_trunc('hour', created_at) +
-      (EXTRACT(EPOCH FROM (created_at - date_trunc('hour', created_at))) / EXTRACT(EPOCH FROM p_interval))::INTEGER * p_interval AS bucket,
+      aid,
+      sid,
+      cid,
+      to_timestamp(
+        FLOOR(EXTRACT(EPOCH FROM at) / EXTRACT(EPOCH FROM p_interval))
+          * EXTRACT(EPOCH FROM p_interval)
+      ) AS bucket_start
+    FROM edge_runs
+  ),
+  bucketed_runs AS (
+    SELECT
+      -- Floored to a multiple of the interval from the epoch, which is where
+      -- the libSQL connector and the charts put their buckets too.
+      --
+      -- This used to read `date_trunc('hour', …) + (seconds past the hour /
+      -- interval)::INTEGER * interval`, which is wrong twice over: a cast to
+      -- INTEGER rounds rather than truncates, so a run at 10:40 was filed
+      -- under the 11:00 bucket -- a bucket that starts after the run that is
+      -- in it -- and starting from the hour leaves every interval longer than
+      -- an hour off the grid, a six-hour bucket beginning at 10:00.
+      to_timestamp(
+        FLOOR(EXTRACT(EPOCH FROM ers.created_at) / EXTRACT(EPOCH FROM p_interval))
+          * EXTRACT(EPOCH FROM p_interval)
+      ) AS bucket,
       ers.agent_id AS aid,
       ers.skill_id AS sid,
       ers.cluster_id AS cid,
       ers.avg_score,
       ers.scores_by_evaluation
     FROM evaluation_runs_with_scores ers
-    WHERE ers.created_at >= p_start_time
-      AND ers.created_at <= p_end_time
-      AND (p_agent_id IS NULL OR ers.agent_id = p_agent_id)
+    WHERE (p_agent_id IS NULL OR ers.agent_id = p_agent_id)
       AND (p_skill_id IS NULL OR ers.skill_id = p_skill_id)
       AND (p_cluster_id IS NULL OR ers.cluster_id = p_cluster_id)
+      AND (
+        (ers.created_at >= p_start_time AND ers.created_at <= p_end_time)
+        OR EXISTS (
+          SELECT 1
+          FROM edge_buckets eb
+          WHERE eb.aid = ers.agent_id
+            AND eb.sid = ers.skill_id
+            AND (eb.cid = ers.cluster_id OR (eb.cid IS NULL AND ers.cluster_id IS NULL))
+            AND ers.created_at >= eb.bucket_start
+            AND ers.created_at < eb.bucket_start + p_interval
+        )
+      )
   ),
   aggregated_by_bucket AS (
     SELECT
@@ -451,4 +523,4 @@ COMMENT ON VIEW evaluation_runs_with_scores IS
 'Materialized scores from evaluation runs for efficient chart queries. avg_score is WEIGHTED by evaluation weights. scores_by_evaluation uses method names (e.g., "task_completion") as keys. Uses SECURITY INVOKER to respect querying user''s RLS policies.';
 
 COMMENT ON FUNCTION get_evaluation_scores_by_time_bucket IS
-'Aggregates evaluation scores into time buckets with scores broken down by evaluation method. Returns avg_score (correctly weighted using current evaluation weights) and scores_by_evaluation for displaying per-method charts.';
+'Aggregates evaluation scores into time buckets with scores broken down by evaluation method. Returns avg_score (correctly weighted using current evaluation weights) and scores_by_evaluation for displaying per-method charts. With p_edge_buckets, also returns the bucket nearest outside each end of the range per series, which is what lets a chart draw a line crossing its window.';

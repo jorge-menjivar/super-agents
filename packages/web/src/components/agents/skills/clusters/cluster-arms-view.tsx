@@ -147,11 +147,11 @@ export function ClusterArmsView(): ReactElement {
         ? getSkillEvaluationScoresByTimeBucket(selectedSkill.id, {
             cluster_id: clusterId,
             interval_minutes: INTERVAL_CONFIG[selectedInterval].minutes,
-            // Wider than the window it draws: the points just outside an edge
-            // are what let a line cross it instead of starting there.
+            // The window, and the bucket nearest outside each end of it.
             ...scoreRangeForWindow(
               endTime,
               INTERVAL_CONFIG[selectedInterval].hours,
+              INTERVAL_CONFIG[selectedInterval].minutes,
             ),
           })
         : Promise.resolve([]),

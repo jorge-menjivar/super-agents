@@ -104,6 +104,8 @@ export async function getAgentEvaluationScoresByTimeBucket(
     interval_minutes: number;
     start_time: string;
     end_time: string;
+    /** Also the bucket nearest outside each end, so a line can cross an edge */
+    include_edge_buckets?: boolean;
   },
 ): Promise<
   import('@shared/types/data/evaluation-runs-with-scores').EvaluationScoresByTimeBucketResult[]

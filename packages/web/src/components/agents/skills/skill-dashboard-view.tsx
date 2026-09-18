@@ -169,11 +169,11 @@ export function SkillDashboardView(): ReactElement {
       selectedSkill
         ? getSkillEvaluationScoresByTimeBucket(selectedSkill.id, {
             interval_minutes: INTERVAL_CONFIG[selectedInterval].minutes,
-            // Wider than the window it draws: the points just outside an edge
-            // are what let a line cross it instead of starting there.
+            // The window, and the bucket nearest outside each end of it.
             ...scoreRangeForWindow(
               endTime,
               INTERVAL_CONFIG[selectedInterval].hours,
+              INTERVAL_CONFIG[selectedInterval].minutes,
             ),
           })
         : Promise.resolve([]),
@@ -202,9 +202,9 @@ export function SkillDashboardView(): ReactElement {
           {
             cluster_id: cluster.id,
             interval_minutes: 5, // 5 min intervals
-            // The last 2.5 hours (30 buckets), and a window on each side of
-            // them so a line can cross the chart's edges.
-            ...scoreRangeForWindow(endTime, 2.5),
+            // The last 2.5 hours (30 buckets), and the bucket nearest outside
+            // each end of them so a line can cross the chart's edges.
+            ...scoreRangeForWindow(endTime, 2.5, 5),
           },
         ).catch(() => []);
         return [cluster.id, scores] as const;

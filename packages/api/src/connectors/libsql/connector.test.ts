@@ -1253,6 +1253,113 @@ describe('getEvaluationScoresByTimeBucket', () => {
     expect(result[1].avg_score).toBeCloseTo(0.5, 10);
   });
 
+  describe('edge buckets', () => {
+    it('answers with the bucket nearest outside each end, however old', async () => {
+      const { c, taskCompletion, addRun } = await setup();
+
+      // A fortnight before the range, and an hour after it
+      await addRun('2025-12-18T09:00:00.000Z', [
+        { evaluation_id: taskCompletion.id, score: 0.4 },
+      ]);
+      await addRun('2025-12-31T23:10:00.000Z', [
+        { evaluation_id: taskCompletion.id, score: 0.6 },
+      ]);
+      await addRun('2026-01-01T12:00:00.000Z', [
+        { evaluation_id: taskCompletion.id, score: 1.0 },
+      ]);
+      await addRun('2026-01-02T01:00:00.000Z', [
+        { evaluation_id: taskCompletion.id, score: 0.8 },
+      ]);
+
+      const within = await store.getEvaluationScoresByTimeBucket(c, {
+        ...range,
+        interval_minutes: 60,
+      });
+      expect(within.map((r) => r.time_bucket)).toEqual([
+        '2026-01-01T12:00:00.000Z',
+      ]);
+
+      const withEdges = await store.getEvaluationScoresByTimeBucket(c, {
+        ...range,
+        interval_minutes: 60,
+        include_edge_buckets: true,
+      });
+
+      // The nearest on each side, and not the fortnight-old one behind it
+      expect(withEdges.map((r) => r.time_bucket)).toEqual([
+        '2025-12-31T23:00:00.000Z',
+        '2026-01-01T12:00:00.000Z',
+        '2026-01-02T01:00:00.000Z',
+      ]);
+      expect(withEdges[0].avg_score).toBeCloseTo(0.6, 10);
+      expect(withEdges[2].avg_score).toBeCloseTo(0.8, 10);
+    });
+
+    it('scores an edge bucket as the whole bucket, not as the run that found it', async () => {
+      const { c, taskCompletion, addRun } = await setup();
+
+      // Two runs in the same bucket before the range: its score is their mean,
+      // exactly as a bucket inside the range would be.
+      await addRun('2025-12-31T23:10:00.000Z', [
+        { evaluation_id: taskCompletion.id, score: 1.0 },
+      ]);
+      await addRun('2025-12-31T23:50:00.000Z', [
+        { evaluation_id: taskCompletion.id, score: 0.0 },
+      ]);
+
+      const [edge] = await store.getEvaluationScoresByTimeBucket(c, {
+        ...range,
+        interval_minutes: 60,
+        include_edge_buckets: true,
+      });
+
+      expect(edge.time_bucket).toBe('2025-12-31T23:00:00.000Z');
+      expect(edge.count).toBe(2);
+      expect(edge.avg_score).toBeCloseTo(0.5, 10);
+    });
+
+    it('counts a bucket straddling the range once', async () => {
+      const { c, taskCompletion, addRun } = await setup();
+
+      // The range opens mid-bucket, so this bucket is both inside it and the
+      // one the run before it belongs to.
+      await addRun('2026-01-01T00:10:00.000Z', [
+        { evaluation_id: taskCompletion.id, score: 1.0 },
+      ]);
+      await addRun('2026-01-01T00:40:00.000Z', [
+        { evaluation_id: taskCompletion.id, score: 0.0 },
+      ]);
+
+      const [bucket] = await store.getEvaluationScoresByTimeBucket(c, {
+        start_time: '2026-01-01T00:20:00.000Z',
+        end_time: '2026-01-02T00:00:00.000Z',
+        interval_minutes: 60,
+        include_edge_buckets: true,
+      });
+
+      expect(bucket.count).toBe(2);
+      expect(bucket.avg_score).toBeCloseTo(0.5, 10);
+    });
+
+    it('leaves an end alone when the series has nothing beyond it', async () => {
+      const { c, taskCompletion, addRun } = await setup();
+
+      await addRun('2026-01-01T12:00:00.000Z', [
+        { evaluation_id: taskCompletion.id, score: 1.0 },
+      ]);
+
+      const result = await store.getEvaluationScoresByTimeBucket(c, {
+        ...range,
+        interval_minutes: 60,
+        include_edge_buckets: true,
+      });
+
+      expect(result.map((r) => r.time_bucket)).toEqual([
+        '2026-01-01T12:00:00.000Z',
+      ]);
+    });
+  });
+
   it('honours the interval', async () => {
     const { c, taskCompletion, addRun } = await setup();
 

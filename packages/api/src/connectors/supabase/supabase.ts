@@ -1258,6 +1258,7 @@ export const supabaseUserDataStorageConnector: UserDataStorageConnector = {
         p_interval: interval,
         p_start_time: params.start_time,
         p_end_time: params.end_time,
+        p_edge_buckets: params.include_edge_buckets ?? false,
       },
       z.array(EvaluationScoresByTimeBucketResult),
     );
