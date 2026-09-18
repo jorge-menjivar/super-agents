@@ -1,4 +1,4 @@
-import { type APIRequestContext, expect, test } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
 import { createAgent, deleteAgent, uniqueAgentName } from '../fixtures/agents';
 import {
   CHAT_COMPLETIONS_PATH,
@@ -12,6 +12,7 @@ import {
   uniqueModelName,
 } from '../fixtures/gateway';
 import { createSkill } from '../fixtures/skills';
+import { expect, test } from '../fixtures/test';
 
 /**
  * The gateway request path, against a stub provider.

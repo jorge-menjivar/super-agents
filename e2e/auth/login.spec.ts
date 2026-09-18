@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
 import { AUTH_PASSWORD } from '../../playwright.config';
+import { expect, test } from '../fixtures/test';
 
 /**
  * Runs against the second server, the one booted with `ACCESS_PASSWORD` set.

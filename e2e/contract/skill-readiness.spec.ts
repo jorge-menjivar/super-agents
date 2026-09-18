@@ -1,8 +1,9 @@
 import type { APIRequestContext } from '@playwright/test';
-import { expect, test } from '@playwright/test';
 import { createAgent, deleteAgent, uniqueAgentName } from '../fixtures/agents';
+import { recordModel, recordProvider } from '../fixtures/cleanup';
 import { STUB_URL, uniqueModelName } from '../fixtures/gateway';
 import { createSkill, SKILLS_PATH } from '../fixtures/skills';
+import { expect, test } from '../fixtures/test';
 
 const AGENTS_PATH = '/v1/super-agents/agents';
 const PROVIDERS_PATH = '/v1/super-agents/ai-providers';
@@ -29,6 +30,7 @@ const createTextModel = async (
   });
   expect(provider.status()).toBe(201);
   const { id: providerId } = (await provider.json()) as { id: string };
+  recordProvider(providerId);
 
   const model = await request.post(MODELS_PATH, {
     data: {
@@ -38,7 +40,9 @@ const createTextModel = async (
     },
   });
   expect(model.status()).toBe(201);
-  return ((await model.json()) as { id: string }).id;
+  const { id: modelId } = (await model.json()) as { id: string };
+  recordModel(modelId);
+  return modelId;
 };
 
 interface Readiness {
