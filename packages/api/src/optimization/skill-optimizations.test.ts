@@ -98,6 +98,7 @@ const setup = (
     getSkillModels: vi.fn().mockResolvedValue([]),
     getSkillReadiness: vi.fn(),
     getRecentSkills: vi.fn(),
+    getSkillSummaries: vi.fn(),
   } as unknown as UserDataStorageConnector;
   const logsStore = {
     getLogs: vi

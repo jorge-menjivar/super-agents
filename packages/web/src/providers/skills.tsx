@@ -4,6 +4,7 @@ import type {
   Skill,
   SkillCreateParams,
   SkillQueryParams,
+  SkillSummary,
   SkillUpdateParams,
 } from '@shared/types/data/skill';
 import {
@@ -15,6 +16,7 @@ import {
 import {
   createSkill,
   deleteSkill,
+  getSkillSummaries,
   getSkills,
   updateSkill,
 } from '@web/api/v1/super-agents/skills';
@@ -41,8 +43,13 @@ export const skillQueryKeys = {
 };
 
 interface SkillsContextType {
-  // Query state
-  skills: Skill[];
+  /**
+   * Every skill of the agent, without the system prompts the gateway seeded
+   * them from -- nothing that reads this list draws them, and they are almost
+   * all of what it would weigh.
+   */
+  skills: SkillSummary[];
+  /** The one skill a page is about, read whole. */
   selectedSkill?: Skill;
   isLoading: boolean;
   error: Error | null;
@@ -71,7 +78,7 @@ interface SkillsContextType {
   fetchNextPage: () => void;
 
   // Helper functions
-  getSkillById: (id: string) => Skill | undefined;
+  getSkillById: (id: string) => SkillSummary | undefined;
   refreshSkills: () => void;
 }
 
@@ -101,7 +108,7 @@ export const SkillsProvider = ({
   } = useInfiniteQuery({
     queryKey: skillQueryKeys.list(queryParams),
     queryFn: ({ pageParam = 0 }) =>
-      getSkills({
+      getSkillSummaries({
         ...queryParams,
         limit: queryParams.limit || 20,
         offset: pageParam,
@@ -117,7 +124,7 @@ export const SkillsProvider = ({
   });
 
   // Flatten pages into single array
-  const skills: Skill[] = data?.pages?.flat() ?? [];
+  const skills: SkillSummary[] = data?.pages?.flat() ?? [];
 
   // Fetch individual skill by name when URL has a selected skill
   const { data: selectedSkillData } = useQuery({
@@ -220,7 +227,7 @@ export const SkillsProvider = ({
 
   // Helper functions
   const getSkillById = useCallback(
-    (id: string): Skill | undefined => {
+    (id: string): SkillSummary | undefined => {
       return skills?.find((skill) => skill.id === id);
     },
     [skills],

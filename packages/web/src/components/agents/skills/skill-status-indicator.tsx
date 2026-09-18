@@ -1,4 +1,4 @@
-import type { Skill } from '@shared/types/data';
+import type { SkillSummary } from '@shared/types/data';
 import { Badge } from '@web/components/ui/badge';
 import {
   Tooltip,
@@ -10,7 +10,7 @@ import { AlertCircle } from 'lucide-react';
 import type { ReactElement } from 'react';
 
 interface SkillStatusIndicatorProps {
-  skill: Skill;
+  skill: SkillSummary;
   /** The size of the icon */
   size?: 'sm' | 'md' | 'lg';
   /** Which side the tooltip should appear on */

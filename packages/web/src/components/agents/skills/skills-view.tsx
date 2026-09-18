@@ -1,6 +1,6 @@
 'use client';
 
-import type { Skill } from '@shared/types/data';
+import type { SkillSummary } from '@shared/types/data';
 import { useQuery } from '@tanstack/react-query';
 import { getSkillEvaluationScoresByTimeBucket } from '@web/api/v1/super-agents/skills';
 import { SkillPerformanceChart } from '@web/components/agents/skills/skill-performance-chart';
@@ -131,7 +131,7 @@ export function SkillsView(): ReactElement {
     return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
   }, [skills, searchQuery]);
 
-  const handleSkillSelect = (skill: Skill) => {
+  const handleSkillSelect = (skill: SkillSummary) => {
     if (selectedAgent) {
       navigateToSkillDashboard(selectedAgent.name, skill.name);
     }

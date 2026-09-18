@@ -88,6 +88,29 @@ export const skillsRouter = new Hono<AppEnv>()
       return c.json({ error: errorInfo.message }, errorInfo.statusCode);
     }
   })
+  /**
+   * The same skills without `seed_system_prompt`: what every list in the
+   * dashboard reads.
+   *
+   * That column is the caller's whole system prompt, kept so that a skill the
+   * gateway created starts as a pass-through. It is tens of kilobytes per
+   * skill and nothing on any page renders it -- for one real agent it was
+   * 324 KB of a 339 KB answer, to draw fifteen names.
+   */
+  .get('/summaries', zValidator('query', SkillQueryParams), async (c) => {
+    try {
+      const query = c.req.valid('query');
+      const summaries = await c
+        .get('user_data_storage_connector')
+        .getSkillSummaries(c, query);
+
+      return c.json(summaries, 200);
+    } catch (error) {
+      console.error('Error fetching skill summaries:', error);
+      const errorInfo = parseDatabaseError(error);
+      return c.json({ error: errorInfo.message }, errorInfo.statusCode);
+    }
+  })
   .patch(
     '/:skillId',
     zValidator('param', z.object({ skillId: z.uuid() })),

@@ -22,6 +22,7 @@ import {
   mergeAgentOptions,
   mergeSystemSettingsOptions,
   type RecentSkill,
+  SKILL_SUMMARY_COLUMNS,
   type Skill,
   type SkillCreateParams,
   type SkillEvent,
@@ -54,6 +55,8 @@ import {
   SkillRouting as SkillRoutingSchema,
   type SkillRoutingUpsertParams,
   Skill as SkillSchema,
+  type SkillSummary,
+  SkillSummary as SkillSummarySchema,
   type SkillUpdateParams,
   type SystemSettings,
   SystemSettings as SystemSettingsSchema,
@@ -306,6 +309,31 @@ export const libsqlUserDataStorageConnector: UserDataStorageConnector = {
       },
       z.array(SkillSchema),
       { limit: queryParams.limit, offset: queryParams.offset },
+    ),
+
+  /**
+   * The same query with the columns named, which is the only way to leave one
+   * out: SQLite has no `SELECT * EXCEPT`. The list comes from the schema, so
+   * a column added to `Skill` is read here without anyone remembering to.
+   */
+  getSkillSummaries: async (
+    c: AppContext,
+    queryParams: SkillQueryParams,
+  ): Promise<SkillSummary[]> =>
+    selectFrom(
+      getLibsqlClient(c),
+      'skills',
+      {
+        id: queryParams.id,
+        agent_id: queryParams.agent_id,
+        name: queryParams.name,
+      },
+      z.array(SkillSummarySchema),
+      {
+        limit: queryParams.limit,
+        offset: queryParams.offset,
+        columns: SKILL_SUMMARY_COLUMNS,
+      },
     ),
 
   createSkill: async (
