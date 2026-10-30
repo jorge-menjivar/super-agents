@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4.13.7",
+    "hono": "^4.13.14",
     "uuid": "^14.0.2",
     "zod": "^4.5.4"
   },
