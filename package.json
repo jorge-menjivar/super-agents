@@ -44,7 +44,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
     "@playwright/test": "^1.63.0",
-    "@tanstack/react-router": "^1.170.32",
+    "@tanstack/react-router": "^1.170.46",
     "@types/node": "^26.4.1",
     "@types/react": "19.2.18",
     "@vitest/coverage-v8": "^5.0.0",
