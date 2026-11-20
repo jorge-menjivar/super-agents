@@ -34,7 +34,7 @@
     "openai": "^7.21.0",
     "uuid": "^14.0.2",
     "ws": "^8.21.3",
-    "zod": "^4.5.4"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/async-retry": "^1.4.9",
