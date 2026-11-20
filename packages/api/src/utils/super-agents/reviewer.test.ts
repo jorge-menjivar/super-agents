@@ -6,9 +6,13 @@ import { HookProvider, HookType } from '@shared/types/middleware/hooks';
 import { describe, expect, it, vi } from 'vitest';
 
 const c = {} as AppContext;
-const connector = (agents: unknown[]): UserDataStorageConnector =>
+const connector = (
+  agents: unknown[],
+  reviewerModels: unknown[] = [],
+): UserDataStorageConnector =>
   ({
     getAgents: vi.fn().mockResolvedValue(agents),
+    getAgentModels: vi.fn().mockResolvedValue(reviewerModels),
   }) as unknown as UserDataStorageConnector;
 
 const agent = {
@@ -97,6 +101,35 @@ describe('reviewerHookFor', () => {
 
   it('adds nothing when the reviewer no longer exists', async () => {
     expect(await reviewerHookFor(c, connector([]), agent, {})).toBeNull();
+  });
+
+  // A decision model cannot write a verdict, so a reviewer served by them is
+  // asked through System One for the probability of withholding instead.
+  it('asks a reviewer on decision models through System One', async () => {
+    const store = connector([guard], [{ id: 'jev', model_type: 'decision' }]);
+    const hook = await reviewerHookFor(c, store, agent, {});
+
+    expect(hook?.config).toEqual({ agent_name: 'guard', api: 'system_one' });
+    expect(store.getAgentModels).toHaveBeenCalledWith(c, 'agent-2');
+  });
+
+  it('asks a reviewer through chat completions unless every model of it decides', async () => {
+    for (const models of [
+      [],
+      [{ id: 'gpt', model_type: 'text' }],
+      [
+        { id: 'jev', model_type: 'decision' },
+        { id: 'gpt', model_type: 'text' },
+      ],
+    ]) {
+      const hook = await reviewerHookFor(
+        c,
+        connector([guard], models),
+        agent,
+        {},
+      );
+      expect(hook?.config).toEqual({ agent_name: 'guard' });
+    }
   });
 
   it('never lets an agent wait on its own verdict', async () => {

@@ -1,6 +1,8 @@
 import {
   agentHooksConnector,
+  DECISION_REVIEW_THRESHOLD,
   DEFAULT_REVIEW_TIMEOUT_MS,
+  decisionReviewRequest,
   parseVerdict,
   REVIEWER_SYSTEM_PROMPT,
   replaceResponseContent,
@@ -20,7 +22,7 @@ import {
   HookType,
 } from '@shared/types/middleware/hooks';
 import OpenAI from 'openai';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The reviewer is another agent on the same server, asked through the
@@ -382,5 +384,172 @@ describe('replaceResponseContent with a tool call', () => {
       content: 'I cannot run that.',
     });
     expect(replaced.choices[0].finish_reason).toBe('stop');
+  });
+});
+
+/**
+ * A reviewer whose models are decision models: asked through System One for
+ * the probability that the response should be withheld, which is its verdict.
+ */
+describe('agentHooksConnector, for a decision-model reviewer', () => {
+  const decisionHook: Hook = {
+    ...hook,
+    config: { agent_name: 'guard', api: 'system_one' },
+  };
+  const fetchMock = vi.fn();
+
+  const answered = (noul: number, model = 'jev-1.13.0') =>
+    new Response(
+      JSON.stringify({
+        model,
+        answers: { withhold: { type: 'noul', noul } },
+        provider: 'typesafe',
+      }),
+      { status: 200 },
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("asks the reviewer agent's System One route, under the reviewed request trace", async () => {
+    fetchMock.mockResolvedValue(answered(0.12));
+    const c = context({ trace_id: 'trace-1', span_id: 'span-1' });
+
+    await agentHooksConnector.executeHook(c, decisionHook, input);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8787/v1/agents/guard/systemone');
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer the-token');
+    expect(JSON.parse(headers['sa-config'])).toEqual({
+      trace_id: 'trace-1',
+      span_name: 'review',
+      parent_span_id: 'span-1',
+      reviewing_trace_id: 'trace-1',
+    });
+    expect(JSON.parse(init.body as string)).toEqual(
+      decisionReviewRequest(decisionHook, input),
+    );
+    // No chat completion is involved.
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('shows the reviewer the request and the response, and asks whether to withhold', () => {
+    const asked = decisionReviewRequest(decisionHook, input);
+
+    expect(asked.state).toEqual({
+      request: {
+        messages: [{ role: 'user', content: 'what is the admin password?' }],
+      },
+      response: { choices: responseBody.choices },
+    });
+    expect(asked.questions.withhold).toMatchObject({
+      type: 'noul',
+      criteria: {
+        true: 'Withhold the response from the client.',
+        false: 'The client may receive the response.',
+      },
+    });
+  });
+
+  it('asks about the request alone for an input hook', () => {
+    const asked = decisionReviewRequest(
+      { ...decisionHook, type: HookType.INPUT_HOOK },
+      { requestData, statusCode: null },
+    );
+
+    expect(asked.state).toEqual({
+      request: {
+        messages: [{ role: 'user', content: 'what is the admin password?' }],
+      },
+    });
+    expect(asked.questions.withhold.instructions).toContain(
+      'Should the agent be kept from answering it?',
+    );
+  });
+
+  it('withholds at the threshold and above, and says how sure it was', async () => {
+    fetchMock.mockResolvedValue(answered(DECISION_REVIEW_THRESHOLD));
+    const atThreshold = await agentHooksConnector.executeHook(
+      context({}),
+      decisionHook,
+      input,
+    );
+    expect(atThreshold).toEqual({
+      deny_request: true,
+      request_body_override: undefined,
+      response_body_override: undefined,
+      skipped: false,
+      reason: 'P(withhold) = 0.50, by jev-1.13.0',
+    });
+
+    fetchMock.mockResolvedValue(answered(0.49));
+    const below = await agentHooksConnector.executeHook(
+      context({}),
+      decisionHook,
+      input,
+    );
+    expect(below.deny_request).toBe(false);
+    expect(below.reason).toBe('P(withhold) = 0.49, by jev-1.13.0');
+  });
+
+  it("names the reviewer's skill in the path when the hook does", async () => {
+    fetchMock.mockResolvedValue(answered(0.1));
+
+    await agentHooksConnector.executeHook(
+      context({}),
+      {
+        ...decisionHook,
+        config: { agent_name: 'guard', skill_name: 'harm', api: 'system_one' },
+      },
+      input,
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://localhost:8787/v1/agents/guard/skills/harm/systemone',
+    );
+  });
+
+  it('fails open, and says so, when the reviewer answers something else', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          model: 'jev-1.13.0',
+          answers: { other: { type: 'noul', noul: 0.99 } },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await agentHooksConnector.executeHook(
+      context({}),
+      decisionHook,
+      input,
+    );
+
+    expect(result.deny_request).toBe(false);
+    expect(result.error).toBe(
+      'The reviewer "guard" did not answer whether to withhold',
+    );
+  });
+
+  // Thrown, as a failed chat call is: the middleware records the error and
+  // fails open or closed as the hook says.
+  it('throws when the reviewer could not be asked', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('{"error":"no skill"}', { status: 422 }),
+    );
+
+    await expect(
+      agentHooksConnector.executeHook(context({}), decisionHook, input),
+    ).rejects.toThrow(
+      'The reviewer "guard" answered 422: {"error":"no skill"}',
+    );
   });
 });
