@@ -666,6 +666,87 @@ describe('EditAgentView', () => {
     });
   });
 
+  describe('withhold threshold', () => {
+    const decider = {
+      ...mockAgent,
+      id: 'agent-2',
+      name: 'guard',
+      agent_type: 'decision' as const,
+    };
+    const writer = {
+      ...decider,
+      id: 'agent-3',
+      name: 'editor',
+      agent_type: 'text' as const,
+    };
+
+    const reviewedBy = (
+      reviewer: typeof decider | typeof writer,
+      threshold: number | null = null,
+    ) =>
+      vi.mocked(useAgents).mockReturnValue({
+        ...vi.mocked(useAgents)(),
+        agents: [mockAgent, decider, writer],
+        selectedAgent: {
+          ...mockAgent,
+          reviewer_agent_id: reviewer.id,
+          options: AgentOptions.parse({
+            review: { withhold_threshold: threshold },
+          }),
+        },
+      });
+
+    // Only a decision agent answers with a probability.
+    it('is asked for only when the reviewer is a decision agent', () => {
+      reviewedBy(writer);
+      renderEditAgentView();
+      expect(screen.queryByLabelText('Withhold at')).not.toBeInTheDocument();
+    });
+
+    it('shows the threshold the agent has, and saves a new one', async () => {
+      reviewedBy(decider, 0.8);
+      renderEditAgentView();
+
+      const field = screen.getByLabelText('Withhold at');
+      expect(field).toHaveValue(0.8);
+
+      fireEvent.change(field, { target: { value: '0.3' } });
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          'agent-1',
+          expect.objectContaining({
+            options: expect.objectContaining({
+              review: { timeout_ms: null, withhold_threshold: 0.3 },
+            }),
+          }),
+        );
+      });
+    });
+
+    it('goes back to the default when emptied', async () => {
+      reviewedBy(decider, 0.8);
+      renderEditAgentView();
+
+      fireEvent.change(screen.getByLabelText('Withhold at'), {
+        target: { value: '' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          'agent-1',
+          expect.objectContaining({
+            options: expect.objectContaining({
+              review: { timeout_ms: null, withhold_threshold: null },
+            }),
+          }),
+        );
+      });
+    });
+  });
+
   describe('Response review', () => {
     const guard = {
       ...mockAgent,
@@ -784,7 +865,7 @@ describe('EditAgentView', () => {
           'agent-1',
           expect.objectContaining({
             options: expect.objectContaining({
-              review: { timeout_ms: 180_000 },
+              review: { timeout_ms: 180_000, withhold_threshold: null },
             }),
           }),
         );
@@ -812,7 +893,9 @@ describe('EditAgentView', () => {
         expect(mockUpdateAgent).toHaveBeenCalledWith(
           'agent-1',
           expect.objectContaining({
-            options: expect.objectContaining({ review: { timeout_ms: null } }),
+            options: expect.objectContaining({
+              review: { timeout_ms: null, withhold_threshold: null },
+            }),
           }),
         );
       });

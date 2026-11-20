@@ -65,6 +65,10 @@ export async function reviewerHookFor(
   }
   const decides = reviewer.agent_type === 'decision';
   const timeoutMs = agent.options.review.timeout_ms;
+  // How sure a decision agent must be to withhold is the reviewed agent's to
+  // say, as its timeout is; a reviewer that writes its verdict has no use
+  // for it.
+  const threshold = agent.options.review.withhold_threshold;
   return {
     id: reviewerHookId(reviewer),
     type: HookType.OUTPUT_HOOK,
@@ -72,6 +76,9 @@ export async function reviewerHookFor(
     config: {
       agent_name: reviewer.name,
       ...(decides ? { api: 'system_one' as const } : {}),
+      ...(decides && threshold !== null
+        ? { withhold_threshold: threshold }
+        : {}),
       ...(timeoutMs === null ? {} : { timeout_ms: timeoutMs }),
     },
     await: true,

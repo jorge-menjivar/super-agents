@@ -1803,6 +1803,34 @@ test.describe('decision skills', () => {
     expect(JSON.stringify(asked?.state)).not.toContain('iVBORw0KGgo=');
   });
 
+  // How sure the reviewer must be is the reviewed agent's to say.
+  test("withholds at the reviewed agent's own threshold", async ({
+    request,
+  }) => {
+    await stubReply(
+      request,
+      decisionModel.name,
+      JSON.stringify({ withhold: { type: 'noul', noul: 0.9 } }),
+    );
+    const setThreshold = (withhold_threshold: number | null) =>
+      request.patch(`${AGENTS_PATH}/${reviewed.id}`, {
+        data: { options: { review: { withhold_threshold } } },
+      });
+
+    try {
+      expect((await setThreshold(0.95)).status()).toBe(200);
+      // 0.9 would be withheld at the default of a half.
+      const lenient = await askReviewed(request, 'is this one fine?');
+      expect(lenient.status()).toBe(200);
+
+      expect((await setThreshold(null)).status()).toBe(200);
+      const strict = await askReviewed(request, 'and this one?');
+      expect(strict.status()).toBe(446);
+    } finally {
+      await setThreshold(null);
+    }
+  });
+
   test('delivers the reply a decision-model reviewer would let through', async ({
     request,
   }) => {
