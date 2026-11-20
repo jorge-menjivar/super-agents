@@ -1,5 +1,6 @@
 import {
   createRootRoute,
+  type ErrorComponentProps,
   isRedirect,
   Outlet,
   redirect,
@@ -38,7 +39,9 @@ async function checkAuth({
   }
 }
 
-function UnavailableComponent({ error }: { error: Error }) {
+// The router types a boundary's error as unknown, since anything can be
+// thrown; what reaches this one is usually, but not necessarily, an Error.
+function UnavailableComponent({ error }: ErrorComponentProps) {
   return (
     <main className="flex h-screen items-center justify-center p-8">
       <div className="max-w-2xl space-y-3">
@@ -47,7 +50,9 @@ function UnavailableComponent({ error }: { error: Error }) {
             ? 'The server is not ready to serve the dashboard'
             : 'Something went wrong'}
         </h1>
-        <p className="text-muted-foreground">{error.message}</p>
+        <p className="text-muted-foreground">
+          {error instanceof Error ? error.message : String(error)}
+        </p>
       </div>
     </main>
   );
