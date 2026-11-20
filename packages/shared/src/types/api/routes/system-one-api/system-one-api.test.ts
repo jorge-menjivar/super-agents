@@ -75,6 +75,27 @@ describe('System One request', () => {
     ).toBe(false);
   });
 
+  it('takes images as named PNG and JPEG assets', () => {
+    const withImages = {
+      ...request,
+      state: 'Who is at the door in door-cam?',
+      assets: {
+        'door-cam': { type: 'image', format: 'jpg', data_base64: '/9j/4AAQ' },
+      },
+    };
+    expect(SystemOneRequestBody.parse(withImages)).toEqual(withImages);
+  });
+
+  // The formats both vendors take; Jev refuses WebP.
+  it('refuses an image in another format', () => {
+    expect(
+      SystemOneRequestBody.safeParse({
+        ...request,
+        assets: { a: { format: 'webp', data_base64: 'UklGRg==' } },
+      }).success,
+    ).toBe(false);
+  });
+
   it('refuses a choice with no options', () => {
     expect(
       SystemOneRequestBody.safeParse({

@@ -159,6 +159,47 @@ describe('SystemOneAPIViewer', () => {
     expect(severity.getByText('70.0%')).toBeInTheDocument();
   });
 
+  it('shows the images the model was shown, under their references', () => {
+    render(
+      <SystemOneAPIViewer
+        logId="log-1"
+        saRequestBody={{
+          ...request,
+          state: 'Who is at the door in door-cam?',
+          assets: {
+            'door-cam': {
+              type: 'image',
+              format: 'jpg',
+              data_base64: '/9j/4AAQ',
+            },
+          },
+        }}
+        saResponseBody={response}
+      />,
+    );
+
+    const images = within(screen.getByRole('region', { name: 'Images' }));
+    expect(images.getByRole('img')).toHaveAttribute(
+      'src',
+      'data:image/jpeg;base64,/9j/4AAQ',
+    );
+    expect(images.getByText('door-cam')).toBeInTheDocument();
+  });
+
+  it('draws no images section without images', () => {
+    render(
+      <SystemOneAPIViewer
+        logId="log-1"
+        saRequestBody={request}
+        saResponseBody={response}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('region', { name: 'Images' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('says so when a question went unanswered', () => {
     render(
       <SystemOneAPIViewer

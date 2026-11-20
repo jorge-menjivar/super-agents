@@ -458,6 +458,48 @@ describe('agentHooksConnector, for a decision-model reviewer', () => {
     });
   });
 
+  // A decision model reads an inline image as base64 text unless it is
+  // handed over as an image.
+  it('shows the reviewer an image in the request as an image', () => {
+    const asked = decisionReviewRequest(decisionHook, {
+      ...input,
+      requestData: {
+        ...requestData,
+        requestBody: {
+          model: 'm',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'what does this say?' },
+                {
+                  type: 'image_url',
+                  image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
+                },
+              ],
+            },
+          ],
+        },
+      } as unknown as SuperAgentsRequestData,
+    });
+
+    expect(asked.assets).toEqual({
+      '<image-1>': {
+        type: 'image',
+        format: 'png',
+        data_base64: 'iVBORw0KGgo=',
+      },
+    });
+    expect(JSON.stringify(asked.state)).toContain('<image-1>');
+    expect(JSON.stringify(asked.state)).not.toContain('iVBORw0KGgo=');
+  });
+
+  it('sends no assets when there are no images', () => {
+    expect(decisionReviewRequest(decisionHook, input)).not.toHaveProperty(
+      'assets',
+    );
+  });
+
   it('asks about the request alone for an input hook', () => {
     const asked = decisionReviewRequest(
       { ...decisionHook, type: HookType.INPUT_HOOK },

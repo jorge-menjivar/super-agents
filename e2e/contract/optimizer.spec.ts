@@ -1757,6 +1757,52 @@ test.describe('decision skills', () => {
     });
   });
 
+  // An inline image reaches the reviewer as an image, not as base64 text.
+  test('shows a decision-model reviewer the image in a request', async ({
+    request,
+  }) => {
+    await stubReply(
+      request,
+      decisionModel.name,
+      JSON.stringify({ withhold: { type: 'noul', noul: 0.1 } }),
+    );
+    const marker = `what is in this picture? ${Date.now()}`;
+
+    const response = await request.post(
+      `/v1/agents/${reviewed.name}/chat/completions`,
+      {
+        headers: {
+          'sa-config': saConfig(reviewed.name, 'only_skill', {
+            model: stub.textModel,
+          }),
+        },
+        data: {
+          model: 'ignored-by-the-gateway',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: marker },
+                {
+                  type: 'image_url',
+                  image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    );
+    expect(response.status()).toBe(200);
+
+    const asked = (await stubRequests(request, decisionModel.name)).find(
+      (forwarded) => JSON.stringify(forwarded.state).includes(marker),
+    );
+    expect(asked?.images).toEqual(['data:image/png;base64,iVBORw0KGgo=']);
+    expect(JSON.stringify(asked?.state)).toContain('Image 1');
+    expect(JSON.stringify(asked?.state)).not.toContain('iVBORw0KGgo=');
+  });
+
   test('delivers the reply a decision-model reviewer would let through', async ({
     request,
   }) => {

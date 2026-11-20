@@ -1,3 +1,4 @@
+import { liftImages } from '@api/connectors/hooks/review-images';
 import {
   getApiUrl,
   getInternalApiKey,
@@ -263,10 +264,14 @@ export function decisionReviewRequest(
   hook: Hook,
   input: HookInput,
 ): SystemOneRequestBody {
+  // Inline images become assets, so the reviewer sees them as images; see
+  // `liftImages`.
   const request = describeRequest(input.requestData);
   if (hook.type === HookType.INPUT_HOOK) {
+    const { material, assets } = liftImages({ request });
     return {
-      state: { request },
+      state: material,
+      ...(assets ? { assets } : {}),
       questions: {
         [WITHHOLD_QUESTION]: {
           type: 'noul',
@@ -280,14 +285,16 @@ export function decisionReviewRequest(
       },
     };
   }
+  const { material, assets } = liftImages({
+    request,
+    response:
+      input.responseBody === undefined
+        ? null
+        : describeResponse(input.responseBody),
+  });
   return {
-    state: {
-      request,
-      response:
-        input.responseBody === undefined
-          ? null
-          : describeResponse(input.responseBody),
-    },
+    state: material,
+    ...(assets ? { assets } : {}),
     questions: {
       [WITHHOLD_QUESTION]: {
         type: 'noul',

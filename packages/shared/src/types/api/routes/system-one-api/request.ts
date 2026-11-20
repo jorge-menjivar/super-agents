@@ -69,6 +69,18 @@ export const SystemOneQuestion = z.discriminatedUnion('type', [
 
 export type SystemOneQuestion = z.infer<typeof SystemOneQuestion>;
 
+/**
+ * An image a request shows the model, inline. PNG or JPEG: the formats both
+ * vendors take. Standard base64, with no `data:` prefix.
+ */
+export const SystemOneImageAsset = z.object({
+  type: z.literal('image').optional(),
+  format: z.enum(['png', 'jpg', 'jpeg']),
+  data_base64: z.string().min(1),
+});
+
+export type SystemOneImageAsset = z.infer<typeof SystemOneImageAsset>;
+
 export const SystemOneRequestBody = z.object({
   /**
    * The decision model to ask. Optional as it is on Drex; through an agent or
@@ -91,6 +103,15 @@ export const SystemOneRequestBody = z.object({
     .refine((questions) => Object.keys(questions).length >= 1, {
       message: 'Ask at least one question',
     }),
+  /**
+   * The images the request shows the model, keyed by a reference that
+   * stands for the image wherever it appears as text -- in the state, an
+   * instruction or a criterion, mid-sentence or as a whole value. Jev's own
+   * form; for Drex the gateway numbers them and writes "Image 1", "Image 2"
+   * in place of the references, which is how Drex names them. Every image
+   * must be referenced somewhere, and Drex takes at most eight.
+   */
+  assets: z.record(z.string().min(1).max(1024), SystemOneImageAsset).optional(),
 });
 
 export type SystemOneRequestBody = z.infer<typeof SystemOneRequestBody>;
