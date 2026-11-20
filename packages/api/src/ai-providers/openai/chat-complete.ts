@@ -217,6 +217,15 @@ export const openAIChatCompleteJSONToStreamResponseTransform: StreamResponseTran
                       index: choiceIndex,
                       delta: {
                         role: 'assistant',
+                        // A held stream is the only stream its client ever
+                        // sees, so it has to speak what a streaming provider
+                        // speaks. Ollama and OpenRouter both stream thinking
+                        // as `delta.reasoning`, and that is the field an
+                        // OpenAI-compatible client reads; the block beside it
+                        // is what the dashboard reads. Emitting only the block
+                        // would replay a reviewed answer with the thinking
+                        // struck out of it.
+                        reasoning: thinking,
                         content_blocks: [
                           {
                             index: i,
@@ -231,27 +240,32 @@ export const openAIChatCompleteJSONToStreamResponseTransform: StreamResponseTran
                 })}\n\n`,
               );
             }
-            streamChunkArray.push(
-              `data: ${JSON.stringify({
-                ...streamChunkTemplate,
-                choices: [
-                  {
-                    index: choiceIndex,
-                    delta: {
-                      role: 'assistant',
-                      content_blocks: [
-                        {
-                          index: i,
-                          delta: {
-                            signature: contentBlockDelta.signature,
+            // Only a provider that signs its thinking has one. Without the
+            // guard this sends every other provider's client a chunk whose
+            // delta is empty once `undefined` is dropped in serialisation.
+            if (contentBlockDelta.signature) {
+              streamChunkArray.push(
+                `data: ${JSON.stringify({
+                  ...streamChunkTemplate,
+                  choices: [
+                    {
+                      index: choiceIndex,
+                      delta: {
+                        role: 'assistant',
+                        content_blocks: [
+                          {
+                            index: i,
+                            delta: {
+                              signature: contentBlockDelta.signature,
+                            },
                           },
-                        },
-                      ],
+                        ],
+                      },
                     },
-                  },
-                ],
-              })}\n\n`,
-            );
+                  ],
+                })}\n\n`,
+              );
+            }
           } else if (contentBlockDelta.data) {
             for (let j = 0; j < contentBlockDelta.data.length; j += 500) {
               const data = contentBlockDelta.data.slice(j, j + 500);

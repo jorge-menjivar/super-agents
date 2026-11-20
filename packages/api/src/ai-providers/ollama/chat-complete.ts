@@ -4,10 +4,23 @@ import type {
   ResponseChunkStreamTransformFunction,
   ResponseTransformFunction,
 } from '@shared/types/ai-providers/config';
-import type { ChatCompletionRequestBody } from '@shared/types/api/routes/chat-completions-api';
-import { ChatCompletionMessageRole } from '@shared/types/api/routes/shared/messages';
+import type {
+  ChatCompletionChoice,
+  ChatCompletionRequestBody,
+} from '@shared/types/api/routes/chat-completions-api';
+import {
+  type ChatCompletionContentType,
+  ChatCompletionMessageRole,
+} from '@shared/types/api/routes/shared/messages';
 import { AIProvider } from '@shared/types/constants';
-import type { OllamaChatCompleteResponse, OllamaStreamChunk } from './types';
+import type {
+  OllamaChatCompleteChoice,
+  OllamaChatCompleteResponse,
+  OllamaStreamChoice,
+  OllamaStreamChoiceWithBlocks,
+  OllamaStreamChunk,
+  OllamaStreamContentBlock,
+} from './types';
 import { ollamaErrorResponseTransform } from './utils';
 
 export const ollamaChatCompleteConfig: AIProviderFunctionConfig = {
@@ -83,6 +96,66 @@ export const ollamaChatCompleteConfig: AIProviderFunctionConfig = {
   },
 };
 
+/**
+ * Ollama returns a thinking model's reasoning in a field of its own --
+ * `choices[].message.reasoning` whole, `choices[].delta.reasoning` streaming
+ * -- and that is Ollama's shape, not the gateway's: the gateway carries
+ * thinking as a content block, and a content block is what the rest of it
+ * reads. A held stream re-streams `content_blocks` and drops whatever is not
+ * in them (`openAIChatCompleteJSONToStreamResponseTransform`), and a log row's
+ * response is parsed against `ChatCompletionResponseBody`, which strips a
+ * field no schema declares. So reasoning left where Ollama put it reaches only
+ * a client that already knows to look for it there, and not the log page, and
+ * not a client whose agent has a reviewer.
+ *
+ * It is re-expressed as a thinking block, the way the OpenRouter transform
+ * does, and the field itself stays beside the block, since that is what an
+ * OpenAI-compatible client reads.
+ *
+ * Neither is gated on `strictOpenAiCompliance`, which OpenRouter gates its own
+ * on: that flag is true unless a request turns it off (`handler-utils.ts`),
+ * and no ordinary client turns it off, so gating here would mean thinking
+ * never survives a single real request. Dropping what the model spent most of
+ * its completion budget on is the worse answer to a question about shape.
+ */
+function withThinkingBlocks(
+  choice: OllamaChatCompleteChoice,
+): ChatCompletionChoice {
+  const { reasoning, content } = choice.message;
+
+  if (!reasoning) return choice;
+
+  const content_blocks: ChatCompletionContentType[] = [
+    { type: 'thinking', thinking: reasoning },
+  ];
+  // Ollama's OpenAI-compatible endpoint answers with text, but a message whose
+  // content is already blocks carries them in `content` and would only be said
+  // twice here.
+  if (typeof content === 'string') {
+    content_blocks.push({ type: 'text', text: content });
+  }
+
+  return { ...choice, message: { ...choice.message, content_blocks } };
+}
+
+/** The same, for one choice of a stream chunk. */
+function withThinkingDeltaBlocks(
+  choice: OllamaStreamChoice,
+): OllamaStreamChoiceWithBlocks {
+  const { reasoning, content } = choice.delta;
+
+  if (!reasoning) return choice;
+
+  const content_blocks: OllamaStreamContentBlock[] = [
+    { index: choice.index, delta: { thinking: reasoning } },
+  ];
+  if (content) {
+    content_blocks.push({ index: choice.index, delta: { text: content } });
+  }
+
+  return { ...choice, delta: { ...choice.delta, content_blocks } };
+}
+
 export const ollamaChatCompleteResponseTransform: ResponseTransformFunction = (
   aiProviderResponseBody,
   aiProviderResponseStatus,
@@ -115,7 +188,7 @@ export const ollamaChatCompleteResponseTransform: ResponseTransformFunction = (
       created: response.created,
       model: response.model,
       provider: AIProvider.OLLAMA,
-      choices: response.choices,
+      choices: response.choices.map(withThinkingBlocks),
       usage,
     };
   }
@@ -147,6 +220,6 @@ export const ollamaChatCompleteStreamChunkTransform: ResponseChunkStreamTransfor
       created: parsedChunk.created,
       model: parsedChunk.model,
       provider: AIProvider.OLLAMA,
-      choices: parsedChunk.choices,
+      choices: parsedChunk.choices.map(withThinkingDeltaBlocks),
     })}\n\n`;
   };

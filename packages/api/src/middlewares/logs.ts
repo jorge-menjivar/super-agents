@@ -129,7 +129,7 @@ const broadcastLog = async (log: string): Promise<void> => {
 /**
  * Parse accumulated SSE stream chunks and reconstruct the response body
  */
-function parseStreamChunksToResponseBody(
+export function parseStreamChunksToResponseBody(
   accumulatedChunks: string,
   functionName?: string,
 ): {
@@ -138,6 +138,7 @@ function parseStreamChunksToResponseBody(
 } {
   const lines = accumulatedChunks.split('\n');
   let accumulatedContent = '';
+  let accumulatedThinking = '';
   let id = '';
   let model = '';
   let created = 0;
@@ -238,6 +239,18 @@ function parseStreamChunksToResponseBody(
         // Accumulate content
         if (delta.content) {
           accumulatedContent += delta.content;
+        }
+
+        // Accumulate what the model thought before it answered. A provider
+        // that reasons streams it as a content block of its own rather than
+        // as content, so a row rebuilt from `delta.content` alone keeps the
+        // answer and loses the thinking behind it.
+        if (Array.isArray(delta.content_blocks)) {
+          for (const block of delta.content_blocks) {
+            if (block?.delta?.thinking) {
+              accumulatedThinking += block.delta.thinking;
+            }
+          }
         }
 
         // Accumulate tool calls
@@ -366,6 +379,14 @@ function parseStreamChunksToResponseBody(
           message: {
             role: 'assistant',
             content: accumulatedContent || null,
+            ...(accumulatedThinking && {
+              content_blocks: [
+                { type: 'thinking', thinking: accumulatedThinking },
+                ...(accumulatedContent
+                  ? [{ type: 'text', text: accumulatedContent }]
+                  : []),
+              ],
+            }),
             ...(toolCalls.length > 0 && { tool_calls: toolCalls }),
           },
           finish_reason: 'stop',

@@ -1,3 +1,4 @@
+import { parseStreamChunksToResponseBody } from '@api/middlewares/logs';
 import { describe, expect, it } from 'vitest';
 
 // Import the module to access the parseStreamChunksToResponseBody function
@@ -318,5 +319,51 @@ data: [DONE]`;
       expect(model).toBe('gpt-5-nano-2025-08-07');
       expect(createdAt).toBe(1763980623);
     });
+  });
+});
+
+describe('Reconstructing a streamed chat completion', () => {
+  function chunk(delta: Record<string, unknown>): string {
+    return `data: ${JSON.stringify({
+      id: 'chatcmpl-871',
+      object: 'chat.completion.chunk',
+      created: 1234567890,
+      model: 'glm-5.3-flash',
+      choices: [{ delta, index: 0, finish_reason: null }],
+    })}`;
+  }
+
+  function messageOf(chunks: string[]): Record<string, unknown> {
+    const { response_body } = parseStreamChunksToResponseBody(
+      `${chunks.join('\n\n')}\n\ndata: [DONE]`,
+    );
+    const choices = response_body.choices as {
+      message: Record<string, unknown>;
+    }[];
+    return choices[0].message;
+  }
+
+  it('keeps the thinking a provider streamed beside the answer', () => {
+    const message = messageOf([
+      chunk({
+        role: 'assistant',
+        content_blocks: [{ index: 0, delta: { thinking: '17 * 23 = ' } }],
+      }),
+      chunk({ content_blocks: [{ index: 0, delta: { thinking: '391' } }] }),
+      chunk({ content: '391' }),
+    ]);
+
+    expect(message.content).toBe('391');
+    expect(message.content_blocks).toEqual([
+      { type: 'thinking', thinking: '17 * 23 = 391' },
+      { type: 'text', text: '391' },
+    ]);
+  });
+
+  it('leaves an answer that did no thinking as it was', () => {
+    const message = messageOf([chunk({ role: 'assistant', content: '391' })]);
+
+    expect(message.content).toBe('391');
+    expect(message.content_blocks).toBeUndefined();
   });
 });
