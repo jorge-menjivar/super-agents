@@ -227,9 +227,11 @@ test.describe('decision models', () => {
       const patched = await request.patch(`${AGENTS_PATH}/${agent.id}`, {
         data: { judge_model_id: model.id },
       });
-      // Refused by the database's model-type trigger. The status it surfaces
-      // as is the agents API's own business, and not what this is about.
-      expect(patched.ok()).toBe(false);
+      // Refused by the database's model-type trigger, in its own words.
+      expect(patched.status()).toBe(400);
+      expect(((await patched.json()) as { error: string }).error).toBe(
+        'judge_model_id must reference a text model',
+      );
 
       const reread = await request.get(AGENTS_PATH, {
         params: { id: agent.id },

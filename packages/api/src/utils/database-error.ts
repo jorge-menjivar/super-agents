@@ -150,6 +150,47 @@ function parseSqliteError(message: string): DatabaseErrorInfo | undefined {
   });
 }
 
+/**
+ * The SQLSTATE of a `RAISE EXCEPTION` that names none, which is how every
+ * trigger and function in `supabase/migrations/` refuses a write.
+ */
+const RAISED_EXCEPTION = 'P0001';
+
+/**
+ * A trigger's refusal: `RAISE(ABORT, ...)` on SQLite, `RAISE EXCEPTION` on
+ * Postgres. It is the schema saying why a write cannot happen -- a model of
+ * the wrong type in a slot, a type changed while in use -- in words written
+ * for whoever asked for it, so it is the caller's request that is wrong: a
+ * 400, and the trigger's own message, the same on both backends.
+ */
+function raisedByTrigger(message: string): DatabaseErrorInfo {
+  return {
+    message,
+    code: RAISED_EXCEPTION,
+    internalStatusCode: 400,
+    statusCode: 400,
+  };
+}
+
+/**
+ * A SQLite trigger's refusal. libSQL reports it as `SQLITE_CONSTRAINT` with
+ * the trigger's message and an extended code to say it was a trigger; the
+ * message alone also says so, once the four built-in constraint failures
+ * have been ruled out.
+ */
+function parseSqliteTrigger(error: Error): DatabaseErrorInfo | undefined {
+  const prefix = /^SQLITE_CONSTRAINT(?:_TRIGGER)?:\s*/;
+  const extendedCode = (error as { extendedCode?: unknown }).extendedCode;
+  if (
+    extendedCode !== 'SQLITE_CONSTRAINT_TRIGGER' &&
+    !prefix.test(error.message)
+  ) {
+    return undefined;
+  }
+  const message = error.message.replace(prefix, '').trim();
+  return message ? raisedByTrigger(message) : undefined;
+}
+
 /** Public HTTP status codes for API responses */
 export type PublicStatusCode = 400 | 404 | 409 | 500;
 
@@ -223,6 +264,10 @@ export function parseDatabaseError(error: unknown): DatabaseErrorInfo {
     const sqliteError = parseSqliteError(errorMessage);
     if (sqliteError) {
       return sqliteError;
+    }
+    const sqliteTrigger = parseSqliteTrigger(error);
+    if (sqliteTrigger) {
+      return sqliteTrigger;
     }
 
     // Try to extract JSON error from PostgREST response
@@ -318,6 +363,10 @@ export function parseDatabaseError(error: unknown): DatabaseErrorInfo {
  */
 function parsePostgrestError(pgError: PostgrestError): DatabaseErrorInfo {
   const { code, constraint, table, column, message, details } = pgError;
+
+  if (code === RAISED_EXCEPTION && message) {
+    return { ...raisedByTrigger(message), table, column };
+  }
 
   const internalCode = code ? getStatusCodeForPgCode(code) : 500;
   const result: DatabaseErrorInfo = {
