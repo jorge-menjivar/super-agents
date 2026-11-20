@@ -1,4 +1,5 @@
 import { markRequestStarted } from '@api/middlewares/logs';
+import { repairClusterArms } from '@api/optimization/arm-repair';
 import { handleGenerateArms } from '@api/optimization/skill-optimizations';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
@@ -31,6 +32,7 @@ import type {
 import type { SkillOptimizationClusterCreateParams } from '@shared/types/data/skill-optimization-cluster';
 import { isOptimizedFunction } from '@shared/utils/optimized-functions';
 import type { Next } from 'hono';
+import { getRuntimeKey } from 'hono/adapter';
 import { createMiddleware } from 'hono/factory';
 
 /**
@@ -170,6 +172,62 @@ export function getOptimalCluster(
   return optimalCluster;
 }
 
+/**
+ * The arms to serve a request matched to a cluster that has none, in a skill
+ * that has models, while `repairClusterArms` gives that cluster its arms.
+ *
+ * The request does not wait for the repair if it does not have to: it goes to
+ * the nearest cluster that can serve it -- as a request whose embedding
+ * failed goes to any cluster -- and the repair finishes behind it. Only when
+ * no cluster has arms does it wait, and then it is served by what the repair
+ * made. None, if the repair failed.
+ */
+async function armsWhileRepairing(
+  c: AppContext,
+  connector: UserDataStorageConnector,
+  skill: { id: string; name: string },
+  cluster: SkillOptimizationCluster,
+  clusters: SkillOptimizationCluster[],
+  embedding: number[] | null,
+): Promise<SkillOptimizationArm[]> {
+  const repaired = repairClusterArms(c, connector, skill, cluster.id).then(
+    () => true,
+    (e: unknown) => {
+      error(`[ARM_REPAIR] Could not repair cluster ${cluster.id}:`, e);
+      return false;
+    },
+  );
+
+  const others = clusters.filter((other) => other.id !== cluster.id);
+  if (embedding) {
+    others.sort(
+      (a, b) =>
+        cosineSimilarity(embedding, b.centroid) -
+        cosineSimilarity(embedding, a.centroid),
+    );
+  }
+  for (const other of others) {
+    const arms = await connector.getSkillOptimizationArms(c, {
+      skill_id: skill.id,
+      cluster_id: other.id,
+    });
+    if (arms.length > 0) {
+      if (getRuntimeKey() === 'workerd') {
+        c.executionCtx.waitUntil(repaired);
+      }
+      return arms;
+    }
+  }
+
+  if (!(await repaired)) {
+    return [];
+  }
+  return connector.getSkillOptimizationArms(c, {
+    skill_id: skill.id,
+    cluster_id: cluster.id,
+  });
+}
+
 function getRandomValueInRange(min: number, max: number): number {
   return Math.random() * (max - min) + min;
 }
@@ -289,25 +347,41 @@ async function validateTargetConfiguration(
         ? getOptimalCluster(embedding, clusters)
         : clusters[0];
 
-      const arms = await userDataStorageConnector.getSkillOptimizationArms(c, {
+      let arms = await userDataStorageConnector.getSkillOptimizationArms(c, {
         skill_id: skill.id,
         cluster_id: optimalCluster.id,
       });
 
-      // A skill without models has no arms; say so instead of crashing on
-      // the empty list below. The usual way here is a skill the gateway
-      // created for an agent that had no default models to give it.
       if (arms.length === 0) {
         const models = await userDataStorageConnector.getSkillModels(
           c,
           skill.id,
         );
-        const agent = c.get('agent');
-        const error =
-          skill.auto_created && models.length === 0
-            ? `Skill ${skill.name} was created automatically, but agent ${agent?.name ?? skill.agent_id} had no default models to give it. Add default models to the agent -- its automatic skills take them -- or attach a model to the skill, and try again.`
-            : `Skill ${skill.name} has no configurations to serve an optimized request. Attach a model to the skill, or default models to its agent, and try again.`;
-        return c.json({ error }, 422);
+        // A skill with models has arms in every cluster, so this cluster's
+        // generation was cut short. It repairs itself.
+        if (models.length > 0) {
+          arms = await armsWhileRepairing(
+            c,
+            userDataStorageConnector,
+            skill,
+            optimalCluster,
+            clusters,
+            embedding,
+          );
+        }
+        // A skill without models has no arms; say so instead of crashing on
+        // the empty list below. The usual way here is a skill the gateway
+        // created for an agent that had no default models to give it.
+        if (arms.length === 0) {
+          const agent = c.get('agent');
+          const error =
+            models.length > 0
+              ? `Skill ${skill.name} has models, but no configurations could be generated to serve it. The gateway log says why; generating the skill's arms again will retry.`
+              : skill.auto_created
+                ? `Skill ${skill.name} was created automatically, but agent ${agent?.name ?? skill.agent_id} had no default models to give it. Add default models to the agent -- its automatic skills take them -- or attach a model to the skill, and try again.`
+                : `Skill ${skill.name} has no configurations to serve an optimized request. Attach a model to the skill, or default models to its agent, and try again.`;
+          return c.json({ error }, 422);
+        }
       }
 
       const optimalArm = await getOptimalArm(

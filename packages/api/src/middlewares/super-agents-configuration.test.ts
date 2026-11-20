@@ -1,4 +1,5 @@
 import { saConfigurationInjectorMiddleware } from '@api/middlewares/super-agents-configuration';
+import { handleGenerateArms } from '@api/optimization/skill-optimizations';
 import type { AppContext } from '@api/types/hono';
 import { generateEmbeddingForRequest } from '@api/utils/embeddings';
 import { resolveEmbeddingModelConfig } from '@api/utils/evaluation-model-resolver';
@@ -298,6 +299,154 @@ describe('saConfigurationInjectorMiddleware', () => {
     const body = (await response.json()) as { error: string };
     expect(body.error).toContain('created automatically');
     expect(body.error).toContain('agent helper had no default models');
+  });
+});
+
+/**
+ * A skill with models has arms in every cluster, so a cluster without any is
+ * a generation cut short -- a crash, or arms that once failed to read back.
+ * It is repaired, and the request it would have refused is served.
+ */
+describe('saConfigurationInjectorMiddleware, a cluster left without arms', () => {
+  const arm = (id: string, cluster: string) => ({
+    id,
+    cluster_id: cluster,
+    params: {
+      system_prompt: 'Be brief.',
+      model_id: 'model-1',
+      temperature_min: 0,
+      temperature_max: 0,
+      top_p_min: 1,
+      top_p_max: 1,
+      frequency_penalty_min: 0,
+      frequency_penalty_max: 0,
+      presence_penalty_min: 0,
+      presence_penalty_max: 0,
+      thinking_min: null,
+      thinking_max: null,
+    },
+  });
+  const preProcessed = SuperAgentsConfigPreProcessed.parse({
+    agent_name: 'helper',
+    skill_name: 'routed-skill',
+  });
+  /** A connector whose clusters have `arms`, for a skill with one model. */
+  const servingConnector = (
+    clusters: { id: string; centroid: number[] }[],
+    getSkillOptimizationArms: ReturnType<typeof vi.fn>,
+  ) => ({
+    getSkillOptimizationClusters: vi.fn().mockResolvedValue(clusters),
+    getSkillOptimizationArms,
+    getSkillModels: vi.fn().mockResolvedValue([{ id: 'model-1' }]),
+    getSkillOptimizationEvaluations: vi.fn().mockResolvedValue([]),
+    getSkillOptimizationArmStats: vi.fn().mockResolvedValue([]),
+    getModels: vi
+      .fn()
+      .mockResolvedValue([
+        { id: 'model-1', model_name: 'gpt-4o', ai_provider_id: 'prov-1' },
+      ]),
+    getAIProviderAPIKeyById: vi.fn().mockResolvedValue({
+      ai_provider: 'openai',
+      api_key: 'sk-x',
+      custom_fields: {},
+    }),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(generateEmbeddingForRequest).mockResolvedValue([1, 0]);
+    vi.mocked(handleGenerateArms).mockResolvedValue(
+      new Response(JSON.stringify({ updatedArms: [] }), {
+        status: 200,
+      }) as never,
+    );
+  });
+
+  it('serves the request from the nearest cluster that can, and repairs its own', async () => {
+    // Matched to the empty one by its embedding; the far one has arms.
+    const armsOf: Record<string, unknown[]> = {
+      empty: [],
+      near: [arm('arm-near', 'near')],
+      far: [arm('arm-far', 'far')],
+    };
+    const c = context(
+      preProcessed,
+      servingConnector(
+        [
+          { id: 'far', centroid: [-1, 0] },
+          { id: 'empty', centroid: [1, 0] },
+          { id: 'near', centroid: [1, 1] },
+        ],
+        vi.fn(
+          async (_c, query: { cluster_id: string }) => armsOf[query.cluster_id],
+        ),
+      ),
+    );
+    const next = vi.fn();
+
+    await saConfigurationInjectorMiddleware(c, next);
+
+    expect(next).toHaveBeenCalled();
+    expect((setValue(c, 'pulled_arm') as { id: string }).id).toBe('arm-near');
+    await vi.waitFor(() =>
+      expect(handleGenerateArms).toHaveBeenCalledWith(
+        c,
+        expect.anything(),
+        'skill-1',
+        'empty',
+      ),
+    );
+  });
+
+  it('waits for the repair when no cluster can serve the request', async () => {
+    const getSkillOptimizationArms = vi
+      .fn()
+      .mockResolvedValueOnce([]) // the cluster it was matched to
+      .mockResolvedValueOnce([]) // the repair's own look before it starts
+      .mockResolvedValue([arm('arm-new', 'only')]); // what the repair made
+    const c = context(
+      preProcessed,
+      servingConnector(
+        [{ id: 'only', centroid: [1, 0] }],
+        getSkillOptimizationArms,
+      ),
+    );
+    const next = vi.fn();
+
+    await saConfigurationInjectorMiddleware(c, next);
+
+    expect(handleGenerateArms).toHaveBeenCalledWith(
+      c,
+      expect.anything(),
+      'skill-1',
+      'only',
+    );
+    expect(next).toHaveBeenCalled();
+    expect((setValue(c, 'pulled_arm') as { id: string }).id).toBe('arm-new');
+  });
+
+  it('answers 422 when the repair could not make any', async () => {
+    vi.mocked(handleGenerateArms).mockResolvedValue(
+      new Response(JSON.stringify({ error: 'boom' }), { status: 500 }) as never,
+    );
+    const c = context(
+      preProcessed,
+      servingConnector(
+        [{ id: 'only', centroid: [1, 0] }],
+        vi.fn().mockResolvedValue([]),
+      ),
+    );
+
+    const response = (await saConfigurationInjectorMiddleware(
+      c,
+      vi.fn(),
+    )) as Response;
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain(
+      'has models, but no configurations could be generated',
+    );
   });
 });
 
