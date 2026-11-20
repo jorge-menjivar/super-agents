@@ -13,6 +13,7 @@ import {
   STUB_URL,
   saConfig,
   stubDelay,
+  stubFail,
   stubReply,
   stubReset,
   uniqueModelName,
@@ -482,6 +483,53 @@ test.describe('log page', () => {
   // A decision model writes nothing: its log is the material, the questions
   // and the probabilities it answered them with, and the page draws those
   // rather than an empty conversation.
+  // A request that failed says why on its page: the status alone does not.
+  test('shows the error a failed request ended with', async ({
+    page,
+    request,
+  }) => {
+    const name = uniqueAgentName('failed-page');
+    const agent = await createAgent(request, name, undefined, {
+      agent_type: 'decision',
+    });
+    const model = await createDecisionModel(request, 'failed-page');
+
+    try {
+      const skill = await createSkill(request, agent.id, 'decision_skill');
+      await stubFail(request, model.name, 1, 400);
+      const failed = await request.post(SYSTEM_ONE_PATH, {
+        headers: {
+          'sa-config': JSON.stringify({
+            agent_name: name,
+            skill_name: skill.name,
+            targets: [
+              { provider: 'nace', custom_host: STUB_URL, model: model.name },
+            ],
+          }),
+        },
+        data: {
+          state: 'A very long session.',
+          questions: { withhold: { type: 'noul', instructions: 'Withhold?' } },
+        },
+      });
+      expect(failed.status()).toBe(400);
+
+      await page.goto(`/agents/${name}/logs`);
+      await page.getByText('System One').first().click();
+      await expect(page).toHaveURL(/\/logs\/[0-9a-f-]+$/);
+
+      await expect(page.getByRole('heading', { name: 'Failed' })).toBeVisible();
+      await expect(
+        page
+          .getByRole('region', { name: 'Error' })
+          .getByText(/injected failure/),
+      ).toBeVisible();
+    } finally {
+      await stubReset(request, model.name);
+      await deleteAgent(request, agent.id);
+    }
+  });
+
   test("shows a decision model's answers", async ({ page, request }) => {
     const name = uniqueAgentName('decision-page');
     const agent = await createAgent(request, name, undefined, {
