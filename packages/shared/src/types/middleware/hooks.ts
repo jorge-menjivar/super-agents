@@ -44,6 +44,13 @@ export const HookAgentProviderConfig = z.object({
   skill_name: z.string().optional(),
   /** How long the review may take, in milliseconds; a minute by default. */
   timeout_ms: z.int().positive().optional(),
+  /**
+   * How the reviewer is asked. Through chat completions, by default, where
+   * it writes a verdict; or through System One, when its models are decision
+   * models -- which write nothing, and answer with the probability that the
+   * material should be withheld.
+   */
+  api: z.enum(['chat_completions', 'system_one']).optional(),
 });
 
 export type HookAgentProviderConfig = z.infer<typeof HookAgentProviderConfig>;
