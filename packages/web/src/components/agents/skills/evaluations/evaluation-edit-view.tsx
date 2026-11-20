@@ -1,6 +1,7 @@
 'use client';
 
 import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
+import type { ModelType } from '@shared/types/data/model';
 import type { EvaluationMethodDetails } from '@shared/types/evaluations';
 import { getEvaluationMethods } from '@web/api/v1/super-agents/skills';
 import { Badge } from '@web/components/ui/badge';
@@ -67,7 +68,7 @@ interface ModelOption {
   id: string;
   name: string;
   provider: AIProvider;
-  modelType: 'text' | 'embed';
+  modelType: ModelType;
 }
 
 /** The select value standing for "no value at all"; an item cannot be empty. */

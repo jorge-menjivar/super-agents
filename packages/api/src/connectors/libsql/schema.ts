@@ -152,15 +152,14 @@ const initialSchema: LibsqlMigration = {
       id TEXT PRIMARY KEY,
       ai_provider_id TEXT NOT NULL,
       model_name TEXT NOT NULL,
-      model_type TEXT NOT NULL DEFAULT 'text' CHECK (model_type IN ('text', 'embed')),
+      model_type TEXT NOT NULL DEFAULT 'text' CHECK (model_type IN ('text', 'embed', 'decision')),
       embedding_dimensions INTEGER,
       created_at TEXT NOT NULL DEFAULT (${NOW_ISO}),
       updated_at TEXT NOT NULL DEFAULT (${NOW_ISO}),
       FOREIGN KEY (ai_provider_id) REFERENCES ai_providers(id) ON DELETE CASCADE,
       UNIQUE (ai_provider_id, model_name),
       CONSTRAINT embedding_dimensions_only_for_embed CHECK (
-        (model_type = 'embed' AND embedding_dimensions IS NOT NULL) OR
-        (model_type = 'text' AND embedding_dimensions IS NULL)
+        (model_type = 'embed') = (embedding_dimensions IS NOT NULL)
       )
     )`,
     `CREATE INDEX IF NOT EXISTS idx_models_ai_provider_id ON models(ai_provider_id)`,

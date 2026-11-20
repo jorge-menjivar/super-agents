@@ -160,6 +160,17 @@ function conversationMessages(
       }
       return input as IntentMessage[];
     }
+    // What a decision model is asked about is the conversation it is part
+    // of: the material changes request by request, the questions do not.
+    case FunctionName.SYSTEM_ONE: {
+      const { state } = saRequestData.requestBody;
+      if (state === null || state === undefined || state === '') {
+        return [];
+      }
+      const content =
+        typeof state === 'string' ? state : JSON.stringify(state, null, 2);
+      return [{ role: ChatCompletionMessageRole.USER, content }];
+    }
     default:
       return [];
   }

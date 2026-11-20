@@ -63,6 +63,7 @@ vi.mock('lucide-react', () => ({
 const providers = [
   { id: 'provider-1', name: 'OpenAI Prod', ai_provider: 'openai' },
   { id: 'provider-2', name: 'Anthropic', ai_provider: 'anthropic' },
+  { id: 'provider-3', name: 'TypeSafe', ai_provider: 'typesafe' },
 ];
 
 const models = [
@@ -83,6 +84,12 @@ const models = [
     ai_provider_id: 'provider-1',
     model_name: 'text-embedding-3-small',
     model_type: 'embed',
+  },
+  {
+    id: 'model-4',
+    ai_provider_id: 'provider-3',
+    model_name: 'jev-latest',
+    model_type: 'decision',
   },
 ];
 
@@ -136,7 +143,7 @@ describe('ManageAgentModelsDialog', () => {
 
     expect(await screen.findByText('gpt-5')).toBeInTheDocument();
     expect(screen.getByText('claude-sonnet-5')).toBeInTheDocument();
-    // Skills serve chat, so embedding models are not on offer.
+    // Embedding models serve no skill, so they are not on offer.
     expect(
       screen.queryByText('text-embedding-3-small'),
     ).not.toBeInTheDocument();
@@ -150,6 +157,15 @@ describe('ManageAgentModelsDialog', () => {
     expect(
       screen.getByRole('button', { name: /save changes/i }),
     ).toBeDisabled();
+  });
+
+  // A reviewer agent on a decision model is made by giving it one as its
+  // default: its skills are then created on it, and asked through System One.
+  it('offers decision models, which serve System One skills', async () => {
+    renderDialog();
+
+    expect(await screen.findByText('jev-latest')).toBeInTheDocument();
+    expect(screen.getByText('TypeSafe')).toBeInTheDocument();
   });
 
   it('saves only the difference and closes', async () => {

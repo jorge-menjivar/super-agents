@@ -4,6 +4,7 @@ import {
   type ChatCompletionMessage,
   ChatCompletionMessageRole,
 } from '@shared/types/api/routes/shared/messages';
+import { systemOneInstructionsText } from '@shared/utils/system-one';
 
 function contentText(content: ChatCompletionMessage['content']): string {
   if (typeof content === 'string') {
@@ -46,8 +47,10 @@ function instructionMessages(messages: unknown[]): string[] {
  * The system prompt a request carries, as the caller wrote it.
  *
  * Chat completions put it in `system` (or `developer`) messages; the Responses
- * API also has a top-level `instructions` field. When there are several they
- * are joined in order, so the result reads as the one prompt the model saw.
+ * API also has a top-level `instructions` field. A System One request has its
+ * questions' instructions instead (`systemOneInstructionsText`). When there
+ * are several they are joined in order, so the result reads as the one prompt
+ * the model saw.
  * Returns `null` when the request has none, and for endpoints that have no
  * notion of a system prompt.
  */
@@ -74,6 +77,8 @@ export function extractSystemPrompt(
       }
       break;
     }
+    case FunctionName.SYSTEM_ONE:
+      return systemOneInstructionsText(saRequestData.requestBody);
     default:
       return null;
   }

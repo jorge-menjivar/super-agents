@@ -236,3 +236,190 @@ describe('upgrade-dev-db', () => {
     expect(await count('skill_optimization_evaluation_runs')).toBe(3);
   }, 120_000);
 });
+
+/**
+ * The `decision` model type. SQLite cannot change a CHECK with ALTER, so
+ * `models` is rebuilt -- and `models` has more hanging off it than `logs`:
+ * rows that cascade (a skill's and an agent's models), references that are set
+ * to NULL (an agent's role models), and triggers on other tables that read it.
+ */
+describe('upgrade-dev-db: decision models', () => {
+  let dir: string;
+  let dbPath: string;
+
+  const client = () => createClient({ url: `file:${dbPath}` });
+
+  const query = async (sql: string) => {
+    const c = client();
+    try {
+      await c.execute('PRAGMA foreign_keys = ON');
+      return await c.execute(sql);
+    } finally {
+      c.close();
+    }
+  };
+
+  const upgrade = () =>
+    run(
+      'pnpm',
+      ['exec', 'tsx', 'scripts/upgrade-dev-db.mjs', dbPath, '--no-backup'],
+      { cwd: apiRoot },
+    );
+
+  /** `models` as it was before decision models, with what reads it. */
+  const MODELS_SETUP = [
+    'CREATE TABLE ai_providers (id TEXT PRIMARY KEY)',
+    `CREATE TABLE models (
+       id TEXT PRIMARY KEY,
+       ai_provider_id TEXT NOT NULL,
+       model_name TEXT NOT NULL,
+       model_type TEXT NOT NULL DEFAULT 'text' CHECK (model_type IN ('text', 'embed')),
+       embedding_dimensions INTEGER,
+       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+       FOREIGN KEY (ai_provider_id) REFERENCES ai_providers(id) ON DELETE CASCADE,
+       UNIQUE (ai_provider_id, model_name),
+       CONSTRAINT embedding_dimensions_only_for_embed CHECK (
+         (model_type = 'embed' AND embedding_dimensions IS NOT NULL) OR
+         (model_type = 'text' AND embedding_dimensions IS NULL)
+       )
+     )`,
+    'CREATE INDEX idx_models_model_name ON models(model_name)',
+    `CREATE TRIGGER models_updated_at AFTER UPDATE ON models FOR EACH ROW
+     BEGIN
+       UPDATE models SET updated_at = 'touched' WHERE rowid = NEW.rowid;
+     END`,
+    `CREATE TABLE agent_models (
+       agent_id TEXT NOT NULL, model_id TEXT NOT NULL,
+       PRIMARY KEY (agent_id, model_id),
+       FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
+     )`,
+    'ALTER TABLE agents ADD COLUMN judge_model_id TEXT REFERENCES models(id) ON DELETE SET NULL',
+    // A trigger on another table that reads `models`: the reason renaming
+    // the rebuilt table into place needs `legacy_alter_table`.
+    `CREATE TRIGGER agents_judge_is_text BEFORE UPDATE OF judge_model_id ON agents
+     FOR EACH ROW
+     WHEN NEW.judge_model_id IS NOT NULL
+       AND (SELECT model_type FROM models WHERE id = NEW.judge_model_id) IS NOT 'text'
+     BEGIN
+       SELECT RAISE(ABORT, 'judge must be a text model');
+     END`,
+    "INSERT INTO ai_providers (id) VALUES ('p1')",
+    "INSERT INTO models (id, ai_provider_id, model_name) VALUES ('m1', 'p1', 'gpt-5')",
+    `INSERT INTO models (id, ai_provider_id, model_name, model_type, embedding_dimensions)
+     VALUES ('m2', 'p1', 'embed-3', 'embed', 768)`,
+    "INSERT INTO agent_models (agent_id, model_id) VALUES ('a1', 'm1')",
+    "UPDATE agents SET judge_model_id = 'm1' WHERE id = 'a1'",
+  ];
+
+  const insertDecisionModel = () =>
+    query(
+      `INSERT INTO models (id, ai_provider_id, model_name, model_type)
+       VALUES ('m3', 'p1', 'jev-latest', 'decision')`,
+    );
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'sa-upgrade-models-'));
+    dbPath = join(dir, 'dev.db');
+
+    const c = client();
+    await c.execute('PRAGMA foreign_keys = ON');
+    for (const sql of [...SETUP, ...SEED, ...MODELS_SETUP]) {
+      await c.execute(sql);
+    }
+    c.close();
+  }, 30_000);
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('lets a decision model in, which the old CHECK refused', async () => {
+    await expect(insertDecisionModel()).rejects.toThrow();
+
+    await upgrade();
+
+    await insertDecisionModel();
+    const result = await query("SELECT model_type FROM models WHERE id = 'm3'");
+    expect(result.rows[0].model_type).toBe('decision');
+  }, 60_000);
+
+  it('keeps every model, and everything that references one', async () => {
+    await upgrade();
+
+    expect(
+      (await query('SELECT id FROM models ORDER BY id')).rows,
+    ).toHaveLength(2);
+    // Cascaded, had foreign keys been on for the drop.
+    expect((await query('SELECT * FROM agent_models')).rows).toHaveLength(1);
+    // Set to NULL, had they been on.
+    const agent = await query(
+      "SELECT judge_model_id FROM agents WHERE id = 'a1'",
+    );
+    expect(agent.rows[0].judge_model_id).toBe('m1');
+  }, 60_000);
+
+  it('still keeps embedding dimensions to embed models alone', async () => {
+    await upgrade();
+
+    await expect(
+      query(
+        `INSERT INTO models (id, ai_provider_id, model_name, model_type, embedding_dimensions)
+         VALUES ('m4', 'p1', 'jev-preview', 'decision', 768)`,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      query(
+        `INSERT INTO models (id, ai_provider_id, model_name, model_type)
+         VALUES ('m5', 'p1', 'embed-4', 'embed')`,
+      ),
+    ).rejects.toThrow();
+  }, 60_000);
+
+  it("puts back the table's own triggers and indexes", async () => {
+    await upgrade();
+
+    const { rows } = await query(
+      "SELECT name FROM sqlite_master WHERE tbl_name = 'models' AND sql IS NOT NULL ORDER BY name",
+    );
+    expect(rows.map((row) => row.name)).toEqual([
+      'idx_models_model_name',
+      'models',
+      'models_updated_at',
+    ]);
+
+    await query("UPDATE models SET model_name = 'gpt-5.1' WHERE id = 'm1'");
+    const touched = await query(
+      "SELECT updated_at FROM models WHERE id = 'm1'",
+    );
+    expect(touched.rows[0].updated_at).toBe('touched');
+  }, 60_000);
+
+  it('leaves the triggers that read models working against the new table', async () => {
+    await upgrade();
+    await insertDecisionModel();
+
+    await expect(
+      query("UPDATE agents SET judge_model_id = 'm3' WHERE id = 'a1'"),
+    ).rejects.toThrow('judge must be a text model');
+  }, 60_000);
+
+  it('still enforces the foreign keys to it', async () => {
+    await upgrade();
+
+    await expect(
+      query(
+        "INSERT INTO agent_models (agent_id, model_id) VALUES ('a1', 'nope')",
+      ),
+    ).rejects.toThrow();
+  }, 60_000);
+
+  it('is a no-op the second time', async () => {
+    await upgrade();
+    const { stdout } = await upgrade();
+
+    expect(stdout).toContain('Already up to date');
+    expect((await query('SELECT * FROM agent_models')).rows).toHaveLength(1);
+  }, 120_000);
+});

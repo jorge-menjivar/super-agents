@@ -16,11 +16,13 @@ import { googleConfig } from '@api/ai-providers/google';
 import { googleVertexAIConfig } from '@api/ai-providers/google-vertex-ai';
 import { groqConfig } from '@api/ai-providers/groq';
 import { mistralAIConfig } from '@api/ai-providers/mistral-ai';
+import { naceConfig } from '@api/ai-providers/nace';
 import { ollamaConfig } from '@api/ai-providers/ollama';
 import { openAIConfig } from '@api/ai-providers/openai';
 import { openrouterConfig } from '@api/ai-providers/openrouter';
 import { palmAIConfig } from '@api/ai-providers/palm';
 import { predibaseConfig } from '@api/ai-providers/predibase';
+import { typesafeConfig } from '@api/ai-providers/typesafe';
 import { xaiConfig } from '@api/ai-providers/xai';
 import type { AIProviderConfig } from '@shared/types/ai-providers/config';
 import { AIProvider } from '@shared/types/constants';
@@ -61,6 +63,7 @@ export const providerConfigs: {
   [AIProvider.MISTRAL_AI]: mistralAIConfig,
   [AIProvider.MONSTERAPI]: undefined,
   [AIProvider.MOONSHOT]: undefined,
+  [AIProvider.NACE]: naceConfig,
   [AIProvider.NCOMPASS]: undefined,
   [AIProvider.NEBIUS]: undefined,
   [AIProvider.NOMIC]: undefined,
@@ -81,6 +84,7 @@ export const providerConfigs: {
   [AIProvider.STABILITY_AI]: undefined,
   [AIProvider.TOGETHER_AI]: undefined,
   [AIProvider.TRITON]: undefined,
+  [AIProvider.TYPESAFE]: typesafeConfig,
   [AIProvider.UPSTAGE]: undefined,
   [AIProvider.VOYAGE]: undefined,
   [AIProvider.WORKERS_AI]: undefined,

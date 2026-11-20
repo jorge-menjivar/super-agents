@@ -30,6 +30,7 @@ export enum AIProvider {
   MISTRAL_AI = 'mistral-ai',
   MONSTERAPI = 'monsterapi',
   MOONSHOT = 'moonshot',
+  NACE = 'nace',
   NCOMPASS = 'ncompass',
   NEBIUS = 'nebius',
   NOMIC = 'nomic',
@@ -50,6 +51,7 @@ export enum AIProvider {
   STABILITY_AI = 'stability-ai',
   TOGETHER_AI = 'together-ai',
   TRITON = 'triton',
+  TYPESAFE = 'typesafe',
   UPSTAGE = 'upstage',
   VOYAGE = 'voyage',
   WORKERS_AI = 'workers-ai',
@@ -87,6 +89,7 @@ export const PrettyAIProvider: Record<AIProvider, string> = {
   [AIProvider.MISTRAL_AI]: 'Mistral AI',
   [AIProvider.MONSTERAPI]: 'MonsterAPI',
   [AIProvider.MOONSHOT]: 'Moonshot',
+  [AIProvider.NACE]: 'Nace.AI',
   [AIProvider.NCOMPASS]: 'NCompass',
   [AIProvider.NEBIUS]: 'Nebius',
   [AIProvider.NOMIC]: 'Nomic',
@@ -107,6 +110,7 @@ export const PrettyAIProvider: Record<AIProvider, string> = {
   [AIProvider.STABILITY_AI]: 'Stability AI',
   [AIProvider.TOGETHER_AI]: 'Together AI',
   [AIProvider.TRITON]: 'Triton',
+  [AIProvider.TYPESAFE]: 'TypeSafe AI',
   [AIProvider.UPSTAGE]: 'Upstage',
   [AIProvider.VOYAGE]: 'Voyage',
   [AIProvider.WORKERS_AI]: 'Workers AI',
@@ -234,5 +238,38 @@ export const DEFAULT_SELF_HOSTED_URLS: Partial<Record<AIProvider, string>> = {
   [AIProvider.OLLAMA]: 'http://localhost:11434',
   [AIProvider.TRITON]: 'http://localhost:8000',
   [AIProvider.MISTRAL_AI]: 'http://localhost:8000',
+  // Drex's own server, `kapitsa-systemone`, listens here by default.
+  [AIProvider.NACE]: 'http://localhost:8000',
   // Add more providers as needed
 };
+
+/**
+ * The providers that serve decision models, and the models each offers.
+ *
+ * A decision model answers questions about some material with probabilities
+ * -- the System One API, `/v1/systemone` -- rather than writing text, so its
+ * models are `decision` models and the dashboard suggests these ids for them
+ * instead of models.dev's catalogue, which lists none.
+ */
+export const DECISION_PROVIDER_MODELS: Partial<
+  Record<AIProvider, readonly string[]>
+> = {
+  [AIProvider.TYPESAFE]: ['jev-latest', 'jev-preview'],
+  [AIProvider.NACE]: [
+    'drex-latest',
+    'drex-v2.0',
+    'drex-max-v1.1',
+    'drex-max-finance',
+  ],
+};
+
+/** Whether a provider serves decision models, and only those. */
+export function isDecisionProvider(
+  provider: string | null | undefined,
+): boolean {
+  return (
+    provider !== null &&
+    provider !== undefined &&
+    provider in DECISION_PROVIDER_MODELS
+  );
+}

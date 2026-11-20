@@ -1,4 +1,8 @@
-import type { AIProvider } from '@shared/types/constants';
+import {
+  type AIProvider,
+  DECISION_PROVIDER_MODELS,
+  PrettyAIProvider,
+} from '@shared/types/constants';
 import type { FlattenedModel } from '@shared/types/models-dev';
 import {
   flattenModelsDevResponse,
@@ -114,6 +118,22 @@ export const useModelsDev = () => {
 };
 
 /**
+ * A decision provider's known models, shaped as models.dev entries. models.dev
+ * lists no decision models, and a provider it has no entry for would
+ * otherwise be offered every model it does list.
+ */
+const decisionModelsOf = (provider: AIProvider): FlattenedModel[] | null => {
+  const ids = DECISION_PROVIDER_MODELS[provider];
+  return ids
+    ? ids.map((id) => ({
+        model: { id, name: id },
+        providerId: provider,
+        providerName: PrettyAIProvider[provider],
+      }))
+    : null;
+};
+
+/**
  * React hook to get filtered models by AI provider
  * Maps internal AIProvider enum to models.dev provider ID and filters
  */
@@ -122,6 +142,11 @@ export const useModelsDevByProvider = (
 ) => {
   const { data, isLoading, error } = useModelsDev();
   const allModels: FlattenedModel[] = data ?? [];
+
+  const decisionModels = provider ? decisionModelsOf(provider) : null;
+  if (decisionModels) {
+    return { models: decisionModels, isLoading: false, error: null };
+  }
 
   const filteredModels = provider
     ? filterModelsByProvider(allModels, mapAIProviderToModelsDev(provider))

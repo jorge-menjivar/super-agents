@@ -49,6 +49,24 @@ describe('Model Data Transforms and Validation', () => {
       expect(() => ModelCreateParams.parse(inputData)).toThrow();
     });
 
+    it('should accept a decision model, which has no embedding dimensions', () => {
+      expect(
+        ModelCreateParams.parse({
+          ai_provider_id: testApiKeyId,
+          model_name: 'jev-latest',
+          model_type: 'decision',
+        }),
+      ).toMatchObject({ model_type: 'decision' });
+      expect(() =>
+        ModelCreateParams.parse({
+          ai_provider_id: testApiKeyId,
+          model_name: 'jev-latest',
+          model_type: 'decision',
+          embedding_dimensions: 768,
+        }),
+      ).toThrow();
+    });
+
     it('should reject invalid UUID for ai_provider_id', () => {
       const inputData = {
         ai_provider_id: 'invalid-uuid',
@@ -273,8 +291,25 @@ describe('Model Data Transforms and Validation', () => {
         };
 
         expect(() => ModelUpdateParams.parse(inputData)).toThrow(
-          'embedding_dimensions must not be set when changing model_type to text',
+          'embedding_dimensions must not be set when changing model_type to anything but embed',
         );
+      });
+
+      it('should reject model_type decision with positive embedding_dimensions', () => {
+        expect(() =>
+          ModelUpdateParams.parse({
+            model_type: 'decision',
+            embedding_dimensions: 1536,
+          }),
+        ).toThrow(
+          'embedding_dimensions must not be set when changing model_type to anything but embed',
+        );
+      });
+
+      it('should accept model_type decision without embedding_dimensions', () => {
+        expect(ModelUpdateParams.parse({ model_type: 'decision' })).toEqual({
+          model_type: 'decision',
+        });
       });
 
       it('should reject embedding_dimensions without model_type', () => {

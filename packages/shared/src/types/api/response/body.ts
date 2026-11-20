@@ -53,6 +53,7 @@ import {
   ResponsesResponseBody,
 } from '@shared/types/api/routes/responses-api/response';
 import type { ChatCompletionMessage } from '@shared/types/api/routes/shared/messages';
+import { SystemOneResponseBody } from '@shared/types/api/routes/system-one-api/response';
 import { z } from 'zod';
 
 export type ParameterValueTypes =
@@ -232,6 +233,9 @@ export const SuperAgentsResponseBody = z.union([
   DeleteResponseResponseBody,
   ListResponsesResponseBody,
   GetResponseResponseBody,
+
+  // System One API
+  SystemOneResponseBody,
 
   // Other
   ErrorResponseBody,

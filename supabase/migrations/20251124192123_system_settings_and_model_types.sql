@@ -63,8 +63,10 @@ CREATE POLICY "Allow all operations on system_settings"
 -- PART 2: Add model_type and embedding_dimensions columns to models table
 -- ============================================================================
 
--- Create enum type for model types
-CREATE TYPE model_type AS ENUM ('text', 'embed');
+-- Create enum type for model types. A decision model answers questions with
+-- probabilities (the System One API) and writes no text, so it serves neither
+-- a text slot nor the embedding slot.
+CREATE TYPE model_type AS ENUM ('text', 'embed', 'decision');
 
 -- Add model_type column with default 'text'
 ALTER TABLE models
@@ -74,13 +76,11 @@ ADD COLUMN model_type model_type NOT NULL DEFAULT 'text';
 ALTER TABLE models
 ADD COLUMN embedding_dimensions INTEGER NULL;
 
--- Add check constraint: embedding_dimensions should only be set for embed models
+-- Add check constraint: embedding_dimensions is set for embed models, and only
+-- for them
 ALTER TABLE models
 ADD CONSTRAINT embedding_dimensions_only_for_embed
-CHECK (
-  (model_type = 'embed' AND embedding_dimensions IS NOT NULL) OR
-  (model_type = 'text' AND embedding_dimensions IS NULL)
-);
+CHECK ((model_type = 'embed') = (embedding_dimensions IS NOT NULL));
 
 -- ============================================================================
 -- PART 3: Validation functions for model types

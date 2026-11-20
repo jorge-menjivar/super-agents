@@ -199,6 +199,83 @@ describe('createSkillForRequest', () => {
     expect(connector.upsertSkillRouting).not.toHaveBeenCalled();
     expect(connector.createSkill).toHaveBeenCalled();
   });
+
+  describe('from a System One request', () => {
+    // With an evaluation method on offer, so that generating none is a choice.
+    const withEvaluations = {
+      get: (key: string) =>
+        key === 'evaluation_connectors_map' ? { latency: {} } : undefined,
+    } as unknown as AppContext;
+    const systemOne = {
+      functionName: FunctionName.SYSTEM_ONE,
+      requestBody: {
+        state: 'Try the third window.',
+        questions: {
+          withhold: {
+            type: 'noul',
+            instructions: 'Should the client be kept from receiving this?',
+          },
+        },
+      },
+    } as unknown as SuperAgentsRequestData;
+
+    /** Lets the evaluations that creation starts in the background begin. */
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    beforeEach(() => {
+      vi.mocked(generateEvaluationCreateParams).mockResolvedValue({} as never);
+    });
+
+    // Its prompt is a policy the questions are asked under: seeded with the
+    // questions, every question would be asked twice.
+    it('starts the decision skill with an empty policy, and arms from it', async () => {
+      await createSkillForRequest(
+        withEvaluations,
+        connector as unknown as UserDataStorageConnector,
+        agent,
+        systemOne,
+        'Should the client be kept from receiving this?',
+        embedding,
+        [],
+      );
+
+      expect(connector.createSkill).toHaveBeenCalledWith(
+        withEvaluations,
+        expect.objectContaining({ seed_system_prompt: '', optimize: false }),
+      );
+      expect(handleGenerateArms).toHaveBeenCalledWith(
+        withEvaluations,
+        connector,
+        'skill-1',
+      );
+    });
+
+    it('generates no evaluations for it, as it does for a chat skill', async () => {
+      await createSkillForRequest(
+        withEvaluations,
+        connector as unknown as UserDataStorageConnector,
+        agent,
+        systemOne,
+        'Should the client be kept from receiving this?',
+        embedding,
+        [],
+      );
+      await settle();
+      expect(generateEvaluationCreateParams).not.toHaveBeenCalled();
+
+      await createSkillForRequest(
+        withEvaluations,
+        connector as unknown as UserDataStorageConnector,
+        agent,
+        request,
+        'You are a concierge.',
+        embedding,
+        [],
+      );
+      await settle();
+      expect(generateEvaluationCreateParams).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('adoptDefaultModels', () => {

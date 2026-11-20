@@ -64,6 +64,10 @@ import {
   ResponsesRequestBody,
   ResponsesResponseBody,
 } from '@shared/types/api/routes/responses-api';
+import {
+  SystemOneRequestBody,
+  SystemOneResponseBody,
+} from '@shared/types/api/routes/system-one-api';
 import { HttpMethod } from '@shared/types/http';
 import { z } from 'zod';
 
@@ -111,6 +115,9 @@ export const SuperAgentsRequestBody = z.union([
 
   // Responses API
   ResponsesRequestBody,
+
+  // System One API
+  SystemOneRequestBody,
 ]);
 
 export type SuperAgentsRequestBody = z.infer<typeof SuperAgentsRequestBody>;
@@ -367,6 +374,14 @@ export const ResponsesRequestData = BaseRequestData.extend({
 });
 export type ResponsesRequestData = z.infer<typeof ResponsesRequestData>;
 
+export const SystemOneRequestData = BaseRequestData.extend({
+  method: z.literal(HttpMethod.POST),
+  functionName: z.literal(FunctionName.SYSTEM_ONE),
+  requestBody: SystemOneRequestBody,
+  responseBody: SystemOneResponseBody.optional(),
+});
+export type SystemOneRequestData = z.infer<typeof SystemOneRequestData>;
+
 export const ProxyRequestData = BaseRequestData.extend({
   method: z.literal(HttpMethod.POST),
   functionName: z.literal(FunctionName.PROXY),
@@ -415,6 +430,9 @@ export const SuperAgentsRequestData = z.union([
 
   // Responses API
   ResponsesRequestData,
+
+  // System One API
+  SystemOneRequestData,
 
   // Proxy API
   ProxyRequestData,

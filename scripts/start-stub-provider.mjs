@@ -21,11 +21,17 @@
  *
  *   POST /v1/chat/completions   the provider endpoint the gateway calls
  *   POST /api/embeddings        ditto, for embeddings
+ *   POST /v1/systemone          ditto, for decision models (System One): each
+ *                               question answered at its least -- a noul 0, a
+ *                               choice its first option, a score its lowest
+ *                               level -- unless a reply overrides the answers
  *   GET  /__control/requests?model=NAME   what the gateway sent for that model
  *   POST /__control/fail        {model, times, status} -- inject failures
  *   POST /__control/fence       {model} -- wrap structured output in a fence
  *   POST /__control/reply       {model, content} -- answer with this text instead;
- *                               an array is answered in order, the last one kept
+ *                               an array is answered in order, the last one kept.
+ *                               For System One, the text is JSON answers by
+ *                               question id, laid over the defaults
  *   POST /__control/delay       {model, ms} -- answer that much later; 0 lifts it
  *   POST /__control/reset       {model} -- forget everything for that model
  *
@@ -239,6 +245,44 @@ function stubEmbedding(text) {
   return Array.from({ length: 8 }, () => 0.1);
 }
 
+/**
+ * A decision model's answer to a System One request: every question answered
+ * at its least, so a test that wants a verdict scripts it with a reply --
+ * `{"withhold": {"type": "noul", "noul": 0.9}}` -- laid over these.
+ */
+const systemOneAnswer = (body, model) => {
+  const answers = {};
+  for (const [id, question] of Object.entries(body?.questions ?? {})) {
+    if (question?.type === 'choice') {
+      const [first] = Object.keys(question.criteria ?? {});
+      answers[id] = {
+        type: 'choice',
+        choice: first,
+        confidence: 1,
+        probabilities: { [first]: 1 },
+      };
+    } else if (question?.type === 'score') {
+      answers[id] = {
+        type: 'score',
+        score: 0,
+        confidence: 1,
+        probabilities: { 0: 1 },
+      };
+    } else {
+      answers[id] = { type: 'noul', noul: 0 };
+    }
+  }
+  const overrides = canned.has(model) ? JSON.parse(nextCanned(model)) : {};
+  return {
+    model: model || 'stub-decision',
+    answers: { ...answers, ...overrides },
+    usage: {
+      input_tokens: JSON.stringify(body?.state ?? null).length,
+      output_tokens: Object.keys(answers).length,
+    },
+  };
+};
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://127.0.0.1:${port}`);
 
@@ -330,6 +374,11 @@ const server = createServer(async (request, response) => {
 
   if (url.pathname === '/api/embeddings') {
     sendJson(response, 200, { embedding: stubEmbedding(body?.prompt) });
+    return;
+  }
+
+  if (url.pathname === '/v1/systemone') {
+    sendJson(response, 200, systemOneAnswer(body, model));
     return;
   }
 
