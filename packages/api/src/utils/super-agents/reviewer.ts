@@ -3,7 +3,6 @@ import type { AppContext } from '@api/types/hono';
 import { warn } from '@shared/console-logging';
 import type { SuperAgentsConfigPreProcessed } from '@shared/types/api/request/headers';
 import type { Agent } from '@shared/types/data';
-import { ModelType } from '@shared/types/data/model';
 import { CacheMode } from '@shared/types/middleware/cache';
 import {
   type Hook,
@@ -27,10 +26,9 @@ export const reviewerHookId = (reviewer: Pick<Agent, 'name'>): string =>
  * agent's client that waits -- and null leaves it at
  * `DEFAULT_REVIEW_TIMEOUT_MS`.
  *
- * A reviewer whose default models are all decision models is asked through
- * System One: it cannot write a verdict, so it is asked for the probability
- * that the response should be withheld. Its default models are what the
- * skills it creates are served by, so they are what answers.
+ * A decision agent as reviewer is asked through System One: it cannot write
+ * a verdict, so it is asked for the probability that the response should be
+ * withheld.
  */
 export async function reviewerHookFor(
   c: AppContext,
@@ -65,10 +63,7 @@ export async function reviewerHookFor(
     );
     return null;
   }
-  const reviewerModels = await connector.getAgentModels(c, reviewer.id);
-  const decides =
-    reviewerModels.length > 0 &&
-    reviewerModels.every((model) => model.model_type === ModelType.DECISION);
+  const decides = reviewer.agent_type === 'decision';
   const timeoutMs = agent.options.review.timeout_ms;
   return {
     id: reviewerHookId(reviewer),

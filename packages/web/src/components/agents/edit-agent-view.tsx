@@ -97,6 +97,17 @@ const millisecondsOf = (seconds: number | null): number | null =>
   seconds === null ? null : seconds * 1000;
 
 /** What each role is called on the page, and what it is for. */
+/**
+ * The roles that still mean something for a decision agent: the ones that
+ * route its requests. The optimizer leaves decision skills alone, so nothing
+ * judges them, writes their prompts or generates their evaluations.
+ */
+const DECISION_AGENT_ROLES: ReadonlySet<InternalRole> = new Set([
+  'embedding',
+  'skill_arbiter',
+  'intent_compaction',
+]);
+
 const ROLE_LABELS: Record<InternalRole, { name: string; detail: string }> = {
   system_prompt_reflection: {
     name: 'System prompts',
@@ -233,6 +244,8 @@ export function EditAgentView(): React.ReactElement {
   const navigate = usePermissiveNavigate();
   const { agentName } = useParams({ strict: false }) as { agentName?: string };
   const agentNameInputId = React.useId();
+  const agentTypeInputId = React.useId();
+  const decisionAgent = selectedAgent?.agent_type === 'decision';
 
   // Load all models, for the arbiter override.
   React.useEffect(() => {
@@ -431,6 +444,28 @@ export function EditAgentView(): React.ReactElement {
                   </p>
                 </div>
 
+                {/* Agent Type (read-only here) */}
+                <div className="space-y-2">
+                  <label
+                    htmlFor={agentTypeInputId}
+                    className="text-sm font-medium text-foreground"
+                  >
+                    Agent Type
+                  </label>
+                  <Input
+                    id={agentTypeInputId}
+                    value={decisionAgent ? 'Decision' : 'LLM'}
+                    disabled
+                    className="h-11 bg-muted"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {decisionAgent
+                      ? 'Served by decision models, and asked through /v1/systemone.'
+                      : 'Served by text models, and asked through chat, completions and Responses.'}{' '}
+                    It is chosen when the agent is created.
+                  </p>
+                </div>
+
                 {/* Description Field */}
                 <FormField
                   control={form.control}
@@ -563,7 +598,9 @@ export function EditAgentView(): React.ReactElement {
                       means the system setting applies.
                     </p>
                   </div>
-                  {INTERNAL_ROLES.map((role) => (
+                  {INTERNAL_ROLES.filter(
+                    (role) => !decisionAgent || DECISION_AGENT_ROLES.has(role),
+                  ).map((role) => (
                     <div
                       key={role}
                       className="grid gap-4 border-t pt-4 first:border-t-0 first:pt-0 sm:grid-cols-[1fr_1fr_10rem]"
@@ -734,146 +771,150 @@ export function EditAgentView(): React.ReactElement {
                   ))}
                 </div>
 
-                {/* Review: another agent sees every response before the client */}
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div>
-                    <h3 className="text-base font-medium">Response review</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Another agent can review every response before the client
-                      receives it, and withhold or rewrite it. Its skill's
-                      system prompt is the policy. Streamed responses are held
-                      until the review is done.
-                    </p>
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="reviewer_agent_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Reviewer agent</FormLabel>
-                        <FormDescription>
-                          Empty leaves responses unreviewed.
-                        </FormDescription>
-                        <Select
-                          value={field.value ?? NO_REVIEWER}
-                          onValueChange={selectChange(
-                            NO_REVIEWER,
-                            field.onChange,
-                          )}
-                          disabled={isUpdating}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value={NO_REVIEWER}>
-                              No review
-                            </SelectItem>
-                            {reviewerOptions.map((agent) => (
-                              <SelectItem key={agent.id} value={agent.id}>
-                                {agent.name}
+                {/* Review: another agent sees every response before the client.
+                    A decision agent's answers are probabilities, which no
+                    reviewer is asked about. */}
+                {!decisionAgent && (
+                  <div className="space-y-4 rounded-lg border p-4">
+                    <div>
+                      <h3 className="text-base font-medium">Response review</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Another agent can review every response before the
+                        client receives it, and withhold or rewrite it. Its
+                        skill's system prompt is the policy. Streamed responses
+                        are held until the review is done.
+                      </p>
+                    </div>
+                    <FormField
+                      control={form.control}
+                      name="reviewer_agent_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Reviewer agent</FormLabel>
+                          <FormDescription>
+                            Empty leaves responses unreviewed.
+                          </FormDescription>
+                          <Select
+                            value={field.value ?? NO_REVIEWER}
+                            onValueChange={selectChange(
+                              NO_REVIEWER,
+                              field.onChange,
+                            )}
+                            disabled={isUpdating}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value={NO_REVIEWER}>
+                                No review
                               </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="review_timeout_seconds"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Review timeout (seconds)</FormLabel>
-                        <FormDescription>
-                          How long the client waits for the verdict. Past it the
-                          review counts as one the reviewer could not give, so a
-                          response is delivered unless the agent fails closed.
-                          Empty is a minute.
-                        </FormDescription>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            step="1"
-                            min={MIN_TIMEOUT_SECONDS}
-                            max={MAX_TIMEOUT_SECONDS}
-                            placeholder="60"
-                            name={field.name}
-                            value={field.value ?? ''}
-                            onBlur={field.onBlur}
-                            onChange={(e) =>
-                              field.onChange(
-                                e.target.value === ''
-                                  ? null
-                                  : e.target.valueAsNumber,
-                              )
-                            }
-                            disabled={
-                              isUpdating ||
-                              form.watch('reviewer_agent_id') === null
-                            }
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="review_fail_closed"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between gap-4">
-                        <div className="space-y-0.5">
-                          <FormLabel>Fail closed</FormLabel>
+                              {reviewerOptions.map((agent) => (
+                                <SelectItem key={agent.id} value={agent.id}>
+                                  {agent.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="review_timeout_seconds"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Review timeout (seconds)</FormLabel>
                           <FormDescription>
-                            Withhold a response the reviewer could not judge,
-                            because it was unreachable or gave no verdict,
-                            instead of delivering it.
+                            How long the client waits for the verdict. Past it
+                            the review counts as one the reviewer could not
+                            give, so a response is delivered unless the agent
+                            fails closed. Empty is a minute.
                           </FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                            disabled={
-                              isUpdating ||
-                              form.watch('reviewer_agent_id') === null
-                            }
-                          />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="review_expose_reason"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between gap-4">
-                        <div className="space-y-0.5">
-                          <FormLabel>Explain denials</FormLabel>
-                          <FormDescription>
-                            Tell the client why a response was withheld, in the
-                            reviewer's words. Otherwise it learns only that it
-                            was. The reason is on the log either way.
-                          </FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                            disabled={
-                              isUpdating ||
-                              form.watch('reviewer_agent_id') === null
-                            }
-                          />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="1"
+                              min={MIN_TIMEOUT_SECONDS}
+                              max={MAX_TIMEOUT_SECONDS}
+                              placeholder="60"
+                              name={field.name}
+                              value={field.value ?? ''}
+                              onBlur={field.onBlur}
+                              onChange={(e) =>
+                                field.onChange(
+                                  e.target.value === ''
+                                    ? null
+                                    : e.target.valueAsNumber,
+                                )
+                              }
+                              disabled={
+                                isUpdating ||
+                                form.watch('reviewer_agent_id') === null
+                              }
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="review_fail_closed"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between gap-4">
+                          <div className="space-y-0.5">
+                            <FormLabel>Fail closed</FormLabel>
+                            <FormDescription>
+                              Withhold a response the reviewer could not judge,
+                              because it was unreachable or gave no verdict,
+                              instead of delivering it.
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                              disabled={
+                                isUpdating ||
+                                form.watch('reviewer_agent_id') === null
+                              }
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="review_expose_reason"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between gap-4">
+                          <div className="space-y-0.5">
+                            <FormLabel>Explain denials</FormLabel>
+                            <FormDescription>
+                              Tell the client why a response was withheld, in
+                              the reviewer's words. Otherwise it learns only
+                              that it was. The reason is on the log either way.
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                              disabled={
+                                isUpdating ||
+                                form.watch('reviewer_agent_id') === null
+                              }
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
 
                 {/* Form Actions */}
                 <div className="flex items-center gap-3 pt-4 border-t">

@@ -2,7 +2,6 @@
 
 import type { AIProvider } from '@shared/types/constants';
 import { PrettyAIProvider } from '@shared/types/constants';
-import { servesSkills } from '@shared/types/data/model';
 import type {
   EvaluationMethodDetails,
   EvaluationMethodName,
@@ -234,9 +233,10 @@ export function CreateSkillCompleteView(): ReactElement {
     );
   }
 
-  // What a skill can be served by: text models for chat, decision models for
-  // System One. Embedding models serve no skill.
-  const servingModels = models.filter(servesSkills);
+  // The models of the agent's own type: the database takes no other.
+  const servingModels = models.filter(
+    (model) => model.model_type === selectedAgent.agent_type,
+  );
 
   // Group models by provider
   const modelsByProvider = servingModels.reduce(

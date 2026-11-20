@@ -816,6 +816,7 @@ export function SkillDashboardView(): ReactElement {
           open={isManageModelsOpen}
           onOpenChange={setIsManageModelsOpen}
           skillId={selectedSkill.id}
+          agentType={selectedAgent?.agent_type ?? 'text'}
         />
       )}
 

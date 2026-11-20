@@ -191,6 +191,49 @@ describe('Agents API Status Codes', () => {
       expect(data).toEqual(mockAgent);
     });
 
+    // Its models are of its type, so with any the type stays.
+    it('should refuse to change the type of an agent with models', async () => {
+      const agentId = 'c13d1678-150a-466b-804f-ecc82de3680e';
+      mockUserDataStorageConnector.getAgents.mockResolvedValue([
+        { id: agentId, name: 'helper', agent_type: 'text' },
+      ]);
+      mockUserDataStorageConnector.getAgentModels.mockResolvedValue([
+        { id: 'gpt' },
+      ]);
+
+      const res = await client[':agentId'].$patch({
+        param: { agentId },
+        json: { agent_type: 'decision' },
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error:
+          'An agent with default models keeps its type; remove them first.',
+      });
+      expect(mockUserDataStorageConnector.updateAgent).not.toHaveBeenCalled();
+    });
+
+    it('should change the type of an agent without models', async () => {
+      const agentId = 'c13d1678-150a-466b-804f-ecc82de3680e';
+      mockUserDataStorageConnector.getAgents.mockResolvedValue([
+        { id: agentId, name: 'helper', agent_type: 'text' },
+      ]);
+      mockUserDataStorageConnector.getAgentModels.mockResolvedValue([]);
+      mockUserDataStorageConnector.getSkills.mockResolvedValue([]);
+      mockUserDataStorageConnector.updateAgent.mockResolvedValue({
+        id: agentId,
+        agent_type: 'decision',
+      });
+
+      const res = await client[':agentId'].$patch({
+        param: { agentId },
+        json: { agent_type: 'decision' },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
     it('should return 500 on update error', async () => {
       mockUserDataStorageConnector.updateAgent.mockRejectedValue(
         new Error('Update failed'),
@@ -321,9 +364,12 @@ describe('Agents API Status Codes', () => {
       expect(res.status).toBe(500);
     });
 
+    const agent = { id: agentId, name: 'helper', agent_type: 'text' };
+
     it('should add models to an existing agent', async () => {
-      mockUserDataStorageConnector.getAgents.mockResolvedValue([
-        { id: agentId },
+      mockUserDataStorageConnector.getAgents.mockResolvedValue([agent]);
+      mockUserDataStorageConnector.getModels.mockResolvedValue([
+        { id: modelId, model_name: 'gpt-5', model_type: 'text' },
       ]);
       mockUserDataStorageConnector.addModelsToAgent.mockResolvedValue(
         undefined,
@@ -343,9 +389,32 @@ describe('Agents API Status Codes', () => {
       expect(adoptDefaultModels).toHaveBeenCalledWith(
         expect.anything(),
         mockUserDataStorageConnector,
-        { id: agentId },
+        agent,
         [modelId],
       );
+    });
+
+    // The database refuses it too; this is the readable answer.
+    it('should refuse a model of another type than the agent', async () => {
+      mockUserDataStorageConnector.getAgents.mockResolvedValue([agent]);
+      mockUserDataStorageConnector.getModels.mockResolvedValue([
+        { id: modelId, model_name: 'jev-latest', model_type: 'decision' },
+      ]);
+
+      const res = await app.request(`/${agentId}/models`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ modelIds: [modelId] }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error:
+          '"jev-latest" is a decision model, and agent "helper" is an LLM agent, served by text models.',
+      });
+      expect(
+        mockUserDataStorageConnector.addModelsToAgent,
+      ).not.toHaveBeenCalled();
     });
 
     it('should return 404 when adding models to an unknown agent', async () => {

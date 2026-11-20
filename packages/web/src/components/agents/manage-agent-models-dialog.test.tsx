@@ -101,7 +101,7 @@ describe('ManageAgentModelsDialog', () => {
   const onOpenChange = vi.fn();
   const setQueryParams = vi.fn();
 
-  const renderDialog = (open = true) =>
+  const renderDialog = (open = true, agentType: 'text' | 'decision' = 'text') =>
     render(
       <QueryClientProvider
         client={
@@ -112,6 +112,7 @@ describe('ManageAgentModelsDialog', () => {
           open={open}
           onOpenChange={onOpenChange}
           agentId="agent-1"
+          agentType={agentType}
         />
       </QueryClientProvider>,
     );
@@ -159,13 +160,20 @@ describe('ManageAgentModelsDialog', () => {
     ).toBeDisabled();
   });
 
-  // A reviewer agent on a decision model is made by giving it one as its
-  // default: its skills are then created on it, and asked through System One.
-  it('offers decision models, which serve System One skills', async () => {
-    renderDialog();
+  // The database takes no model of another type, so none is offered.
+  it('offers a decision agent its decision models, and nothing else', async () => {
+    renderDialog(true, 'decision');
 
     expect(await screen.findByText('jev-latest')).toBeInTheDocument();
     expect(screen.getByText('TypeSafe')).toBeInTheDocument();
+    expect(screen.queryByText('gpt-5')).not.toBeInTheDocument();
+  });
+
+  it('offers an LLM agent no decision model', async () => {
+    renderDialog();
+
+    expect(await screen.findByText('gpt-5')).toBeInTheDocument();
+    expect(screen.queryByText('jev-latest')).not.toBeInTheDocument();
   });
 
   it('saves only the difference and closes', async () => {

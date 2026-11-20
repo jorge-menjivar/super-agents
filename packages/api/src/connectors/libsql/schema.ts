@@ -56,6 +56,7 @@ const initialSchema: LibsqlMigration = {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       description TEXT NOT NULL,
+      agent_type TEXT NOT NULL DEFAULT 'text' CHECK (agent_type IN ('text', 'decision')),
       metadata TEXT NOT NULL DEFAULT '{}',
       auto_create_skills INTEGER NOT NULL DEFAULT 1 CHECK (auto_create_skills IN (0, 1)),
       skill_match_threshold REAL NOT NULL DEFAULT 0.8,
@@ -411,6 +412,45 @@ const initialSchema: LibsqlMigration = {
     `CREATE INDEX IF NOT EXISTS idx_agent_models_agent_id ON agent_models(agent_id)`,
     `CREATE INDEX IF NOT EXISTS idx_agent_models_model_id ON agent_models(model_id)`,
 
+    // An agent is served by models of its own type -- its defaults and its
+    // skills' models alike -- so whichever arm a request draws can answer
+    // it. Both tables are only ever inserted into and deleted from, so the
+    // inserts are what is checked. Postgres enforces this through
+    // `validate_serving_model_type`.
+    `CREATE TRIGGER IF NOT EXISTS agent_models_validate_type
+    BEFORE INSERT ON agent_models
+    FOR EACH ROW
+    WHEN (SELECT model_type FROM models WHERE id = NEW.model_id)
+      IS NOT (SELECT agent_type FROM agents WHERE id = NEW.agent_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'model_id must reference a model of the agent''s type');
+    END`,
+    `CREATE TRIGGER IF NOT EXISTS skill_models_validate_type
+    BEFORE INSERT ON skill_models
+    FOR EACH ROW
+    WHEN (SELECT model_type FROM models WHERE id = NEW.model_id)
+      IS NOT (
+        SELECT a.agent_type FROM skills s JOIN agents a ON a.id = s.agent_id
+        WHERE s.id = NEW.skill_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'model_id must reference a model of the skill''s agent''s type');
+    END`,
+    // Which follows: an agent served by models keeps its type.
+    `CREATE TRIGGER IF NOT EXISTS agents_prevent_type_change_if_served
+    BEFORE UPDATE OF agent_type ON agents
+    FOR EACH ROW
+    WHEN NEW.agent_type IS NOT OLD.agent_type AND (
+      EXISTS (SELECT 1 FROM agent_models WHERE agent_id = NEW.id) OR
+      EXISTS (
+        SELECT 1 FROM skill_models sm JOIN skills s ON s.id = sm.skill_id
+        WHERE s.agent_id = NEW.id
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'cannot change agent_type while the agent or its skills have models');
+    END`,
+
     // ----------------------------------------------- skill_optimization_arms
     `CREATE TABLE IF NOT EXISTS skill_optimization_arms (
       id TEXT PRIMARY KEY,
@@ -632,6 +672,10 @@ const initialSchema: LibsqlMigration = {
         SELECT 1 FROM skill_optimization_clusters WHERE embedding_model_id = NEW.id
       ) OR EXISTS (
         SELECT 1 FROM skill_routing WHERE embedding_model_id = NEW.id
+      ) OR EXISTS (
+        SELECT 1 FROM agent_models WHERE model_id = NEW.id
+      ) OR EXISTS (
+        SELECT 1 FROM skill_models WHERE model_id = NEW.id
       ) THEN RAISE(ABORT, 'cannot change model_type while the model is referenced') END;
     END`,
 

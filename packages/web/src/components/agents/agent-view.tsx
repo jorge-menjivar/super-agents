@@ -475,6 +475,7 @@ export function AgentView(): ReactElement {
       {isModelsDialogOpen && (
         <ManageAgentModelsDialog
           agentId={selectedAgent.id}
+          agentType={selectedAgent.agent_type}
           open={isModelsDialogOpen}
           onOpenChange={setIsModelsDialogOpen}
         />

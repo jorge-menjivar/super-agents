@@ -2,6 +2,10 @@ import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext, AppEnv } from '@api/types/hono';
 import { parseDatabaseError } from '@api/utils/database-error';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
+import {
+  agentTypeChangeProblem,
+  servingModelsProblem,
+} from '@api/utils/super-agents/agent-type';
 import { adoptDefaultModels } from '@api/utils/super-agents/skill-creation';
 import { zValidator } from '@hono/zod-validator';
 import {
@@ -88,6 +92,22 @@ export const agentsRouter = new Hono<AppEnv>()
         );
         if (problem) {
           return c.json({ error: problem }, 400);
+        }
+
+        if (data.agent_type !== undefined) {
+          const [agent] = await connector.getAgents(c, { id: agentId });
+          if (!agent) {
+            return c.json({ error: 'Agent not found' }, 404);
+          }
+          const typeProblem = await agentTypeChangeProblem(
+            c,
+            connector,
+            agent,
+            data.agent_type,
+          );
+          if (typeProblem) {
+            return c.json({ error: typeProblem }, 400);
+          }
         }
 
         const updatedAgent = await connector.updateAgent(c, agentId, data);
@@ -239,6 +259,16 @@ export const agentsRouter = new Hono<AppEnv>()
         const agents = await connector.getAgents(c, { id: agentId });
         if (agents.length === 0) {
           return c.json({ error: 'Agent not found' }, 404);
+        }
+
+        const problem = await servingModelsProblem(
+          c,
+          connector,
+          agents[0],
+          modelIds,
+        );
+        if (problem) {
+          return c.json({ error: problem }, 400);
         }
 
         await connector.addModelsToAgent(c, agentId, modelIds);

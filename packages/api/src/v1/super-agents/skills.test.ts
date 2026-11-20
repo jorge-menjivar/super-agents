@@ -488,6 +488,10 @@ describe('Skills API Status Codes', () => {
 
     beforeEach(() => {
       mockUserDataStorageConnector.getSkills.mockResolvedValue([mockSkill]);
+      // The skill's agent, whose type its models have to be.
+      mockUserDataStorageConnector.getAgents.mockResolvedValue([
+        { id: agentId, name: 'helper', agent_type: 'text' },
+      ]);
       mockUserDataStorageConnector.getSkillOptimizationClusters.mockResolvedValue(
         mockClusters,
       );

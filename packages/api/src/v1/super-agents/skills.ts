@@ -8,6 +8,7 @@ import {
 } from '@api/utils/evaluation-model-resolver';
 import { getInitialClusterCentroids } from '@api/utils/math';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
+import { servingModelsProblem } from '@api/utils/super-agents/agent-type';
 import { zValidator } from '@hono/zod-validator';
 import type { SkillOptimizationClusterCreateParams } from '@shared/types/data';
 import {
@@ -310,6 +311,20 @@ export const skillsRouter = new Hono<AppEnv>()
           return c.json({ error: 'Skill not found' }, 404);
         }
         const skill = skills[0];
+
+        // A skill is served by models of its agent's type.
+        const [agent] = await connector.getAgents(c, { id: skill.agent_id });
+        if (agent) {
+          const problem = await servingModelsProblem(
+            c,
+            connector,
+            agent,
+            modelIds,
+          );
+          if (problem) {
+            return c.json({ error: problem }, 400);
+          }
+        }
 
         await connector.addModelsToSkill(c, skillId, modelIds);
 

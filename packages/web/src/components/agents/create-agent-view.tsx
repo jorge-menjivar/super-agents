@@ -2,6 +2,7 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { AgentCreateParams } from '@shared/types/data';
+import { AgentType } from '@shared/types/data/agent';
 import { sanitizeUserInput } from '@shared/utils/security';
 import { Button } from '@web/components/ui/button';
 import {
@@ -22,6 +23,13 @@ import {
 } from '@web/components/ui/form';
 import { Input } from '@web/components/ui/input';
 import { PageHeader } from '@web/components/ui/page-header';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@web/components/ui/select';
 import { Textarea } from '@web/components/ui/textarea';
 import { usePermissiveNavigate } from '@web/hooks/use-permissive-navigate';
 import { useAgents } from '@web/providers/agents';
@@ -48,6 +56,7 @@ const CreateAgentFormSchema = z
       .string()
       .min(25, 'Description must be at least 25 characters')
       .max(10000, 'Description must be less than 10000 characters'),
+    agent_type: AgentType,
   })
   .strict();
 
@@ -62,6 +71,7 @@ export function CreateAgentView(): React.ReactElement {
     defaultValues: {
       name: '',
       description: '',
+      agent_type: 'text',
     },
   });
 
@@ -70,6 +80,7 @@ export function CreateAgentView(): React.ReactElement {
       const agentParams: AgentCreateParams = {
         name: data.name,
         description: sanitizeUserInput(data.description),
+        agent_type: data.agent_type,
         metadata: {},
         auto_create_skills: true,
         skill_match_threshold: 0.8,
@@ -154,6 +165,44 @@ export function CreateAgentView(): React.ReactElement {
                           disabled={isCreating}
                         />
                       </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="agent_type"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-base font-medium">
+                        Agent Type
+                      </FormLabel>
+                      <FormDescription>
+                        What serves the agent. An LLM agent answers chat,
+                        completion and Responses requests. A decision agent
+                        answers System One requests with probabilities -- a
+                        security reviewer, for one. It cannot be changed once
+                        the agent has models.
+                      </FormDescription>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        disabled={isCreating}
+                      >
+                        <FormControl>
+                          <SelectTrigger
+                            className="h-11"
+                            aria-label="Agent type"
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="text">LLM</SelectItem>
+                          <SelectItem value="decision">Decision</SelectItem>
+                        </SelectContent>
+                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}

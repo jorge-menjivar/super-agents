@@ -33,6 +33,7 @@ const mockAgent = {
   name: 'Test Agent 1',
   description: 'First test agent description with enough characters',
   metadata: {},
+  agent_type: 'text' as const,
   auto_create_skills: true,
   skill_match_threshold: 0.8,
   max_auto_created_skills: 10,
@@ -627,6 +628,41 @@ describe('EditAgentView', () => {
         await screen.findByText('Must be between 0 and 1'),
       ).toBeInTheDocument();
       expect(mockUpdateAgent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a decision agent', () => {
+    const asDecisionAgent = () =>
+      vi.mocked(useAgents).mockReturnValue({
+        ...vi.mocked(useAgents)(),
+        selectedAgent: { ...mockAgent, agent_type: 'decision' as const },
+      });
+
+    it('says what serves it', () => {
+      asDecisionAgent();
+      renderEditAgentView();
+
+      expect(screen.getByLabelText('Agent Type')).toHaveValue('Decision');
+    });
+
+    // Its answers are probabilities: nothing reviews them, and the optimizer
+    // -- the judge, the prompt writer, the evaluation generator -- leaves
+    // them alone. What routes its requests still applies.
+    it('offers only the settings that mean something for it', () => {
+      asDecisionAgent();
+      renderEditAgentView();
+
+      expect(screen.queryByText('Response review')).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Judge model$/)).not.toBeInTheDocument();
+      expect(screen.getByText(/^Embedding model$/)).toBeInTheDocument();
+    });
+
+    it('is an LLM agent by default, with every setting', () => {
+      renderEditAgentView();
+
+      expect(screen.getByLabelText('Agent Type')).toHaveValue('LLM');
+      expect(screen.getByText('Response review')).toBeInTheDocument();
+      expect(screen.getByText(/^Judge model$/)).toBeInTheDocument();
     });
   });
 
