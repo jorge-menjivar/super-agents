@@ -747,6 +747,22 @@ export function LogDetailsView(): ReactElement {
                 ref={conversation.contentRef}
                 className="flex flex-col w-full min-w-0 gap-4 h-fit"
               >
+                {/* Why a failed request failed: the provider's error, or the
+                    gateway's own, which the row keeps and the status alone
+                    does not say. */}
+                {selectedLog?.error && (
+                  <section
+                    aria-label="Error"
+                    className="rounded-md border border-destructive/40 bg-card p-3 space-y-1"
+                  >
+                    <div className="text-sm font-medium text-destructive">
+                      Error
+                    </div>
+                    <p className="whitespace-pre-wrap break-words border-l-2 border-destructive pl-3 font-mono text-xs leading-relaxed">
+                      {selectedLog.error}
+                    </p>
+                  </section>
+                )}
                 {selectedLog && !decisionExchange && originalSystemPrompt && (
                   <GenericViewer
                     path={`${selectedLog.id}-original-system-prompt`}

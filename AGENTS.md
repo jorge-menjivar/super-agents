@@ -713,7 +713,15 @@ It cannot `replace`; an answer without `withhold` fails open like any other.
 An image the reviewed request carries inline is shown to the reviewer as an
 image (`connectors/hooks/review-images.ts`): PNG and JPEG data URLs become
 assets, up to eight, and any other inline file is replaced by a note saying
-what it was, rather than handed over as base64 text.
+what it was, rather than handed over as base64 text. The material is kept
+within `REVIEW_MATERIAL_BUDGET` -- 60,000 characters, under the tightest
+input a decision model is published at -- by `withinReviewBudget`
+(`connectors/hooks/review-budget.ts`): an agent harness's request carries its
+whole session, which outgrows any model (Jev refuses one with
+`max_tokens_exceeded`). The response is kept whole, then the start of the
+system prompt, the last thing the user asked and the newest turns, each long
+one clipped; tools are named rather than described, and each run of turns
+left out is an `{omitted_messages: n}` entry where they were.
 
 **Configured on the agent, not in the header.** `agents.reviewer_agent_id`
 names the reviewer of every response the agent gives; `reviewerHookFor`

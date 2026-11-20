@@ -1,4 +1,8 @@
-import { liftImages } from '@api/connectors/hooks/review-images';
+import { withinReviewBudget } from '@api/connectors/hooks/review-budget';
+import {
+  type LiftedImages,
+  liftImages,
+} from '@api/connectors/hooks/review-images';
 import {
   getApiUrl,
   getInternalApiKey,
@@ -254,15 +258,39 @@ export const WITHHOLD_QUESTION = 'withhold';
  * withheld, about the request -- and, for an output hook, the response the
  * client would receive. The reviewer's skill puts its policy ahead of this.
  */
+/**
+ * The material as a decision model is shown it: inline images lifted out as
+ * assets, so it sees them as images (`liftImages`), then kept within what it
+ * can read (`withinReviewBudget`). Lifting first keeps an image's bytes out
+ * of the budget, and an image whose reference the budget left out goes with
+ * it -- both vendors refuse an asset nothing refers to.
+ */
+function reviewMaterial<T extends { request: unknown; response?: unknown }>(
+  material: T,
+): LiftedImages<T> {
+  const lifted = liftImages(material);
+  const bounded = withinReviewBudget(lifted.material);
+  if (!lifted.assets) {
+    return { material: bounded };
+  }
+  const text = JSON.stringify(bounded);
+  const assets = Object.fromEntries(
+    Object.entries(lifted.assets).filter(([reference]) =>
+      text.includes(reference),
+    ),
+  );
+  return Object.keys(assets).length > 0
+    ? { material: bounded, assets }
+    : { material: bounded };
+}
+
 export function decisionReviewRequest(
   hook: Hook,
   input: HookInput,
 ): SystemOneRequestBody {
-  // Inline images become assets, so the reviewer sees them as images; see
-  // `liftImages`.
   const request = describeRequest(input.requestData);
   if (hook.type === HookType.INPUT_HOOK) {
-    const { material, assets } = liftImages({ request });
+    const { material, assets } = reviewMaterial({ request });
     return {
       state: material,
       ...(assets ? { assets } : {}),
@@ -279,7 +307,7 @@ export function decisionReviewRequest(
       },
     };
   }
-  const { material, assets } = liftImages({
+  const { material, assets } = reviewMaterial({
     request,
     response:
       input.responseBody === undefined
