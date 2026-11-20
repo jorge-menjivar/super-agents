@@ -1,14 +1,35 @@
 import { z } from 'zod';
 
-// Model type enum
+/**
+ * What a model does. A text model writes, an embed model embeds, and a
+ * decision model answers questions about some material with probabilities --
+ * the System One API -- and writes nothing, so it serves neither a text slot
+ * nor the embedding slot. The database enforces which type each slot takes.
+ */
 export const ModelType = {
   TEXT: 'text',
   EMBED: 'embed',
+  DECISION: 'decision',
 } as const;
 
 export type ModelType = (typeof ModelType)[keyof typeof ModelType];
 
-export const ModelTypeSchema = z.enum(['text', 'embed']);
+export const ModelTypeSchema = z.enum(['text', 'embed', 'decision']);
+
+/**
+ * The model types a skill can be served by: a text model answers its chat,
+ * completion and Responses requests, a decision model its System One ones.
+ * An embedding model serves no skill.
+ */
+export const SKILL_MODEL_TYPES: readonly ModelType[] = [
+  ModelType.TEXT,
+  ModelType.DECISION,
+];
+
+/** Whether a model can serve a skill; see `SKILL_MODEL_TYPES`. */
+export function servesSkills(model: { model_type: ModelType }): boolean {
+  return SKILL_MODEL_TYPES.includes(model.model_type);
+}
 
 export const Model = z.object({
   id: z.uuid(),
@@ -44,7 +65,7 @@ export const ModelCreateParams = z
   .strict()
   .refine(
     (data) => {
-      // embedding_dimensions required for embed models, must be null for text models
+      // embedding_dimensions required for embed models, and only for them
       if (data.model_type === 'embed') {
         return data.embedding_dimensions != null;
       }
@@ -52,7 +73,7 @@ export const ModelCreateParams = z
     },
     {
       message:
-        'embedding_dimensions is required for embed models and must not be set for text models',
+        'embedding_dimensions is required for embed models and must not be set for any other',
       path: ['embedding_dimensions'],
     },
   );
@@ -97,8 +118,9 @@ export const ModelUpdateParams = z
   )
   .refine(
     (data) => {
-      // If explicitly setting model_type to 'text', embedding_dimensions must be null or not set
-      if (data.model_type === 'text') {
+      // If explicitly setting model_type to anything but 'embed',
+      // embedding_dimensions must be null or not set
+      if (data.model_type !== undefined && data.model_type !== 'embed') {
         return (
           data.embedding_dimensions === undefined ||
           data.embedding_dimensions === null
@@ -108,7 +130,7 @@ export const ModelUpdateParams = z
     },
     {
       message:
-        'embedding_dimensions must not be set when changing model_type to text',
+        'embedding_dimensions must not be set when changing model_type to anything but embed',
       path: ['embedding_dimensions'],
     },
   )

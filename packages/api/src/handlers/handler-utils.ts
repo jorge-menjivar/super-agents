@@ -36,9 +36,11 @@ import { HeaderKey, StrategyModes } from '@shared/types/api/request/headers';
 import type { ChatCompletionRequestBody } from '@shared/types/api/routes/chat-completions-api';
 import type { ResponsesRequestBody } from '@shared/types/api/routes/responses-api';
 import { ChatCompletionMessageRole } from '@shared/types/api/routes/shared/messages';
+import type { SystemOneRequestBody } from '@shared/types/api/routes/system-one-api';
 import { AIProvider, ContentTypeName } from '@shared/types/constants';
 import { CacheStatus } from '@shared/types/middleware/cache';
 import { HookType } from '@shared/types/middleware/hooks';
+import { withSystemOnePolicy } from '@shared/utils/system-one';
 import { cloneDeep } from 'lodash';
 
 function getProxyPath(
@@ -92,6 +94,13 @@ function getHyperParamDefaults(
   const configDefaults: Record<string, unknown> = {
     model: saTarget.configuration.model,
   };
+
+  // A decision model answers in one forward pass and samples nothing, so an
+  // arm's temperature, token budget and reasoning effort mean nothing to it --
+  // and the effort, which has no System One spelling, would throw below.
+  if (functionName === FunctionName.SYSTEM_ONE) {
+    return configDefaults;
+  }
 
   const provider = saTarget.configuration.ai_provider;
   const modelId = saTarget.configuration.model;
@@ -453,6 +462,21 @@ export async function tryPost(
           overriddenSuperAgentsRequestBody as ChatCompletionRequestBody
         ).messages = messages;
       }
+    }
+
+    // A decision skill's system prompt is its policy, and every question it
+    // is asked is asked under it. System One has no system message to carry
+    // it, so it goes ahead of each question's own instructions; see
+    // `withSystemOnePolicy`.
+    if (
+      saTarget.configuration.system_prompt &&
+      saRequestData.functionName === FunctionName.SYSTEM_ONE
+    ) {
+      const body = overriddenSuperAgentsRequestBody as SystemOneRequestBody;
+      body.questions = withSystemOnePolicy(
+        body.questions,
+        saTarget.configuration.system_prompt,
+      );
     }
 
     let isStreamingMode = false;

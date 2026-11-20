@@ -30,6 +30,7 @@ import { completionsRouter } from '@api/v1/completions';
 import { embeddingsRouter } from '@api/v1/embeddings';
 import { responsesRouter } from '@api/v1/responses';
 import { superAgentsRouter } from '@api/v1/super-agents';
+import { systemOneRouter } from '@api/v1/systemone';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createFactory } from 'hono/factory';
@@ -127,6 +128,7 @@ app.route('/chat', chatRouter);
 app.route('/completions', completionsRouter);
 app.route('/responses', responsesRouter);
 app.route('/embeddings', embeddingsRouter);
+app.route('/systemone', systemOneRouter);
 
 // The same endpoints scoped to an agent and a skill through the path, so that
 // OpenAI-compatible clients can point their base URL at a single skill instead
@@ -135,12 +137,14 @@ app.route(`${AGENT_SKILL_BASE_PATH}/chat`, chatRouter);
 app.route(`${AGENT_SKILL_BASE_PATH}/completions`, completionsRouter);
 app.route(`${AGENT_SKILL_BASE_PATH}/responses`, responsesRouter);
 app.route(`${AGENT_SKILL_BASE_PATH}/embeddings`, embeddingsRouter);
+app.route(`${AGENT_SKILL_BASE_PATH}/systemone`, systemOneRouter);
 // And to an agent alone, with the skill picked per request by
 // `agentAndSkillMiddleware`.
 app.route(`${AGENT_BASE_PATH}/chat`, chatRouter);
 app.route(`${AGENT_BASE_PATH}/completions`, completionsRouter);
 app.route(`${AGENT_BASE_PATH}/responses`, responsesRouter);
 app.route(`${AGENT_BASE_PATH}/embeddings`, embeddingsRouter);
+app.route(`${AGENT_BASE_PATH}/systemone`, systemOneRouter);
 const superAgentsRoute = app.route('/super-agents', superAgentsRouter);
 
 export type SuperAgentsRoute = typeof superAgentsRoute;

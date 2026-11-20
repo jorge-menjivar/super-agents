@@ -2,6 +2,7 @@
 
 import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
 import type { Model } from '@shared/types/data/model';
+import { servesSkills } from '@shared/types/data/model';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   addModelsToSkill,
@@ -167,11 +168,12 @@ export function ManageSkillModelsDialog({
     return { providerType, providerName };
   };
 
-  // Filter out embedding models - only show text models for skills
-  const textModels = models.filter((model) => model.model_type === 'text');
+  // What a skill can be served by: text models for chat, decision models for
+  // System One. Embedding models serve no skill.
+  const servingModels = models.filter(servesSkills);
 
   // Group models by provider, with models sorted alphabetically within each group
-  const modelsByProvider = textModels.reduce(
+  const modelsByProvider = servingModels.reduce(
     (acc, model) => {
       if (!acc[model.ai_provider_id]) {
         acc[model.ai_provider_id] = [];

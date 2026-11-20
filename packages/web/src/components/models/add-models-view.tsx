@@ -2,7 +2,8 @@
 
 import { getKnownEmbeddingDimensions } from '@shared/constants/embedding-models';
 import type { AIProvider } from '@shared/types/constants';
-import { PrettyAIProvider } from '@shared/types/constants';
+import { isDecisionProvider, PrettyAIProvider } from '@shared/types/constants';
+import type { ModelType } from '@shared/types/data/model';
 import { createModel } from '@web/api/v1/super-agents/models';
 import { Button } from '@web/components/ui/button';
 import {
@@ -45,7 +46,7 @@ interface AddModelsViewProps {
 interface ModelField {
   id: string;
   modelName: string;
-  modelType: 'text' | 'embed';
+  modelType: ModelType;
   embeddingDimensions: string;
   dimensionsAutoFilled?: boolean; // Track if we auto-filled dimensions
   error?: string;
@@ -60,12 +61,31 @@ export function AddModelsView({
   const { aiProviderConfigs: apiKeys } = useAIProviders();
   const { refetch } = useModels();
 
+  const provider = apiKeys.find((key) => key.id === providerId);
+  // A decision provider serves decision models and nothing else, so the type
+  // is not a choice there.
+  const decisionProvider = isDecisionProvider(provider?.ai_provider);
+  const defaultModelType: ModelType = decisionProvider ? 'decision' : 'text';
+
   const [modelFields, setModelFields] = useState<ModelField[]>([
-    { id: nanoid(), modelName: '', modelType: 'text', embeddingDimensions: '' },
+    {
+      id: nanoid(),
+      modelName: '',
+      modelType: defaultModelType,
+      embeddingDimensions: '',
+    },
   ]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const provider = apiKeys.find((key) => key.id === providerId);
+  // The providers load after the first render; a decision provider found then
+  // still decides the type of the fields already on the page.
+  useEffect(() => {
+    if (decisionProvider) {
+      setModelFields((fields) =>
+        fields.map((field) => ({ ...field, modelType: 'decision' })),
+      );
+    }
+  }, [decisionProvider]);
 
   useEffect(() => {
     if (!provider) {
@@ -83,7 +103,7 @@ export function AddModelsView({
       {
         id: nanoid(),
         modelName: '',
-        modelType: 'text',
+        modelType: defaultModelType,
         embeddingDimensions: '',
       },
     ]);
@@ -121,13 +141,13 @@ export function AddModelsView({
     );
   };
 
-  const handleModelTypeChange = (id: string, value: 'text' | 'embed') => {
+  const handleModelTypeChange = (id: string, value: ModelType) => {
     setModelFields(
       modelFields.map((field) => {
         if (field.id !== id) return field;
 
-        if (value === 'text') {
-          // Clear dimensions when switching to text
+        if (value !== 'embed') {
+          // Only an embed model has dimensions
           return {
             ...field,
             modelType: value,
@@ -310,7 +330,11 @@ export function AddModelsView({
                     <div className="flex-1 space-y-1">
                       <ModelAutocompleteInput
                         id={`model-${field.id}`}
-                        placeholder="e.g., gpt-5, text-embedding-3-small"
+                        placeholder={
+                          decisionProvider
+                            ? 'e.g., jev-latest, drex-latest'
+                            : 'e.g., gpt-5, text-embedding-3-small'
+                        }
                         value={field.modelName}
                         onChange={(newValue) =>
                           handleModelNameChange(field.id, newValue)
@@ -329,16 +353,23 @@ export function AddModelsView({
                     <div className="w-[120px]">
                       <Select
                         value={field.modelType}
-                        onValueChange={(value: 'text' | 'embed') =>
+                        onValueChange={(value: ModelType) =>
                           handleModelTypeChange(field.id, value)
                         }
+                        disabled={decisionProvider}
                       >
-                        <SelectTrigger>
+                        <SelectTrigger aria-label="Model type">
                           <SelectValue placeholder="Type" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="text">Text</SelectItem>
-                          <SelectItem value="embed">Embed</SelectItem>
+                          {decisionProvider ? (
+                            <SelectItem value="decision">Decision</SelectItem>
+                          ) : (
+                            <>
+                              <SelectItem value="text">Text</SelectItem>
+                              <SelectItem value="embed">Embed</SelectItem>
+                            </>
+                          )}
                         </SelectContent>
                       </Select>
                     </div>

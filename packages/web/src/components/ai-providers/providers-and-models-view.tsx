@@ -378,7 +378,9 @@ export function ProvidersAndModelsView({
                             <Badge variant="outline">
                               {model.model_type === 'embed'
                                 ? `Embed (${model.embedding_dimensions})`
-                                : 'Text'}
+                                : model.model_type === 'decision'
+                                  ? 'Decision'
+                                  : 'Text'}
                             </Badge>
                           </TableCell>
                           <TableCell>

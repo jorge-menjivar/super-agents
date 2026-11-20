@@ -176,12 +176,13 @@ path falls through to the dashboard's static build. See `packages/api/src/server
 
 Key API endpoints:
 - `/v1/chat/completions` - OpenAI-compatible chat API
+- `/v1/systemone` - System One, the API decision models speak (see "Decision models")
 - `/v1/super-agents/agents` - Agent management
 - `/v1/super-agents/evaluations` - Dataset and evaluation management
 - `/v1/super-agents/observability/logs` - Request logging
 
 The gateway endpoints (`/v1/chat/completions`, `/v1/completions`, `/v1/responses`,
-`/v1/embeddings`) are also mounted under
+`/v1/embeddings`, `/v1/systemone`) are also mounted under
 `/v1/agents/:agent_name/skills/:skill_name/...` and `/v1/agents/:agent_name/...`.
 The first names the agent and skill in the path instead of in the `sa-config`
 header, which makes the header optional. The second names only the agent and
@@ -494,6 +495,35 @@ The application supports 40+ AI providers through a unified interface. Each prov
 - `image-generate` - Image generation
 
 Provider implementations are in `packages/api/src/ai-providers/[provider]/`.
+
+### Decision models
+
+A decision model answers questions about some material with probabilities, in
+one forward pass, and writes nothing. Jev (TypeSafe AI, `typesafe`) and Drex
+(Nace.AI, `nace`, hosted or self-hosted through `custom_host`) serve the same
+API, **System One** -- `POST /v1/systemone`, `{model, state, questions}` in and
+`{model, answers, usage}` out -- so the gateway takes it as a function of its
+own (`FunctionName.SYSTEM_ONE`) rather than translating it into chat
+completions, which have no place for a probability. Both providers share
+`ai-providers/system-one/`: the request goes as the caller wrote it, the answer
+comes back stamped with its provider, and only the two vendors' errors differ.
+
+- **A model type of its own.** `models.model_type` is `text`, `embed` or
+  `decision`, and the role slots' triggers already refuse anything but the
+  type they take, so a decision model can serve a skill (`servesSkills`) but
+  never write a prompt or judge an answer.
+- **The skill's system prompt is its policy.** System One has no system
+  message, so `withSystemOnePolicy` (`@shared/utils/system-one`) puts the
+  served prompt ahead of each question's `instructions`; a skill created from
+  a System One request starts with an empty one, so it is a pass-through
+  until someone writes the policy. Where a system prompt is *read* -- routing,
+  `original_system_prompt` -- it is the questions' instructions, and `state`
+  is the conversation.
+- **The optimizer leaves decision skills alone.** Its judges and prompt
+  writers are LLMs reading text. A skill created from a System One request has
+  `optimize` off and gets no evaluations, realtime evaluations skip System One
+  logs, clustering and prompt regeneration only ever ran for conversational
+  requests, and an arm's sampling settings are not applied to one.
 
 ## Authentication
 

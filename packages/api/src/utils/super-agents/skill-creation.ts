@@ -19,6 +19,7 @@ import type { RequestIntentEmbedding } from '@api/utils/super-agents/intent-embe
 import { judgeLogsWithoutRuns } from '@api/utils/super-agents/judge-backlog';
 import { error, info, warn } from '@shared/console-logging';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
+import { FunctionName } from '@shared/types/api/request/function-name';
 import type { Agent, Skill } from '@shared/types/data';
 import { SkillCreateParams } from '@shared/types/data/skill';
 import { SkillEventType } from '@shared/types/data/skill-event';
@@ -134,6 +135,14 @@ async function generateEvaluations(
  * from there. The routing centroid starts as the request's own intent
  * embedding rather than the description, since that is what the next such
  * request will look like.
+ *
+ * A skill created from a System One request is a decision skill, and differs
+ * in two ways. Its arms start with an empty prompt rather than the caller's
+ * questions: a decision skill's prompt is a policy the questions are asked
+ * under, and seeding it with the questions would ask each one twice. And it
+ * is not optimized, so no evaluations are generated for it: the optimizer's
+ * judges and prompt writers are LLMs, which would score probabilities and
+ * rewrite a policy with nothing to go on.
  */
 export async function createSkillForRequest(
   c: AppContext,
@@ -153,7 +162,10 @@ export async function createSkillForRequest(
     takenNames,
   );
   const name = uniqueSkillName(naming.name, takenNames);
-  const seedSystemPrompt = extractSystemPrompt(saRequestData);
+  const decisionSkill = saRequestData.functionName === FunctionName.SYSTEM_ONE;
+  const seedSystemPrompt = decisionSkill
+    ? ''
+    : extractSystemPrompt(saRequestData);
 
   let skill: Skill;
   try {
@@ -164,7 +176,7 @@ export async function createSkillForRequest(
         name,
         description: naming.description,
         metadata: {},
-        optimize: true,
+        optimize: !decisionSkill,
         auto_created: true,
         seed_system_prompt: seedSystemPrompt,
       }),
@@ -226,16 +238,20 @@ export async function createSkillForRequest(
   });
   emitSSEEvent('skill:created', { skillId: skill.id, agentId: agent.id });
 
-  const evaluations = generateEvaluations(c, connector, agent, skill).catch(
-    (e) => {
-      error(
-        `[SKILL_CREATION] Could not generate evaluations for skill ${skill.name}:`,
-        e,
-      );
-    },
-  );
-  if (getRuntimeKey() === 'workerd') {
-    c.executionCtx.waitUntil(evaluations);
+  // Evaluations are what an optimized skill is judged by; a skill that is not
+  // optimized -- a decision skill -- has no use for them.
+  if (skill.optimize) {
+    const evaluations = generateEvaluations(c, connector, agent, skill).catch(
+      (e) => {
+        error(
+          `[SKILL_CREATION] Could not generate evaluations for skill ${skill.name}:`,
+          e,
+        );
+      },
+    );
+    if (getRuntimeKey() === 'workerd') {
+      c.executionCtx.waitUntil(evaluations);
+    }
   }
 
   return skill;

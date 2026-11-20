@@ -2,6 +2,7 @@
 
 import type { AIProvider } from '@shared/types/constants';
 import { PrettyAIProvider } from '@shared/types/constants';
+import { servesSkills } from '@shared/types/data/model';
 import type {
   EvaluationMethodDetails,
   EvaluationMethodName,
@@ -233,11 +234,12 @@ export function CreateSkillCompleteView(): ReactElement {
     );
   }
 
-  // Filter out embedding models - only show text models for skills
-  const textModels = models.filter((model) => model.model_type === 'text');
+  // What a skill can be served by: text models for chat, decision models for
+  // System One. Embedding models serve no skill.
+  const servingModels = models.filter(servesSkills);
 
   // Group models by provider
-  const modelsByProvider = textModels.reduce(
+  const modelsByProvider = servingModels.reduce(
     (acc, model) => {
       if (!acc[model.ai_provider_id]) {
         acc[model.ai_provider_id] = [];
@@ -245,7 +247,7 @@ export function CreateSkillCompleteView(): ReactElement {
       acc[model.ai_provider_id].push(model);
       return acc;
     },
-    {} as Record<string, typeof textModels>,
+    {} as Record<string, typeof servingModels>,
   );
 
   return (

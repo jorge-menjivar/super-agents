@@ -1,6 +1,7 @@
 'use client';
 
 import type { AIProvider } from '@shared/types/constants';
+import type { ModelType } from '@shared/types/data/model';
 import {
   Command,
   CommandEmpty,
@@ -24,7 +25,7 @@ export interface ModelAutocompleteInputProps {
   onChange: (value: string) => void;
   onBlur?: () => void;
   provider?: AIProvider | null;
-  modelType?: 'text' | 'embed';
+  modelType?: ModelType;
   placeholder?: string;
   className?: string;
   id?: string;

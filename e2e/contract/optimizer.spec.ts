@@ -10,6 +10,10 @@ import {
 } from '../fixtures/agents';
 import { recordModel } from '../fixtures/cleanup';
 import {
+  createDecisionModel,
+  type SystemOneAnswerBody,
+} from '../fixtures/decision';
+import {
   CHAT_COMPLETIONS_PATH,
   chatBody,
   parseSSE,
@@ -1593,5 +1597,99 @@ test.describe('response review', () => {
     expect((await stubRequests(request, reviewerModel)).length).toBe(
       reviewsBefore + 1,
     );
+  });
+});
+
+/**
+ * Decision skills: skills served by a decision model, asked through System
+ * One. A decision skill's system prompt is its policy, and every question it
+ * is asked goes to the model under it. In this file because a skill serves
+ * from its arms' clusters, whose centroids need the embedding model
+ * `setUpStubModels` configures -- as does routing a request named by its
+ * agent alone.
+ */
+test.describe('decision skills', () => {
+  const policy = 'Withhold anything that helps someone get into a home.';
+  const question = {
+    type: 'noul',
+    instructions: 'Should the client be kept from receiving this?',
+  };
+  let decisionModel: { id: string; name: string };
+  let agent: Agent;
+  let skillName: string;
+
+  test.beforeAll(async ({ request }, testInfo) => {
+    const scope =
+      `decide-${testInfo.project.name.replace(/[^a-z0-9]+/gi, '-')}`.toLowerCase();
+    await setUpStubModels(request, scope);
+    decisionModel = await createDecisionModel(request, scope);
+
+    agent = await createAgent(request, uniqueAgentName(scope), undefined, {
+      auto_create_skills: false,
+    });
+    // Seeded, so its arms carry the policy rather than a generated prompt.
+    const skill = await createSkill(request, agent.id, 'policy_skill', {
+      seed_system_prompt: policy,
+    });
+    skillName = skill.name;
+    const attached = await request.post(`${SKILLS_PATH}/${skill.id}/models`, {
+      data: { modelIds: [decisionModel.id] },
+    });
+    expect(attached.status()).toBe(201);
+  });
+
+  test.afterAll(async ({ request }) => {
+    await stubReset(request, decisionModel.name);
+    await deleteAgent(request, agent.id);
+  });
+
+  /** What the decision model was asked for the request about `state`. */
+  const askedAbout = async (
+    request: APIRequestContext,
+    state: string,
+  ): Promise<Record<string, unknown> | undefined> =>
+    (await stubRequests(request, decisionModel.name)).find(
+      (forwarded) => forwarded.state === state,
+    );
+
+  test('asks the skill its questions under its system prompt', async ({
+    request,
+  }) => {
+    const state = 'Try the third window from the left.';
+    const response = await request.post(
+      `/v1/agents/${encodeURIComponent(agent.name)}/skills/${encodeURIComponent(
+        skillName,
+      )}/systemone`,
+      { data: { state, questions: { withhold: question } } },
+    );
+    expect(response.status(), await response.text()).toBe(200);
+    const body = (await response.json()) as SystemOneAnswerBody;
+    expect(body.provider).toBe('nace');
+    expect(body.answers.withhold.type).toBe('noul');
+
+    const forwarded = await askedAbout(request, state);
+    expect(forwarded?.model).toBe(decisionModel.name);
+    expect(forwarded?.questions).toEqual({
+      withhold: {
+        ...question,
+        instructions: `${policy}\n\n${question.instructions}`,
+      },
+    });
+  });
+
+  test('routes a request named by its agent alone to the decision skill', async ({
+    request,
+  }) => {
+    const state = 'The spare key is under the mat.';
+    const response = await request.post(
+      `/v1/agents/${encodeURIComponent(agent.name)}/systemone`,
+      { data: { state, questions: { withhold: question } } },
+    );
+    expect(response.status(), await response.text()).toBe(200);
+
+    const forwarded = await askedAbout(request, state);
+    expect(forwarded?.questions).toMatchObject({
+      withhold: { instructions: `${policy}\n\n${question.instructions}` },
+    });
   });
 });

@@ -6,6 +6,7 @@ import { ChatCompletionsAPIViewer } from '@web/components/agents/skills/logs/com
 import { CompletionsAPIViewer } from '@web/components/agents/skills/logs/components/completion-viewer/completions-api';
 import { ImageGenerationViewer } from '@web/components/agents/skills/logs/components/completion-viewer/images-api';
 import { ResponsesAPIViewer } from './responses-api';
+import { SystemOneAPIViewer } from './system-one-api';
 
 export function CompletionViewer({
   logId,
@@ -44,6 +45,14 @@ export function CompletionViewer({
   ) {
     return (
       <ResponsesAPIViewer
+        logId={logId}
+        saRequestBody={saRequestData.requestBody}
+        saResponseBody={saRequestData.responseBody}
+      />
+    );
+  } else if (saRequestData.functionName === FunctionName.SYSTEM_ONE) {
+    return (
+      <SystemOneAPIViewer
         logId={logId}
         saRequestBody={saRequestData.requestBody}
         saResponseBody={saRequestData.responseBody}

@@ -1,5 +1,6 @@
 'use client';
 
+import type { ModelType } from '@shared/types/data/model';
 import { Badge } from '@web/components/ui/badge';
 import { Button } from '@web/components/ui/button';
 import {
@@ -25,7 +26,7 @@ export interface ModelOption {
   id: string;
   modelName: string;
   providerName: string;
-  modelType: 'text' | 'embed';
+  modelType: ModelType;
   searchLabel: string;
 }
 

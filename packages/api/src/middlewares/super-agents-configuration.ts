@@ -212,12 +212,15 @@ async function validateTargetConfiguration(
   // Apply optimization if specified. A conversational request whose
   // embedding could not be generated (the embedding call failed) is still
   // served: it cannot be matched to its cluster, but any cluster's arms
-  // beat refusing the request.
+  // beat refusing the request. A System One request is never embedded --
+  // the optimizer leaves decision skills alone, so there is no cluster to
+  // match it to -- and is served by its skill's arms the same way.
   const functionName = c.get('sa_request_data')?.functionName;
   const conversational =
     functionName === FunctionName.CHAT_COMPLETE ||
     functionName === FunctionName.STREAM_CHAT_COMPLETE ||
-    functionName === FunctionName.CREATE_MODEL_RESPONSE;
+    functionName === FunctionName.CREATE_MODEL_RESPONSE ||
+    functionName === FunctionName.SYSTEM_ONE;
   if (
     (embedding || conversational) &&
     saTargetPreProcessed.optimization === OptimizationType.AUTO

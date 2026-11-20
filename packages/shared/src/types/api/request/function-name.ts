@@ -63,6 +63,10 @@ import {
   ResponsesRequestBody,
   ResponsesResponseBody,
 } from '@shared/types/api/routes/responses-api';
+import {
+  SystemOneRequestBody,
+  SystemOneResponseBody,
+} from '@shared/types/api/routes/system-one-api';
 import { HttpMethod } from '@shared/types/http';
 
 export enum FunctionName {
@@ -120,6 +124,9 @@ export enum FunctionName {
   DELETE_MODEL_RESPONSE = 'delete_model_response',
   LIST_RESPONSE_INPUT_ITEMS = 'list_response_input_items',
 
+  // System One API: decision models
+  SYSTEM_ONE = 'system_one',
+
   // Amazon Bedrock API
   INITIATE_MULTIPART_UPLOAD = 'initiate_multipart_upload',
 }
@@ -154,6 +161,7 @@ export const PrettyFunctionName: Record<FunctionName, string> = {
   [FunctionName.GET_MODEL_RESPONSE]: 'Get Model Response',
   [FunctionName.DELETE_MODEL_RESPONSE]: 'Delete Model Response',
   [FunctionName.LIST_RESPONSE_INPUT_ITEMS]: 'List Response Input Items',
+  [FunctionName.SYSTEM_ONE]: 'System One',
   [FunctionName.PROXY]: 'Proxy',
   [FunctionName.INITIATE_MULTIPART_UPLOAD]: 'Initiate Multipart Upload',
 };
@@ -467,4 +475,17 @@ export const functionConfigs: SuperAgentsRequestData[] = [
   //   method: HttpMethod.DELETE,
   //   functionName: FunctionName.DELETE_MODEL_RESPONSE,
   // },
+
+  // System One API. A decision model answers in one forward pass, so there
+  // is nothing to stream and no `stream` variant.
+  {
+    route_pattern: /^\/v1\/systemone$/,
+    method: HttpMethod.POST,
+    functionName: FunctionName.SYSTEM_ONE,
+    requestSchema: SystemOneRequestBody,
+    requestBody: {} as SystemOneRequestBody,
+    responseSchema: SystemOneResponseBody,
+    url: '',
+    requestHeaders: {},
+  },
 ];
