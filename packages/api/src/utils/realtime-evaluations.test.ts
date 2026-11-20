@@ -1,5 +1,4 @@
 import { shouldTriggerRealtimeEvaluation } from '@api/utils/realtime-evaluations';
-import { FunctionName } from '@shared/types/api/request';
 import { describe, expect, it } from 'vitest';
 
 const url = (path: string) => new URL(`http://localhost:3000${path}`);
@@ -7,21 +6,13 @@ const url = (path: string) => new URL(`http://localhost:3000${path}`);
 describe('shouldTriggerRealtimeEvaluation', () => {
   it('evaluates an answered gateway request', () => {
     expect(
-      shouldTriggerRealtimeEvaluation(
-        200,
-        url('/v1/chat/completions'),
-        FunctionName.CHAT_COMPLETE,
-      ),
+      shouldTriggerRealtimeEvaluation(200, url('/v1/chat/completions')),
     ).toBe(true);
   });
 
   it('leaves a failed request alone', () => {
     expect(
-      shouldTriggerRealtimeEvaluation(
-        503,
-        url('/v1/chat/completions'),
-        FunctionName.CHAT_COMPLETE,
-      ),
+      shouldTriggerRealtimeEvaluation(503, url('/v1/chat/completions')),
     ).toBe(false);
   });
 
@@ -31,15 +22,11 @@ describe('shouldTriggerRealtimeEvaluation', () => {
     ).toBe(false);
   });
 
-  // A decision model answers with probabilities, and the evaluations are
-  // LLMs reading text.
-  it("leaves a decision model's answer alone", () => {
+  // A decision skill is judged like any other, by the methods that read
+  // decisions.
+  it("evaluates a decision model's answer", () => {
     expect(
-      shouldTriggerRealtimeEvaluation(
-        200,
-        url('/v1/agents/guard/systemone'),
-        FunctionName.SYSTEM_ONE,
-      ),
-    ).toBe(false);
+      shouldTriggerRealtimeEvaluation(200, url('/v1/agents/guard/systemone')),
+    ).toBe(true);
   });
 });

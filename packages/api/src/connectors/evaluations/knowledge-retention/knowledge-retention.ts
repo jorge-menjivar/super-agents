@@ -12,6 +12,7 @@ import { evaluateLog } from './service/evaluate';
 // Simplified method configuration constant - only essential fields for standardization
 const knowledgeRetentionMethodConfig: EvaluationMethodDetails = {
   method: EvaluationMethodName.KNOWLEDGE_RETENTION,
+  agent_types: ['text'],
   name: 'Knowledge Retention',
   description:
     'Evaluates how well an AI system retains and recalls information from provided context',

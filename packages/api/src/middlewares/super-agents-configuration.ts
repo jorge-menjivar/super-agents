@@ -16,7 +16,6 @@ import { reviewerHookFor } from '@api/utils/super-agents/reviewer';
 import { renderTemplate } from '@api/utils/templates';
 import { error } from '@shared/console-logging';
 import {
-  FunctionName,
   OptimizationType,
   type SuperAgentsConfig,
   SuperAgentsTarget,
@@ -30,6 +29,7 @@ import type {
   SkillOptimizationCluster,
 } from '@shared/types/data';
 import type { SkillOptimizationClusterCreateParams } from '@shared/types/data/skill-optimization-cluster';
+import { isOptimizedFunction } from '@shared/utils/optimized-functions';
 import type { Next } from 'hono';
 import { createMiddleware } from 'hono/factory';
 
@@ -209,20 +209,14 @@ async function validateTargetConfiguration(
   let resolvedApiKey: string | undefined;
   let resolvedCustomHost: string | undefined;
 
-  // Apply optimization if specified. A conversational request whose
-  // embedding could not be generated (the embedding call failed) is still
-  // served: it cannot be matched to its cluster, but any cluster's arms
-  // beat refusing the request. A System One request is never embedded --
-  // the optimizer leaves decision skills alone, so there is no cluster to
-  // match it to -- and is served by its skill's arms the same way.
-  const functionName = c.get('sa_request_data')?.functionName;
-  const conversational =
-    functionName === FunctionName.CHAT_COMPLETE ||
-    functionName === FunctionName.STREAM_CHAT_COMPLETE ||
-    functionName === FunctionName.CREATE_MODEL_RESPONSE ||
-    functionName === FunctionName.SYSTEM_ONE;
+  // Apply optimization if specified. A request the optimizer works on whose
+  // embedding could not be generated -- the embedding call failed, or a
+  // System One request came with no state to embed -- is still served: it
+  // cannot be matched to its cluster, but any cluster's arms beat refusing
+  // the request.
+  const optimized = isOptimizedFunction(c.get('sa_request_data')?.functionName);
   if (
-    (embedding || conversational) &&
+    (embedding || optimized) &&
     saTargetPreProcessed.optimization === OptimizationType.AUTO
   ) {
     try {
@@ -492,12 +486,7 @@ export const saConfigurationInjectorMiddleware = createMiddleware(
         // Generate embeddings for specific endpoints
         // The embedding will be saved with the log after the request is completed
         let embedding = null;
-        if (
-          saRequestData &&
-          (saRequestData.functionName === FunctionName.CHAT_COMPLETE ||
-            saRequestData.functionName === FunctionName.STREAM_CHAT_COMPLETE ||
-            saRequestData.functionName === FunctionName.CREATE_MODEL_RESPONSE)
-        ) {
+        if (saRequestData && isOptimizedFunction(saRequestData.functionName)) {
           try {
             embedding = await generateEmbeddingForRequest(
               c,

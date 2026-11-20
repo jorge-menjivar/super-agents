@@ -7,6 +7,10 @@ import type {
 import type { AppContext } from '@api/types/hono';
 import { formatMessagesForExtraction } from '@api/utils/messages';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
+import {
+  decisionExchangeOf,
+  describeDecisionLog,
+} from '@api/utils/super-agents/decision-logs';
 import { extractMessagesFromRequestData } from '@api/utils/super-agents/requests';
 import { extractOutputFromResponseBody } from '@api/utils/super-agents/responses';
 import { error } from '@shared/console-logging';
@@ -17,10 +21,15 @@ import {
   type StreamChatCompletionRequestData,
 } from '@shared/types/api/request';
 import { SuperAgentsResponseBody } from '@shared/types/api/response';
-import type { Skill, SkillOptimizationCluster } from '@shared/types/data';
+import type {
+  Agent,
+  Skill,
+  SkillOptimizationCluster,
+} from '@shared/types/data';
 import type { CompletedLog } from '@shared/types/data/log';
 import { isCompletedLog } from '@shared/types/data/log';
 import { SkillEventType } from '@shared/types/data/skill-event';
+import { isOptimizedFunction } from '@shared/utils/optimized-functions';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 
 /** The shortest a reflection lock is ever held. */
@@ -441,41 +450,58 @@ export async function performReflection(
 }
 
 /**
+ * A log as an example a prompt writer can read: the conversation, its
+ * request constraints and the reply; or, for a decision model, what it was
+ * asked and how it answered. Throws for a log it cannot read.
+ */
+function exampleOf(log: CompletedLog): string {
+  if (log.function_name === FunctionName.SYSTEM_ONE) {
+    const exchange = decisionExchangeOf(log);
+    if (!exchange?.response) {
+      throw new Error('The log has no System One answers to read');
+    }
+    return describeDecisionLog(exchange);
+  }
+
+  const saRequestData = produceSuperAgentsRequestData(
+    log.ai_provider_request_log.method,
+    log.ai_provider_request_log.request_url,
+    {},
+    log.ai_provider_request_log.request_body,
+  );
+  const responseBody = SuperAgentsResponseBody.parse(
+    log.ai_provider_request_log.response_body,
+  );
+
+  const messages = extractMessagesFromRequestData(
+    saRequestData as
+      | ChatCompletionRequestData
+      | StreamChatCompletionRequestData
+      | ResponsesRequestData,
+  );
+  const input = formatMessagesForExtraction(messages);
+  const output = extractOutputFromResponseBody(responseBody);
+
+  // Extract constraints from the AI provider's request body directly
+  // This includes response_format with full JSON schema
+  const constraints = extractRequestConstraints(
+    log.ai_provider_request_log.request_body as
+      | ChatCompletionRequestData
+      | StreamChatCompletionRequestData
+      | ResponsesRequestData,
+  );
+
+  return `${input}${constraints}\n\nAssistant: ${output}`;
+}
+
+/**
  * Converts a log into a conversation string with input, output, and request constraints
  */
 export function generateExampleConversations(logs: CompletedLog[]): string[] {
   return logs
     .map((log) => {
       try {
-        const saRequestData = produceSuperAgentsRequestData(
-          log.ai_provider_request_log.method,
-          log.ai_provider_request_log.request_url,
-          {},
-          log.ai_provider_request_log.request_body,
-        );
-        const responseBody = SuperAgentsResponseBody.parse(
-          log.ai_provider_request_log.response_body,
-        );
-
-        const messages = extractMessagesFromRequestData(
-          saRequestData as
-            | ChatCompletionRequestData
-            | StreamChatCompletionRequestData
-            | ResponsesRequestData,
-        );
-        const input = formatMessagesForExtraction(messages);
-        const output = extractOutputFromResponseBody(responseBody);
-
-        // Extract constraints from the AI provider's request body directly
-        // This includes response_format with full JSON schema
-        const constraints = extractRequestConstraints(
-          log.ai_provider_request_log.request_body as
-            | ChatCompletionRequestData
-            | StreamChatCompletionRequestData
-            | ResponsesRequestData,
-        );
-
-        return `${input}${constraints}\n\nAssistant: ${output}`;
+        return exampleOf(log);
       } catch (e) {
         error(
           `[REFLECTION] Failed to extract conversation from log ${log.id}:`,
@@ -499,33 +525,7 @@ async function generateExampleConversationsWithEvaluations(
 
   for (const log of logs) {
     try {
-      const saRequestData = produceSuperAgentsRequestData(
-        log.ai_provider_request_log.method,
-        log.ai_provider_request_log.request_url,
-        {},
-        log.ai_provider_request_log.request_body,
-      );
-      const responseBody = SuperAgentsResponseBody.parse(
-        log.ai_provider_request_log.response_body,
-      );
-
-      const messages = extractMessagesFromRequestData(
-        saRequestData as
-          | ChatCompletionRequestData
-          | StreamChatCompletionRequestData
-          | ResponsesRequestData,
-      );
-      const input = formatMessagesForExtraction(messages);
-      const output = extractOutputFromResponseBody(responseBody);
-
-      const constraints = extractRequestConstraints(
-        log.ai_provider_request_log.request_body as
-          | ChatCompletionRequestData
-          | StreamChatCompletionRequestData
-          | ResponsesRequestData,
-      );
-
-      let conversation = `${input}${constraints}\n\nAssistant: ${output}`;
+      let conversation = exampleOf(log);
 
       // Fetch evaluation runs for this log
       const evaluationRuns =
@@ -576,7 +576,7 @@ async function autoGenerateSystemPromptsForCluster(
   minRequestsPerArm: number,
   _numberOfSystemPrompts: number,
   skill: Skill,
-  agentDescription: string,
+  agent: Agent,
 ) {
   // Attempt to acquire reflection lock
   const lockTime = await acquireReflectionLock(
@@ -733,10 +733,13 @@ async function autoGenerateSystemPromptsForCluster(
       bestArm.params.system_prompt,
       bestExamples,
       worstExamples,
-      agentDescription,
+      agent.description,
       skill.description,
       skill.allowed_template_variables,
       userDataStorageConnector,
+      // Its own reflection model and effort, and -- for a decision agent --
+      // a writer that knows it is writing a policy.
+      agent,
     );
 
     // Perform reflection: update arms with new prompt and reset stats
@@ -776,14 +779,8 @@ export async function autoGenerateSystemPromptsForSkill(
   logsStorageConnector: LogsStorageConnector,
   skill: Skill,
 ) {
-  // Only attempt to optimize for specific endpoints
-  if (
-    !(
-      functionName === FunctionName.CHAT_COMPLETE ||
-      functionName === FunctionName.STREAM_CHAT_COMPLETE ||
-      functionName === FunctionName.CREATE_MODEL_RESPONSE
-    )
-  ) {
+  // Only requests a skill's system prompt shapes are optimized on
+  if (!isOptimizedFunction(functionName)) {
     return;
   }
 
@@ -818,7 +815,7 @@ export async function autoGenerateSystemPromptsForSkill(
       minRequestsPerArm,
       1, // Always use 1 system prompt
       skill,
-      agent.description,
+      agent,
     );
   }
 }

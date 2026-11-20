@@ -36,6 +36,7 @@ const EvaluationMethodNames: Record<EvaluationMethodName, string> = {
   [EvaluationMethodName.KNOWLEDGE_RETENTION]: 'Knowledge Retention',
   [EvaluationMethodName.CONVERSATION_COMPLETENESS]: 'Conversation Completeness',
   [EvaluationMethodName.LATENCY]: 'Latency',
+  [EvaluationMethodName.DECISION_CORRECTNESS]: 'Decision Correctness',
 };
 
 export function ArmDetailView(): ReactElement {

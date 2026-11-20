@@ -98,12 +98,15 @@ const millisecondsOf = (seconds: number | null): number | null =>
 
 /** What each role is called on the page, and what it is for. */
 /**
- * The roles that still mean something for a decision agent: the ones that
- * route its requests. The optimizer leaves decision skills alone, so nothing
- * judges them, writes their prompts or generates their evaluations.
+ * The roles that mean something for a decision agent: all but evaluation
+ * generation. Its skills are routed, judged and given policies like any
+ * other's, but the one method that judges a decision -- decision correctness
+ * -- has nothing for a model to fill in when it is created.
  */
 const DECISION_AGENT_ROLES: ReadonlySet<InternalRole> = new Set([
+  'system_prompt_reflection',
   'embedding',
+  'judge',
   'skill_arbiter',
   'intent_compaction',
 ]);

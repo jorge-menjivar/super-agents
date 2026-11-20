@@ -67,6 +67,7 @@ const METHOD_COLORS: Record<string, string> = {
   hallucination: 'rgb(220, 38, 38)', // red
   custom: 'rgb(148, 163, 184)', // gray
   latency: 'rgb(6, 182, 212)', // cyan
+  decision_correctness: 'rgb(132, 204, 22)', // lime
 };
 
 export function SkillPerformanceChart({

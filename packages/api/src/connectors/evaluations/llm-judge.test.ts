@@ -4,6 +4,7 @@ import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { AIProvider } from '@shared/types/constants';
 import OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 const mockContext = createMockContext();
 
@@ -1090,6 +1091,90 @@ describe('LLM Judge', () => {
       expect(withExtraCriteria('Conversation:\nhi', '   ')).toBe(
         'Conversation:\nhi',
       );
+    });
+  });
+
+  // For a method that computes its own score from what the judge says, such
+  // as decision correctness: the same call, in the caller's shape.
+  describe('answer', () => {
+    const Answers = z.object({
+      answers: z.array(
+        z.object({ question_id: z.string(), answer: z.string() }),
+      ),
+    });
+    const prompt = { systemPrompt: 'Judge.', userPrompt: 'Answer these.' };
+
+    it("asks in the caller's shape, and reads the answer with it", async () => {
+      mockParse.mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                answers: [{ question_id: 'withhold', answer: 'true' }],
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await llmJudge.answer(prompt, {
+        name: 'decision_judgment',
+        schema: Answers,
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        value: { answers: [{ question_id: 'withhold', answer: 'true' }] },
+      });
+      const [request] = mockParse.mock.calls[0];
+      expect(request.response_format.json_schema.name).toBe(
+        'decision_judgment',
+      );
+      expect(request.messages).toEqual([
+        { role: 'system', content: 'Judge.' },
+        { role: 'user', content: 'Answer these.' },
+      ]);
+    });
+
+    it('retries an answer it cannot read, bypassing the cache', async () => {
+      mockParse
+        .mockResolvedValueOnce({
+          choices: [
+            { message: { content: '# Answers\n\nThe first one is yes.' } },
+          ],
+        })
+        .mockResolvedValueOnce({
+          choices: [{ message: { content: JSON.stringify({ answers: [] }) } }],
+        });
+
+      const pending = llmJudge.answer(prompt, {
+        name: 'decision_judgment',
+        schema: Answers,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(await pending).toEqual({ ok: true, value: { answers: [] } });
+      const configs = vi
+        .mocked(mockWithOptions)
+        .mock.calls.map((call) =>
+          JSON.parse(call[0].defaultHeaders['sa-config']),
+        );
+      expect(configs[1].force_refresh).toBe(true);
+    });
+
+    it("is the fallback result when the judge can't be asked", async () => {
+      mockParse.mockRejectedValue(new Error('Bad request'));
+
+      const result = await llmJudge.answer(prompt, {
+        name: 'decision_judgment',
+        schema: Answers,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.fallback.score).toBe(0.5);
+        expect(result.fallback.metadata?.fallback).toBe(true);
+      }
     });
   });
 });

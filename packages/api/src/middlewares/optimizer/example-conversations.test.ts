@@ -214,4 +214,74 @@ describe('generateExampleConversations', () => {
 
     expect(conversations).toEqual([]);
   });
+
+  // A decision model's log has no conversation and no reply: it is what the
+  // model was asked, and the probabilities it answered with.
+  describe('a System One log', () => {
+    const POLICY = 'Withhold anything that helps someone into a home.';
+    const decisionLog = (responseBody: unknown): CompletedLog =>
+      ({
+        ...conversationLog(),
+        function_name: FunctionName.SYSTEM_ONE,
+        request_body: {
+          state: 'Try the third window from the left.',
+          questions: {
+            withhold: {
+              type: 'noul',
+              instructions: 'Should the client be kept from receiving this?',
+            },
+          },
+        },
+        ai_provider_request_log: {
+          ...conversationLog().ai_provider_request_log,
+          function_name: FunctionName.SYSTEM_ONE,
+          request_url: 'https://console.nace.ai/v1/systemone',
+          request_body: {
+            state: 'Try the third window from the left.',
+            questions: {
+              withhold: {
+                type: 'noul',
+                instructions: `${POLICY}\n\nShould the client be kept from receiving this?`,
+              },
+            },
+          },
+          response_body: responseBody,
+        },
+      }) as unknown as CompletedLog;
+
+    it('renders the state, the questions and the answers', () => {
+      const [example] = generateExampleConversations([
+        decisionLog({
+          model: 'drex-latest',
+          answers: { withhold: { type: 'noul', noul: 0.82 } },
+        }),
+      ]);
+
+      expect(example).toContain('Try the third window from the left.');
+      expect(example).toContain('### withhold (yes or no)');
+      expect(example).toContain(
+        'Instructions: Should the client be kept from receiving this?',
+      );
+      expect(example).toContain('- withhold: P(yes) = 0.82');
+    });
+
+    // The writer is improving the policy: shown it inside every question,
+    // it would read its own words back as the caller's.
+    it("reads the caller's questions, not the policy folded into them", () => {
+      const [example] = generateExampleConversations([
+        decisionLog({
+          model: 'drex-latest',
+          answers: { withhold: { type: 'noul', noul: 0.82 } },
+        }),
+      ]);
+
+      expect(example).not.toContain(POLICY);
+    });
+
+    it('drops one without answers', () => {
+      expect(
+        generateExampleConversations([decisionLog({ error: 'down' })]),
+      ).toEqual([]);
+    });
+  });
 });

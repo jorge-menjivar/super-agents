@@ -1,4 +1,5 @@
 import { conversationCompletenessEvaluationConnector } from '@api/connectors/evaluations/conversation-completeness';
+import { decisionCorrectnessEvaluationConnector } from '@api/connectors/evaluations/decision-correctness';
 import { knowledgeRetentionEvaluationConnector } from '@api/connectors/evaluations/knowledge-retention';
 import { latencyEvaluationConnector } from '@api/connectors/evaluations/latency/latency';
 import { taskCompletionEvaluationConnector } from '@api/connectors/evaluations/task-completion';
@@ -11,6 +12,7 @@ import { z } from 'zod';
 /** The connectors registered in `v1/index.ts`. */
 const connectors: EvaluationMethodConnector[] = [
   conversationCompletenessEvaluationConnector,
+  decisionCorrectnessEvaluationConnector,
   knowledgeRetentionEvaluationConnector,
   latencyEvaluationConnector,
   taskCompletionEvaluationConnector,

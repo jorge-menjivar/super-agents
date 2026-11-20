@@ -18,7 +18,10 @@ import {
 } from '@shared/types/data/skill';
 import { SkillEventType } from '@shared/types/data/skill-event';
 import { SkillOptimizationEvaluationUpdateParams } from '@shared/types/data/skill-optimization-evaluation';
-import { EvaluationMethodName } from '@shared/types/evaluations';
+import {
+  EvaluationMethodName,
+  evaluationMethodAppliesTo,
+} from '@shared/types/evaluations';
 import { Hono } from 'hono';
 import { z } from 'zod';
 
@@ -624,6 +627,28 @@ export const skillsRouter = new Hono<AppEnv>()
         }
 
         const agent = agents[0];
+
+        // A method judges what a skill's requests are, and reads nothing in
+        // a request of the other kind: a conversation judge in a decision
+        // model's probabilities, or the decision judge in a conversation.
+        const inapplicable = methods.filter((method) => {
+          const evaluationConnector = evaluationConnectorsMap[method];
+          return (
+            evaluationConnector &&
+            !evaluationMethodAppliesTo(
+              evaluationConnector.getDetails(),
+              agent.agent_type,
+            )
+          );
+        });
+        if (inapplicable.length > 0) {
+          return c.json(
+            {
+              error: `${inapplicable.join(', ')} cannot judge the skills of ${agent.agent_type === 'decision' ? 'a decision agent' : 'an LLM agent'}`,
+            },
+            400,
+          );
+        }
 
         const createParamsPromises = methods.map(async (method) => {
           const evaluationConnector = evaluationConnectorsMap[method];

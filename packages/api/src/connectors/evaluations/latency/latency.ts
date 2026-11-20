@@ -8,6 +8,8 @@ import { evaluateLog } from './service/evaluate';
 
 const methodConfig: EvaluationMethodDetails = {
   method: EvaluationMethodName.LATENCY,
+  // Timing is all it reads, and every request has that.
+  agent_types: ['text', 'decision'],
   name: 'Latency',
   description:
     "Evaluates the provider's time to first token (TTFT) for streaming responses, or its total response time for non-streaming",

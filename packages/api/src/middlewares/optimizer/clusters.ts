@@ -6,11 +6,12 @@ import type { AppContext } from '@api/types/hono';
 import { calculateDistance, kMeansClustering } from '@api/utils/math';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import { error, info, success } from '@shared/console-logging';
-import { FunctionName } from '@shared/types/api/request';
+import type { FunctionName } from '@shared/types/api/request';
 import type { Log, Skill } from '@shared/types/data';
 import { SkillEventType } from '@shared/types/data/skill-event';
 import type { SkillOptimizationClusterCreateParams } from '@shared/types/data/skill-optimization-cluster';
 import type { ClusterResult } from '@shared/utils/math';
+import { isOptimizedFunction } from '@shared/utils/optimized-functions';
 
 function extractEmbeddings(logs: Log[]): number[][] {
   // Filter logs to only include those with embeddings
@@ -58,14 +59,8 @@ export async function autoClusterSkill(
   logsStorageConnector: LogsStorageConnector,
   skill: Skill,
 ) {
-  // Only attempt to optimize for specific endpoints
-  if (
-    !(
-      functionName === FunctionName.CHAT_COMPLETE ||
-      functionName === FunctionName.STREAM_CHAT_COMPLETE ||
-      functionName === FunctionName.CREATE_MODEL_RESPONSE
-    )
-  ) {
+  // Only requests a skill's system prompt shapes are optimized on
+  if (!isOptimizedFunction(functionName)) {
     return;
   }
 

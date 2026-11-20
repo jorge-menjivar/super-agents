@@ -1,7 +1,10 @@
 import { handleGenerateArms } from '@api/optimization/skill-optimizations';
 import { describeSkillForRequest } from '@api/optimization/utils/describe-skill';
 import { generateEvaluationCreateParams } from '@api/optimization/utils/evaluations';
-import type { UserDataStorageConnector } from '@api/types/connector';
+import type {
+  EvaluationMethodConnector,
+  UserDataStorageConnector,
+} from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { resolveEmbeddingModelConfig } from '@api/utils/evaluation-model-resolver';
 import { judgeLogsWithoutRuns } from '@api/utils/super-agents/judge-backlog';
@@ -12,6 +15,7 @@ import {
 import { FunctionName } from '@shared/types/api/request';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import type { Agent, Skill } from '@shared/types/data';
+import type { AgentType } from '@shared/types/data/agent';
 import { SkillEventType } from '@shared/types/data/skill-event';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
@@ -44,7 +48,26 @@ const agent = {
   id: '123e4567-e89b-12d3-a456-426614174000',
   name: 'helper',
   description: 'Helps guests of the restaurant with anything they need.',
+  agent_type: 'text',
 } as Agent;
+
+/** An evaluation method as the connectors map holds it: whose skills it judges. */
+const methodFor = (...agent_types: AgentType[]) =>
+  ({
+    getDetails: () => ({ agent_types }),
+  }) as unknown as EvaluationMethodConnector;
+/** A method for each kind of agent, and one for both. */
+const methods = {
+  latency: methodFor('text', 'decision'),
+  task_completion: methodFor('text'),
+  decision_correctness: methodFor('decision'),
+};
+/** The methods creation generated evaluations for, in any order. */
+const generatedMethods = () =>
+  vi
+    .mocked(generateEvaluationCreateParams)
+    .mock.calls.map((call) => call[3])
+    .sort();
 const request = {
   functionName: FunctionName.CHAT_COMPLETE,
   requestBody: {
@@ -201,11 +224,13 @@ describe('createSkillForRequest', () => {
   });
 
   describe('from a System One request', () => {
-    // With an evaluation method on offer, so that generating none is a choice.
+    // With methods for both kinds of agent on offer, so the ones a skill
+    // gets are a choice.
     const withEvaluations = {
       get: (key: string) =>
-        key === 'evaluation_connectors_map' ? { latency: {} } : undefined,
+        key === 'evaluation_connectors_map' ? methods : undefined,
     } as unknown as AppContext;
+    const decisionAgent = { ...agent, agent_type: 'decision' } as Agent;
     const systemOne = {
       functionName: FunctionName.SYSTEM_ONE,
       requestBody: {
@@ -227,12 +252,13 @@ describe('createSkillForRequest', () => {
     });
 
     // Its prompt is a policy the questions are asked under: seeded with the
-    // questions, every question would be asked twice.
-    it('starts the decision skill with an empty policy, and arms from it', async () => {
+    // questions, every question would be asked twice. Empty, it passes them
+    // through until the optimizer writes one.
+    it('starts the decision skill optimized, with an empty policy, and arms from it', async () => {
       await createSkillForRequest(
         withEvaluations,
         connector as unknown as UserDataStorageConnector,
-        agent,
+        decisionAgent,
         systemOne,
         'Should the client be kept from receiving this?',
         embedding,
@@ -241,7 +267,7 @@ describe('createSkillForRequest', () => {
 
       expect(connector.createSkill).toHaveBeenCalledWith(
         withEvaluations,
-        expect.objectContaining({ seed_system_prompt: '', optimize: false }),
+        expect.objectContaining({ seed_system_prompt: '', optimize: true }),
       );
       expect(handleGenerateArms).toHaveBeenCalledWith(
         withEvaluations,
@@ -250,19 +276,21 @@ describe('createSkillForRequest', () => {
       );
     });
 
-    it('generates no evaluations for it, as it does for a chat skill', async () => {
+    it('generates the evaluations that judge a decision, and none that judge a conversation', async () => {
       await createSkillForRequest(
         withEvaluations,
         connector as unknown as UserDataStorageConnector,
-        agent,
+        decisionAgent,
         systemOne,
         'Should the client be kept from receiving this?',
         embedding,
         [],
       );
       await settle();
-      expect(generateEvaluationCreateParams).not.toHaveBeenCalled();
+      expect(generatedMethods()).toEqual(['decision_correctness', 'latency']);
+    });
 
+    it('gives a chat skill the judges of a conversation, and not the decision one', async () => {
       await createSkillForRequest(
         withEvaluations,
         connector as unknown as UserDataStorageConnector,
@@ -273,7 +301,7 @@ describe('createSkillForRequest', () => {
         [],
       );
       await settle();
-      expect(generateEvaluationCreateParams).toHaveBeenCalledTimes(1);
+      expect(generatedMethods()).toEqual(['latency', 'task_completion']);
     });
   });
 });
@@ -382,7 +410,7 @@ describe('adoptDefaultModels', () => {
   const cWithMethods = {
     get: (key: string) =>
       key === 'evaluation_connectors_map'
-        ? { latency: {}, task_completion: {} }
+        ? { latency: methods.latency, task_completion: methods.task_completion }
         : undefined,
   } as unknown as AppContext;
 
@@ -426,7 +454,7 @@ describe('adoptDefaultModels', () => {
         cWithMethods,
         connector,
         undefined,
-        { latency: {}, task_completion: {} },
+        { latency: methods.latency, task_completion: methods.task_completion },
         expect.objectContaining({ id: 'bare' }),
         created,
       );

@@ -147,8 +147,8 @@ afterEach(() => {
 });
 
 describe('checkAndRegenerateEvaluationsEarly', () => {
-  it('ignores a request that is not a chat completion', async () => {
-    // Embeddings and the like carry no conversation to learn from.
+  it('ignores a request no system prompt shapes', async () => {
+    // Embeddings and the like have no prompt to learn one for.
     const { userData, logsStore } = connectors([[storedSkill()]]);
 
     await run(userData, logsStore, FunctionName.EMBED);
@@ -156,11 +156,13 @@ describe('checkAndRegenerateEvaluationsEarly', () => {
     expect(userData.getSkills).not.toHaveBeenCalled();
   });
 
-  it('runs for each conversational endpoint', async () => {
+  it('runs for each endpoint a skill is optimized on', async () => {
     for (const functionName of [
       FunctionName.CHAT_COMPLETE,
       FunctionName.STREAM_CHAT_COMPLETE,
       FunctionName.CREATE_MODEL_RESPONSE,
+      // A decision skill's policy is learned the same way.
+      FunctionName.SYSTEM_ONE,
     ]) {
       const { userData, logsStore } = connectors([[]]);
       await run(userData, logsStore, functionName);

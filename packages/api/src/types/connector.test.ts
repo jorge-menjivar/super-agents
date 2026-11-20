@@ -251,6 +251,7 @@ describe('Connector Interfaces', () => {
           method: EvaluationMethodName.CONVERSATION_COMPLETENESS,
           name: 'Test',
           description: 'Test method',
+          agent_types: ['text'],
         }),
         evaluateLog: async (_c, evaluation, _log, _storageConnector) => ({
           evaluation_id: evaluation.id,

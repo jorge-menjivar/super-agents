@@ -57,10 +57,34 @@ export const EvaluationInputSchema = z.object({
 
 export type EvaluationInput = z.infer<typeof EvaluationInputSchema>;
 
+/** The two messages a judging call sends. */
+export interface JudgePrompt {
+  systemPrompt: string;
+  userPrompt: string;
+}
+
+/**
+ * What a judging call in a caller's own shape came back with: the answer, or
+ * -- when the judge could not be asked or never answered readably -- the
+ * neutral fallback result `evaluate` would have returned, saying why.
+ */
+export type JudgeAnswer<T> =
+  | { ok: true; value: T }
+  | { ok: false; fallback: LLMJudgeResult };
+
 /**
  * LLM Judge interface - generic evaluation with templates/prompts
  */
 export interface LLMJudge {
   evaluate(input: EvaluationInput): Promise<LLMJudgeResult>;
+  /**
+   * Asks the judge for an answer in `format`'s shape rather than a score:
+   * for a method that computes the score itself from what the judge says.
+   * Retried, cached and budgeted exactly as `evaluate` is.
+   */
+  answer<T>(
+    prompt: JudgePrompt,
+    format: { name: string; schema: z.ZodType<T> },
+  ): Promise<JudgeAnswer<T>>;
   config: LLMJudgeConfig;
 }

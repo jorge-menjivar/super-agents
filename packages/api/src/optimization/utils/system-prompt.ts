@@ -221,6 +221,38 @@ ${description}
  * A skill the gateway created keeps the prompt its caller sent. Regeneration
  * should improve on that prompt, not write another from the description.
  */
+/**
+ * A decision skill's system prompt is not a chat prompt, and a writer that
+ * has only ever written chat prompts writes a persona and an output format
+ * for a model that has no use for either. This is what it is told instead.
+ */
+const DECISION_POLICY_BRIEF = `This skill is served by a decision model, not a chat model. A decision model reads some material (the "state") and answers questions about it -- yes or no, one of several options, or a level on a scale -- with a probability for each answer, in a single forward pass. It writes nothing.
+
+What you write is the skill's policy. It is placed ahead of every question's own instructions, so the model reads it before each question it answers. A good policy:
+- defines the terms the questions turn on, and says where their lines fall, with concrete cases on either side of each line
+- states the rules and priorities a careful expert would apply to this material, including which one wins when two conflict
+- is plain, declarative text: no persona, no greeting, no instructions to think step by step, and nothing about output format, JSON or tools -- the model answers with probabilities whatever the policy says
+- does not repeat the questions, which are asked after it in their own words`;
+
+function isDecisionAgent(agent: Agent | null): boolean {
+  return agent?.agent_type === 'decision';
+}
+
+function getPolicySeederSystemPrompt() {
+  return 'You are an expert at writing the policies decision models answer under: the rules a model that answers questions with probabilities reads before each question.';
+}
+
+function getPolicySeederFirstMessage(description: string) {
+  return `
+Given the following description of a skill, write the policy its decision model answers its questions under.
+
+${DECISION_POLICY_BRIEF}
+
+Skill description:
+${description}
+`;
+}
+
 function getSeedPromptSection(seedSystemPrompt?: string | null) {
   if (!seedSystemPrompt) {
     return '';
@@ -269,21 +301,77 @@ Return the system prompt in a JSON object.`;
   return firstMessage;
 }
 
+/**
+ * The policy writer's brief, from a decision skill's first real requests.
+ * Each example is a decision log: the state, the questions, and how the model
+ * answered them before it had a policy.
+ */
+function getPolicySeederWithContextFirstMessage(
+  agentDescription: string,
+  skillDescription: string,
+  examples: string[],
+  allowedTemplateVariables?: string[],
+  seedSystemPrompt?: string | null,
+) {
+  const examplesSection =
+    examples.length === 0
+      ? ''
+      : `
+
+Here are real requests this skill was sent, with how the model answered them:
+
+${examples.join('\n\n---\n\n')}
+
+Read them for what the material looks like, which cases are close calls, and where a rule would settle them.`;
+  const seedSection = seedSystemPrompt
+    ? `
+
+The developer's own policy for this skill is below. Keep its intent and its rules, and improve on it rather than replacing it:
+
+${seedSystemPrompt}`
+    : '';
+
+  return `
+I am building an agent with the following purpose:
+
+Agent Description:
+${agentDescription}
+
+The agent has a specific skill it needs to perform:
+
+Skill Description:
+${skillDescription}
+
+${DECISION_POLICY_BRIEF}
+${examplesSection}
+${getTemplateVariablesSection(allowedTemplateVariables)}${seedSection}
+
+Write the policy that will let the model answer this skill's questions as a careful expert would.
+
+Return the policy in a JSON object, as its system prompt.`;
+}
+
 export async function generateSeedSystemPromptForSkill(
   c: AppContext,
   skill: Skill,
   connector: UserDataStorageConnector,
 ) {
+  const agent = await agentById(c, connector, skill.agent_id);
   const { client, saConfig, model, reasoningEffort } =
     await createSystemPromptClient(
       c,
       'system-prompt-seeding',
       connector,
-      await agentById(c, connector, skill.agent_id),
+      agent,
     );
 
-  const systemPrompt = getSeederSystemPrompt();
-  const userMessage = getSeederFirstMessage(skill.description);
+  const decision = isDecisionAgent(agent);
+  const systemPrompt = decision
+    ? getPolicySeederSystemPrompt()
+    : getSeederSystemPrompt();
+  const userMessage = decision
+    ? getPolicySeederFirstMessage(skill.description)
+    : getSeederFirstMessage(skill.description);
 
   return await callSystemPromptAPI(
     client,
@@ -315,15 +403,27 @@ export async function generateSeedSystemPromptWithContext(
       agent,
     );
 
-  const systemPrompt = getSeederSystemPrompt();
-  const userMessage = getSeederWithContextFirstMessage(
-    agentDescription,
-    skillDescription,
-    examples,
-    responseFormat,
-    allowedTemplateVariables,
-    seedSystemPrompt,
-  );
+  const decision = isDecisionAgent(agent);
+  const systemPrompt = decision
+    ? getPolicySeederSystemPrompt()
+    : getSeederSystemPrompt();
+  // A decision model has no response format to design a prompt around.
+  const userMessage = decision
+    ? getPolicySeederWithContextFirstMessage(
+        agentDescription,
+        skillDescription,
+        examples,
+        allowedTemplateVariables,
+        seedSystemPrompt,
+      )
+    : getSeederWithContextFirstMessage(
+        agentDescription,
+        skillDescription,
+        examples,
+        responseFormat,
+        allowedTemplateVariables,
+        seedSystemPrompt,
+      );
 
   return await callSystemPromptAPI(
     client,
@@ -398,6 +498,61 @@ Return the new system prompt as JSON.`;
   return firstMessage;
 }
 
+function getPolicyReflectorSystemPrompt() {
+  return `You are an expert at refining the policies decision models answer under, from how their answers scored. You will receive:
+1. The current policy
+2. The request it answered best (what to preserve)
+3. Recent requests it answered worst, each with an evaluation saying what the right answers were (what to fix)
+
+Your task: write an improved policy that keeps what led to the best answers and settles the cases the worst ones got wrong.`;
+}
+
+function getPolicyReflectorFirstMessage(
+  currentPolicy: string,
+  bestExamples: string[],
+  worstExamples: string[],
+  agentDescription: string,
+  skillDescription: string,
+  allowedTemplateVariables: string[],
+) {
+  return `# Context
+
+Agent: ${agentDescription}
+Skill: ${skillDescription}
+
+${DECISION_POLICY_BRIEF}
+
+# Current Policy
+'''
+${currentPolicy || '(none yet: the questions have been asked as they came)'}
+'''
+
+# Performance Analysis
+
+## Best Answered (Preserve What Decided These)
+'''
+${bestExamples.join('\n\n---\n\n')}
+'''
+
+## Recent Failures (Settle These Cases)
+
+Each request below shows the model's answers, then the evaluation: the right answer to each question, how much of its probability the model put there, and why that answer is right.
+
+'''
+${worstExamples.join('\n\n---\n\n')}
+'''
+
+# Instructions
+
+Write an improved policy that:
+1. **Preserves** the definitions and rules that led to the best answers
+2. **Settles** each case the failures got wrong: where the model leaned the wrong way, add or sharpen the definition, threshold or rule that decides that case, in general terms that cover its neighbours too
+3. **Stays** a policy: declarative, about the material and what the questions turn on, never about format
+${getTemplateVariablesSection(allowedTemplateVariables)}
+
+Return the new policy as JSON, as its system prompt.`;
+}
+
 export async function generateReflectiveSystemPromptForSkill(
   c: AppContext,
   currentSystemPrompt: string,
@@ -418,8 +573,13 @@ export async function generateReflectiveSystemPromptForSkill(
       agent,
     );
 
-  const systemPrompt = getReflectorSystemPrompt();
-  const userMessage = getReflectorFirstMessage(
+  const decision = isDecisionAgent(agent);
+  const systemPrompt = decision
+    ? getPolicyReflectorSystemPrompt()
+    : getReflectorSystemPrompt();
+  const userMessage = (
+    decision ? getPolicyReflectorFirstMessage : getReflectorFirstMessage
+  )(
     currentSystemPrompt,
     bestExamples,
     worstExamples,
