@@ -217,18 +217,89 @@ function Decision({
   );
 }
 
+/**
+ * The policy a skill asked its questions under: its served system prompt,
+ * which the gateway put ahead of every question's instructions. A skill the
+ * gateway created starts with none, and says so rather than drawing nothing.
+ */
+export interface DecisionPolicy {
+  /** The policy as served; empty or null when the skill has none yet. */
+  text: string | null;
+  /** Which configuration served it, when the page knows. */
+  servedBy?: string | null;
+}
+
+function Policy({
+  logId,
+  policy,
+}: {
+  logId: string;
+  policy: DecisionPolicy;
+}): React.ReactElement {
+  const servedBy = policy.servedBy && (
+    <Badge
+      variant="outline"
+      className="text-xs text-muted-foreground"
+      title="The configuration the optimizer served this request with, whose policy was put ahead of every question"
+    >
+      {policy.servedBy}
+    </Badge>
+  );
+  if (!policy.text) {
+    return (
+      <section
+        aria-label="Policy"
+        className="rounded-md border bg-card p-3 space-y-1"
+      >
+        <div className="flex flex-row items-center gap-2">
+          <div className="text-sm font-medium">Policy</div>
+          {servedBy}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          None yet. The questions reached the model as the caller wrote them;
+          the optimizer writes a policy from the skill's first requests.
+        </p>
+      </section>
+    );
+  }
+  return (
+    <section aria-label="Policy">
+      <GenericViewer
+        path={`${logId}-policy`}
+        language="text"
+        defaultValue={policy.text}
+        readOnly
+      >
+        <div className="flex flex-row items-center gap-2">
+          <div className="text-sm font-normal">Policy</div>
+          {servedBy}
+        </div>
+      </GenericViewer>
+    </section>
+  );
+}
+
 export function SystemOneAPIViewer({
   logId,
   saRequestBody,
   saResponseBody,
+  policy,
 }: {
   logId: string;
+  /**
+   * The request. Given the caller's own, with a `policy` beside it, each
+   * question reads as the caller wrote it rather than with the policy
+   * repeated ahead of every one.
+   */
   saRequestBody: SystemOneRequestBody;
-  saResponseBody: SystemOneResponseBody;
+  /** Null while the model has not answered. */
+  saResponseBody: SystemOneResponseBody | null;
+  /** The policy the questions were asked under; no panel when absent. */
+  policy?: DecisionPolicy;
 }): React.ReactElement {
   const { state } = saRequestBody;
   const questions = saRequestBody.questions ?? {};
-  const answers = saResponseBody.answers ?? {};
+  const answers = saResponseBody?.answers ?? {};
   // Every question asked, then any answer to a question this log no longer
   // has, so nothing the model said goes undrawn.
   const ids = [
@@ -238,6 +309,7 @@ export function SystemOneAPIViewer({
 
   return (
     <div className="flex flex-col gap-3">
+      {policy && <Policy logId={logId} policy={policy} />}
       <GenericViewer
         path={`${logId}-state`}
         language={typeof state === 'string' ? 'text' : 'json'}

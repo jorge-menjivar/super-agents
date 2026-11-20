@@ -1,11 +1,20 @@
 'use client';
 
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
+import { FunctionName } from '@shared/types/api/request/function-name';
+import {
+  SystemOneRequestBody,
+  SystemOneResponseBody,
+} from '@shared/types/api/routes/system-one-api';
 import { PrettyAIProvider } from '@shared/types/constants';
 import type { LogSummary } from '@shared/types/data/log';
 import { produceSuperAgentsRequestData } from '@shared/utils/sa-request-data';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
 import { CompletionViewer } from '@web/components/agents/skills/logs/components/completion-viewer';
+import {
+  type DecisionPolicy,
+  SystemOneAPIViewer,
+} from '@web/components/agents/skills/logs/components/completion-viewer/system-one-api';
 import {
   type EvaluationDetail,
   EvaluationResults,
@@ -356,6 +365,35 @@ export function LogDetailsView(): ReactElement {
     () => (selectedLog ? readServedConfiguration(selectedLog.metadata) : null),
     [selectedLog],
   );
+
+  // A decision model's log has no conversation to draw: it is the material
+  // and the questions, read as the caller sent them, and the answers. The
+  // body the provider got has the skill's policy folded into every question,
+  // so the policy is drawn once, on its own, instead.
+  const decisionExchange = useMemo(() => {
+    if (selectedLog?.function_name !== FunctionName.SYSTEM_ONE) return null;
+    const sent = selectedLog.ai_provider_request_log;
+    const asked = SystemOneRequestBody.safeParse(
+      selectedLog.request_body ?? sent?.request_body,
+    );
+    if (!asked.success) return null;
+    const answered = SystemOneResponseBody.safeParse(sent?.response_body);
+    // The policy is the served system prompt, and there is one to speak of
+    // only when the optimizer served the request with a configuration.
+    const policy: DecisionPolicy | undefined = servedConfiguration
+      ? {
+          text: selectedLog.served_system_prompt,
+          servedBy: clusterName
+            ? `partition ${clusterName} · configuration ${servedConfiguration.name}`
+            : `configuration ${servedConfiguration.name}`,
+        }
+      : undefined;
+    return {
+      request: asked.data,
+      response: answered.success ? answered.data : null,
+      policy,
+    };
+  }, [selectedLog, servedConfiguration, clusterName]);
 
   // Where the prompt that reached the provider came from: the configuration
   // the optimizer pulled, or the client, when the skill substituted nothing.
@@ -709,7 +747,7 @@ export function LogDetailsView(): ReactElement {
                 ref={conversation.contentRef}
                 className="flex flex-col w-full min-w-0 gap-4 h-fit"
               >
-                {selectedLog && originalSystemPrompt && (
+                {selectedLog && !decisionExchange && originalSystemPrompt && (
                   <GenericViewer
                     path={`${selectedLog.id}-original-system-prompt`}
                     language={'text'}
@@ -736,7 +774,7 @@ export function LogDetailsView(): ReactElement {
                     </div>
                   </GenericViewer>
                 )}
-                {selectedLog && selectedSystemPrompt && (
+                {selectedLog && !decisionExchange && selectedSystemPrompt && (
                   <GenericViewer
                     path={`${selectedLog.id}-served-system-prompt`}
                     language={'text'}
@@ -767,7 +805,15 @@ export function LogDetailsView(): ReactElement {
                     </div>
                   </GenericViewer>
                 )}
-                {selectedLog && saRequestData && (
+                {selectedLog && decisionExchange && (
+                  <SystemOneAPIViewer
+                    logId={selectedLog.id}
+                    saRequestBody={decisionExchange.request}
+                    saResponseBody={decisionExchange.response}
+                    policy={decisionExchange.policy}
+                  />
+                )}
+                {selectedLog && !decisionExchange && saRequestData && (
                   <MessagesView
                     logId={selectedLog.id}
                     saRequestData={saRequestData}
