@@ -532,6 +532,150 @@ describe('Ollama Provider Tests', () => {
     });
   });
 
+  describe('Thinking', () => {
+    // What Ollama really sends: reasoning in a field of its own, beside the
+    // content rather than inside it.
+    const thinkingResponse = {
+      id: 'chatcmpl-871',
+      object: 'chat.completion',
+      created: 1234567890,
+      model: 'glm-5.3-flash',
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: ChatCompletionMessageRole.ASSISTANT,
+            content: '391',
+            reasoning: '17 * 23 = 340 + 51',
+          },
+          finish_reason: ChatCompletionFinishReason.STOP,
+        },
+      ],
+    };
+
+    function streamChunkWith(delta: Record<string, unknown>): string {
+      return `data: ${JSON.stringify({
+        id: 'chatcmpl-871',
+        object: 'chat.completion.chunk',
+        created: 1234567890,
+        model: 'glm-5.3-flash',
+        choices: [{ delta, index: 0, finish_reason: null }],
+      })}`;
+    }
+
+    it("re-expresses a whole answer's reasoning as a thinking block", () => {
+      const result = ollamaChatCompleteResponseTransform(
+        thinkingResponse as unknown as Record<string, unknown>,
+        200,
+        new Headers(),
+        false,
+        {} as SuperAgentsRequestData,
+      ) as ChatCompletionResponseBody;
+
+      expect(result.choices[0].message.content_blocks).toEqual([
+        { type: 'thinking', thinking: '17 * 23 = 340 + 51' },
+        { type: 'text', text: '391' },
+      ]);
+      // The field Ollama put it in stays, for a client already reading it.
+      expect(
+        (result.choices[0].message as { reasoning?: string }).reasoning,
+      ).toBe('17 * 23 = 340 + 51');
+    });
+
+    // Strict compliance is on unless a request turns it off, and no ordinary
+    // client turns it off, so honouring it here would mean no real request
+    // ever keeps its thinking.
+    it('keeps the thinking of a strictly OpenAI-compliant answer too', () => {
+      const result = ollamaChatCompleteResponseTransform(
+        thinkingResponse as unknown as Record<string, unknown>,
+        200,
+        new Headers(),
+        true,
+        {} as SuperAgentsRequestData,
+      ) as ChatCompletionResponseBody;
+
+      expect(result.choices[0].message.content_blocks).toEqual([
+        { type: 'thinking', thinking: '17 * 23 = 340 + 51' },
+        { type: 'text', text: '391' },
+      ]);
+      expect(
+        (result.choices[0].message as { reasoning?: string }).reasoning,
+      ).toBe('17 * 23 = 340 + 51');
+    });
+
+    it('leaves a message without reasoning alone', () => {
+      const result = ollamaChatCompleteResponseTransform(
+        {
+          ...thinkingResponse,
+          choices: [
+            {
+              ...thinkingResponse.choices[0],
+              message: {
+                role: ChatCompletionMessageRole.ASSISTANT,
+                content: '391',
+              },
+            },
+          ],
+        } as unknown as Record<string, unknown>,
+        200,
+        new Headers(),
+        false,
+        {} as SuperAgentsRequestData,
+      ) as ChatCompletionResponseBody;
+
+      expect(result.choices[0].message.content_blocks).toBeUndefined();
+    });
+
+    it('re-expresses a streamed reasoning delta as a thinking block', () => {
+      const result = ollamaChatCompleteStreamChunkTransform(
+        streamChunkWith({ role: 'assistant', content: '', reasoning: '17' }),
+        'fallback-id',
+        {},
+        false,
+        {} as SuperAgentsRequestData,
+      ) as string;
+
+      const chunk = JSON.parse(result.replace(/^data: /, '').trim());
+      expect(chunk.choices[0].delta.content_blocks).toEqual([
+        { index: 0, delta: { thinking: '17' } },
+      ]);
+      expect(chunk.choices[0].delta.reasoning).toBe('17');
+    });
+
+    it('streams the content beside the thinking when a delta carries both', () => {
+      const result = ollamaChatCompleteStreamChunkTransform(
+        streamChunkWith({ content: '391', reasoning: ' = 391' }),
+        'fallback-id',
+        {},
+        false,
+        {} as SuperAgentsRequestData,
+      ) as string;
+
+      const chunk = JSON.parse(result.replace(/^data: /, '').trim());
+      expect(chunk.choices[0].delta.content_blocks).toEqual([
+        { index: 0, delta: { thinking: ' = 391' } },
+        { index: 0, delta: { text: '391' } },
+      ]);
+    });
+
+    it('keeps the thinking of a strictly OpenAI-compliant stream too', () => {
+      const result = ollamaChatCompleteStreamChunkTransform(
+        streamChunkWith({ content: '391', reasoning: ' = 391' }),
+        'fallback-id',
+        {},
+        true,
+        {} as SuperAgentsRequestData,
+      ) as string;
+
+      const chunk = JSON.parse(result.replace(/^data: /, '').trim());
+      expect(chunk.choices[0].delta.content_blocks).toEqual([
+        { index: 0, delta: { thinking: ' = 391' } },
+        { index: 0, delta: { text: '391' } },
+      ]);
+      expect(chunk.choices[0].delta.reasoning).toBe(' = 391');
+    });
+  });
+
   describe('Embed Response Transform', () => {
     it('should transform successful embed response', () => {
       const ollamaResponse: OllamaEmbedResponse = {
