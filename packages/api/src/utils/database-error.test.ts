@@ -94,6 +94,91 @@ describe('parseDatabaseError', () => {
     });
   });
 
+  /**
+   * A trigger refusing a write -- a model of the wrong type in a slot, a type
+   * changed while in use -- used to reach the client as a 500 on both
+   * backends. Its own message says what is wrong with the request.
+   */
+  describe('trigger refusals', () => {
+    it('makes a SQLite trigger refusal a 400 in its own words', () => {
+      const error = Object.assign(
+        new Error(
+          'SQLITE_CONSTRAINT: judge_model_id must reference a text model',
+        ),
+        {
+          code: 'SQLITE_CONSTRAINT',
+          extendedCode: 'SQLITE_CONSTRAINT_TRIGGER',
+        },
+      );
+
+      expect(parseDatabaseError(error)).toEqual({
+        message: 'judge_model_id must reference a text model',
+        code: 'P0001',
+        internalStatusCode: 400,
+        statusCode: 400,
+      });
+    });
+
+    it('knows one by its message when the extended code is lost', () => {
+      const result = parseDatabaseError(
+        new Error(
+          'SQLITE_CONSTRAINT: cannot change model_type while the model is referenced',
+        ),
+      );
+
+      expect(result.statusCode).toBe(400);
+      expect(result.message).toBe(
+        'cannot change model_type while the model is referenced',
+      );
+    });
+
+    // The built-in constraint failures keep their own codes and messages.
+    it('leaves the built-in constraint failures alone', () => {
+      const result = parseDatabaseError(
+        Object.assign(
+          new Error('SQLITE_CONSTRAINT: UNIQUE constraint failed: agents.name'),
+          { extendedCode: 'SQLITE_CONSTRAINT_UNIQUE' },
+        ),
+      );
+
+      expect(result.code).toBe('23505');
+      expect(result.statusCode).toBe(409);
+    });
+
+    // As the Supabase connector throws it: the status line, then the body.
+    it('finds the refusal in what the Supabase connector throws', () => {
+      const result = parseDatabaseError(
+        new Error(
+          `Failed to update in PostgREST:\n400 - Bad Request\n${JSON.stringify({
+            code: 'P0001',
+            details: null,
+            hint: null,
+            message: 'judge_model_id must reference a text model',
+          })}`,
+        ),
+      );
+
+      expect(result.statusCode).toBe(400);
+      expect(result.message).toBe('judge_model_id must reference a text model');
+    });
+
+    it('makes a Postgres RAISE EXCEPTION a 400 in its own words', () => {
+      const pgError = {
+        code: 'P0001',
+        message: 'judge_model_id must reference a text model',
+        details: null,
+        hint: null,
+      };
+
+      const result = parseDatabaseError(
+        new Error(`PostgREST error: ${JSON.stringify(pgError)}`),
+      );
+
+      expect(result.statusCode).toBe(400);
+      expect(result.message).toBe('judge_model_id must reference a text model');
+    });
+  });
+
   describe('SQLite / libSQL constraint errors', () => {
     // The libSQL backend reports constraint violations in SQLite's wording,
     // which shares nothing with PostgreSQL's SQLSTATE codes. Before these were
