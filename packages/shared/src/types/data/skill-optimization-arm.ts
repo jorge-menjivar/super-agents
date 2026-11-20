@@ -25,7 +25,15 @@ export type SkillOptimizationBaseArmParams = z.infer<
 export const SkillOptimizationArmParams = SkillOptimizationBaseArmParams.extend(
   {
     model_id: z.uuid(),
-    system_prompt: z.string().min(1),
+    /**
+     * The prompt the arm serves its skill with. Empty is no prompt: the arm
+     * adds nothing, and the caller's own instructions go through as they
+     * came. That is how a decision skill the gateway creates starts -- its
+     * system prompt is a policy its questions are asked under, and nobody
+     * has written one yet -- so an empty prompt has to be one an arm can be
+     * stored with and read back.
+     */
+    system_prompt: z.string(),
     // stop: z.array(z.string()),
     // seed: z.number().int(),
     // Additional provider-specific parameters can be added here

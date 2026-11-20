@@ -376,7 +376,10 @@ async function validateTargetConfiguration(
       saTargetConfiguration = {
         ai_provider: apiKeyRecord.ai_provider as AIProvider,
         model: model.model_name,
-        system_prompt: renderedSystemPrompt,
+        // An arm with an empty prompt has none to serve -- a new decision
+        // skill, before its policy is written -- and null is how a
+        // configuration says it has no system prompt.
+        system_prompt: renderedSystemPrompt || null,
         temperature: getRandomValueInRange(
           optimalArm.params.temperature_min,
           optimalArm.params.temperature_max,
