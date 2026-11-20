@@ -761,6 +761,25 @@ System prompts evolve through two distinct phases:
    - Uses contrastive examples (high-scoring vs low-scoring logs)
    - Conservative algorithm: best arm never modified
 
+### What repairs itself
+
+A skill's optimization state is generated in steps, and a step cut short --
+a crash, a provider down, a bug since fixed -- would otherwise stay broken
+until someone noticed. Each of these is repaired by the traffic that finds
+it, without anyone asking:
+
+- **No clusters.** The first optimized request creates them, and their arms
+  (`validateTargetConfiguration`).
+- **A cluster without arms**, in a skill that has models.
+  `repairClusterArms` (`optimization/arm-repair.ts`) generates that cluster's
+  arms from the skill's seed and leaves the other clusters, and what they
+  have learned, alone. The request that found it is served by the nearest
+  cluster that has arms while the repair runs, and waits for it only when no
+  cluster has any. Concurrent requests share one repair.
+- **An auto-created skill without evaluations.** Early regeneration creates
+  them from its first real requests, and adding default models to the agent
+  does too (`adoptDefaultModels`).
+
 ### Internal Skills
 
 The system uses special auto-generated skills in the `super-agents` agent (defined in `SA_SKILLS` constant):
