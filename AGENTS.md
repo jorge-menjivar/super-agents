@@ -524,6 +524,8 @@ comes back stamped with its provider, and only the two vendors' errors differ.
   `optimize` off and gets no evaluations, realtime evaluations skip System One
   logs, clustering and prompt regeneration only ever ran for conversational
   requests, and an arm's sampling settings are not applied to one.
+- **A reviewer can be one.** An agent whose default models are decision
+  models reviews through System One; see "Hooks and Response Review".
 
 ## Authentication
 
@@ -651,6 +653,16 @@ reviewer is shown the client's request and the response as material and
 answers with a verdict -- `allow`, `deny`, or `replace` with text of its own,
 which rewrites every choice and drops any tool call. An answer that is not a
 verdict fails open, with the error on the hook log.
+
+**A reviewer on decision models** writes no verdict, so it is asked through
+System One instead (see "Decision models"): `reviewerHookFor` sets the hook's
+`api: 'system_one'` when every one of the reviewer's default models is a
+decision model, and the review goes to `/v1/agents/<reviewer>/systemone` as a
+single yes-or-no question, `withhold`, about the request and the response.
+The reviewer's skill puts its system prompt -- the policy -- ahead of that
+question. A probability at `DECISION_REVIEW_THRESHOLD` (one half) or above
+denies, and the hook's reason is that probability and the model that gave it.
+It cannot `replace`; an answer without `withhold` fails open like any other.
 
 **Configured on the agent, not in the header.** `agents.reviewer_agent_id`
 names the reviewer of every response the agent gives; `reviewerHookFor`

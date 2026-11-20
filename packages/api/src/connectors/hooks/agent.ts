@@ -18,6 +18,10 @@ import {
   type CompletionResponseBody,
 } from '@shared/types/api/routes/completions-api/response';
 import {
+  type SystemOneRequestBody,
+  SystemOneResponseBody,
+} from '@shared/types/api/routes/system-one-api';
+import {
   type Hook,
   HookAgentProviderConfig,
   type HookInput,
@@ -41,6 +45,13 @@ import { z } from 'zod';
  * `reviewing_trace_id`, which is what the configuration injector checks
  * before adding an agent's reviewer, so two agents that review each other
  * cannot loop.
+ *
+ * A reviewer whose models are decision models (`config.api: 'system_one'`)
+ * cannot write a verdict. It is asked through System One instead -- one
+ * yes-or-no question, whether the material should be withheld -- and the
+ * probability it answers with is the verdict: at `DECISION_REVIEW_THRESHOLD`
+ * or above, it is withheld. Its policy is still its skill's system prompt,
+ * which the gateway puts ahead of the question.
  */
 
 /** Longer than this and the client has waited long enough. */
@@ -232,6 +243,128 @@ function reviewerBaseUrl(
   return `${getApiUrl(c)}/v1/agents/${agent}${skill}`;
 }
 
+/**
+ * The probability of "withhold it" at which a decision-model reviewer's
+ * answer withholds the material. One half -- the side the model leans to --
+ * is the single gate the Jev guardrail study reports as its primary
+ * operating point (arXiv 2611.08845).
+ */
+export const DECISION_REVIEW_THRESHOLD = 0.5;
+
+/** The id the decision-model reviewer's one question is asked under. */
+export const WITHHOLD_QUESTION = 'withhold';
+
+/**
+ * What a decision-model reviewer is asked: whether the material should be
+ * withheld, about the request -- and, for an output hook, the response the
+ * client would receive. The reviewer's skill puts its policy ahead of this.
+ */
+export function decisionReviewRequest(
+  hook: Hook,
+  input: HookInput,
+): SystemOneRequestBody {
+  const request = describeRequest(input.requestData);
+  if (hook.type === HookType.INPUT_HOOK) {
+    return {
+      state: { request },
+      questions: {
+        [WITHHOLD_QUESTION]: {
+          type: 'noul',
+          instructions:
+            'A client sent an AI agent this request. Should the agent be kept from answering it?',
+          criteria: {
+            true: 'The agent should not answer it.',
+            false: 'The agent may answer it.',
+          },
+        },
+      },
+    };
+  }
+  return {
+    state: {
+      request,
+      response:
+        input.responseBody === undefined
+          ? null
+          : describeResponse(input.responseBody),
+    },
+    questions: {
+      [WITHHOLD_QUESTION]: {
+        type: 'noul',
+        instructions:
+          'An AI agent is about to return this response to its client. Should the client be kept from receiving it?',
+        criteria: {
+          true: 'Withhold the response from the client.',
+          false: 'The client may receive the response.',
+        },
+      },
+    },
+  };
+}
+
+/**
+ * The hook result a decision-model reviewer's answer amounts to, or an
+ * error result when it did not answer the question it was asked -- which,
+ * like a verdict that is not one, fails open unless the hook fails closed.
+ */
+export function resultOfDecision(
+  config: HookAgentProviderConfig,
+  body: unknown,
+): HookResult {
+  const parsed = SystemOneResponseBody.safeParse(body);
+  const answer = parsed.success
+    ? parsed.data.answers[WITHHOLD_QUESTION]
+    : undefined;
+  if (!parsed.success || answer?.type !== 'noul') {
+    return {
+      deny_request: false,
+      request_body_override: undefined,
+      response_body_override: undefined,
+      skipped: false,
+      error: `The reviewer "${config.agent_name}" did not answer whether to withhold`,
+    };
+  }
+  return {
+    deny_request: answer.noul >= DECISION_REVIEW_THRESHOLD,
+    request_body_override: undefined,
+    response_body_override: undefined,
+    skipped: false,
+    reason: `P(withhold) = ${answer.noul.toFixed(2)}, by ${parsed.data.model}`,
+  };
+}
+
+/** Asks a decision-model reviewer, through its agent's System One route. */
+async function reviewByDecision(
+  c: AppContext,
+  hook: Hook,
+  input: HookInput,
+  config: HookAgentProviderConfig,
+  reviewConfig: Record<string, unknown>,
+): Promise<HookResult> {
+  const response = await fetch(`${reviewerBaseUrl(c, config)}/systemone`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getInternalApiKey(c)}`,
+      'Content-Type': 'application/json',
+      'sa-config': JSON.stringify(reviewConfig),
+    },
+    body: JSON.stringify(decisionReviewRequest(hook, input)),
+    signal: AbortSignal.timeout(config.timeout_ms ?? DEFAULT_REVIEW_TIMEOUT_MS),
+  });
+  // Thrown, as the chat client throws on a failed call: the hooks middleware
+  // records it on the hook log and fails open or closed as the hook says.
+  if (!response.ok) {
+    throw new Error(
+      `The reviewer "${config.agent_name}" answered ${response.status}: ${(await response.text()).slice(0, 500)}`,
+    );
+  }
+  const result = resultOfDecision(config, await response.json());
+  if (result.error) {
+    warn(`[HOOKS] ${result.error} (hook "${hook.id}")`);
+  }
+  return result;
+}
+
 export const agentHooksConnector: HooksConnector = {
   name: HookProvider.AGENT,
 
@@ -242,13 +375,6 @@ export const agentHooksConnector: HooksConnector = {
   ): Promise<HookResult> => {
     const config = HookAgentProviderConfig.parse(hook.config);
     const saConfig = c.get('sa_config');
-
-    const client = new OpenAI({
-      apiKey: getInternalApiKey(c),
-      baseURL: reviewerBaseUrl(c, config),
-      timeout: config.timeout_ms ?? DEFAULT_REVIEW_TIMEOUT_MS,
-      maxRetries: 0,
-    });
     // The review shares the reviewed request's trace, so the two logs sit
     // together, and names that request as the one it reviews.
     const reviewConfig = {
@@ -257,6 +383,17 @@ export const agentHooksConnector: HooksConnector = {
       ...(saConfig.span_id ? { parent_span_id: saConfig.span_id } : {}),
       reviewing_trace_id: saConfig.trace_id,
     };
+
+    if (config.api === 'system_one') {
+      return reviewByDecision(c, hook, input, config, reviewConfig);
+    }
+
+    const client = new OpenAI({
+      apiKey: getInternalApiKey(c),
+      baseURL: reviewerBaseUrl(c, config),
+      timeout: config.timeout_ms ?? DEFAULT_REVIEW_TIMEOUT_MS,
+      maxRetries: 0,
+    });
 
     const completion = await client
       .withOptions({

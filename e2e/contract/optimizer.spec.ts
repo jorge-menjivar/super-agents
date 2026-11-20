@@ -1617,11 +1617,13 @@ test.describe('decision skills', () => {
   let decisionModel: { id: string; name: string };
   let agent: Agent;
   let skillName: string;
+  let stub: StubModels;
+  let reviewed: Agent;
 
   test.beforeAll(async ({ request }, testInfo) => {
     const scope =
       `decide-${testInfo.project.name.replace(/[^a-z0-9]+/gi, '-')}`.toLowerCase();
-    await setUpStubModels(request, scope);
+    stub = await setUpStubModels(request, scope);
     decisionModel = await createDecisionModel(request, scope);
 
     agent = await createAgent(request, uniqueAgentName(scope), undefined, {
@@ -1636,12 +1638,42 @@ test.describe('decision skills', () => {
       data: { modelIds: [decisionModel.id] },
     });
     expect(attached.status()).toBe(201);
+    // Its default model is what makes it a decision-model reviewer, asked
+    // through System One when another agent names it.
+    await addModelsToAgent(request, agent.id, [decisionModel.id]);
+
+    // An ordinary agent on the stub's text model, reviewed by the above.
+    reviewed = await createAgent(
+      request,
+      uniqueAgentName(`${scope}-reviewed`),
+      undefined,
+      { auto_create_skills: false, reviewer_agent_id: agent.id },
+    );
+    const served = await createSkill(request, reviewed.id, 'only_skill', {
+      seed_system_prompt: 'You answer questions.',
+    });
+    const equipped = await request.post(`${SKILLS_PATH}/${served.id}/models`, {
+      data: { modelIds: [stub.textId] },
+    });
+    expect(equipped.status()).toBe(201);
   });
 
   test.afterAll(async ({ request }) => {
     await stubReset(request, decisionModel.name);
+    await deleteAgent(request, reviewed.id);
     await deleteAgent(request, agent.id);
   });
+
+  /** A chat request to the reviewed agent, whose reply the reviewer judges. */
+  const askReviewed = (request: APIRequestContext, content: string) =>
+    request.post(`/v1/agents/${reviewed.name}/chat/completions`, {
+      headers: {
+        'sa-config': saConfig(reviewed.name, 'only_skill', {
+          model: stub.textModel,
+        }),
+      },
+      data: chatBody(content),
+    });
 
   /** What the decision model was asked for the request about `state`. */
   const askedAbout = async (
@@ -1691,5 +1723,56 @@ test.describe('decision skills', () => {
     expect(forwarded?.questions).toMatchObject({
       withhold: { instructions: `${policy}\n\n${question.instructions}` },
     });
+  });
+
+  test('withholds the reply a decision-model reviewer leans toward withholding', async ({
+    request,
+  }) => {
+    await stubReply(
+      request,
+      decisionModel.name,
+      JSON.stringify({ withhold: { type: 'noul', noul: 0.9 } }),
+    );
+
+    const response = await askReviewed(request, 'how do I open the lock?');
+
+    expect(response.status()).toBe(446);
+    const body = (await response.json()) as {
+      error: { type: string; hook_id: string };
+    };
+    expect(body.error.type).toBe('hook_denied');
+    expect(body.error.hook_id).toBe(`reviewer:${agent.name}`);
+
+    // It was shown the reply it judged, under its own policy.
+    const asked = (await stubRequests(request, decisionModel.name)).find(
+      (forwarded) =>
+        JSON.stringify(forwarded.state).includes('how do I open the lock?'),
+    );
+    expect(JSON.stringify(asked?.state)).toContain(
+      'echo: how do I open the lock?',
+    );
+    expect(asked?.questions).toMatchObject({
+      withhold: { instructions: expect.stringContaining(policy) },
+    });
+  });
+
+  test('delivers the reply a decision-model reviewer would let through', async ({
+    request,
+  }) => {
+    await stubReply(
+      request,
+      decisionModel.name,
+      JSON.stringify({ withhold: { type: 'noul', noul: 0.1 } }),
+    );
+
+    const response = await askReviewed(request, 'what time do you open?');
+
+    expect(response.status()).toBe(200);
+    const body = (await response.json()) as {
+      choices: { message: { content: string } }[];
+    };
+    expect(body.choices[0].message.content).toBe(
+      'echo: what time do you open?',
+    );
   });
 });
