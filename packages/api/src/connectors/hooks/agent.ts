@@ -23,6 +23,7 @@ import {
   SystemOneResponseBody,
 } from '@shared/types/api/routes/system-one-api';
 import {
+  DEFAULT_WITHHOLD_THRESHOLD,
   type Hook,
   HookAgentProviderConfig,
   type HookInput,
@@ -50,9 +51,10 @@ import { z } from 'zod';
  * A reviewer whose models are decision models (`config.api: 'system_one'`)
  * cannot write a verdict. It is asked through System One instead -- one
  * yes-or-no question, whether the material should be withheld -- and the
- * probability it answers with is the verdict: at `DECISION_REVIEW_THRESHOLD`
- * or above, it is withheld. Its policy is still its skill's system prompt,
- * which the gateway puts ahead of the question.
+ * probability it answers with is the verdict: at the reviewed agent's
+ * `options.review.withhold_threshold` or above -- `DEFAULT_WITHHOLD_THRESHOLD`
+ * unless it says otherwise -- it is withheld. Its policy is still its skill's
+ * system prompt, which the gateway puts ahead of the question.
  */
 
 /** Longer than this and the client has waited long enough. */
@@ -244,14 +246,6 @@ function reviewerBaseUrl(
   return `${getApiUrl(c)}/v1/agents/${agent}${skill}`;
 }
 
-/**
- * The probability of "withhold it" at which a decision-model reviewer's
- * answer withholds the material. One half -- the side the model leans to --
- * is the single gate the Jev guardrail study reports as its primary
- * operating point (arXiv 2611.08845).
- */
-export const DECISION_REVIEW_THRESHOLD = 0.5;
-
 /** The id the decision-model reviewer's one question is asked under. */
 export const WITHHOLD_QUESTION = 'withhold';
 
@@ -332,7 +326,8 @@ export function resultOfDecision(
     };
   }
   return {
-    deny_request: answer.noul >= DECISION_REVIEW_THRESHOLD,
+    deny_request:
+      answer.noul >= (config.withhold_threshold ?? DEFAULT_WITHHOLD_THRESHOLD),
     request_body_override: undefined,
     response_body_override: undefined,
     skipped: false,

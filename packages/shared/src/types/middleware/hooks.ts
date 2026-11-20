@@ -51,7 +51,21 @@ export const HookAgentProviderConfig = z.object({
    * material should be withheld.
    */
   api: z.enum(['chat_completions', 'system_one']).optional(),
+  /**
+   * Through System One: the probability of "withhold" at or above which the
+   * material is withheld. `DEFAULT_WITHHOLD_THRESHOLD` when absent.
+   */
+  withhold_threshold: z.number().min(0).max(1).optional(),
 });
+
+/**
+ * The probability of "withhold" at or above which a decision-model reviewer
+ * withholds the material, unless the reviewed agent says otherwise
+ * (`options.review.withhold_threshold`). One half -- the side the model leans
+ * to -- is the single gate the Jev guardrail study reports as its primary
+ * operating point (arXiv 2611.08845).
+ */
+export const DEFAULT_WITHHOLD_THRESHOLD = 0.5;
 
 export type HookAgentProviderConfig = z.infer<typeof HookAgentProviderConfig>;
 

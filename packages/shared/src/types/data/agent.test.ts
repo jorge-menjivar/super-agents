@@ -3,6 +3,7 @@ import {
   Agent,
   AgentCreateParams,
   AgentOptions,
+  AgentOptionsUpdate,
   AgentQueryParams,
   AgentUpdateParams,
   mergeAgentOptions,
@@ -880,6 +881,42 @@ describe('agent type', () => {
   it('can be updated on its own', () => {
     expect(AgentUpdateParams.parse({ agent_type: 'decision' })).toEqual({
       agent_type: 'decision',
+    });
+  });
+});
+
+describe('withhold threshold', () => {
+  it('inherits the default until the agent says otherwise', () => {
+    expect(AgentOptions.parse({}).review.withhold_threshold).toBeNull();
+  });
+
+  it('is a probability', () => {
+    for (const threshold of [-0.1, 1.5]) {
+      expect(
+        AgentOptionsUpdate.safeParse({
+          review: { withhold_threshold: threshold },
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      AgentOptionsUpdate.parse({ review: { withhold_threshold: 0 } }),
+    ).toEqual({ review: { withhold_threshold: 0 } });
+  });
+
+  // Changing how long the review may take leaves how sure it must be alone.
+  it('survives a patch to the review timeout', () => {
+    const current = AgentOptions.parse({
+      review: { timeout_ms: 30_000, withhold_threshold: 0.8 },
+    });
+
+    const merged = mergeAgentOptions(
+      current,
+      AgentOptionsUpdate.parse({ review: { timeout_ms: 60_000 } }),
+    );
+
+    expect(merged.review).toEqual({
+      timeout_ms: 60_000,
+      withhold_threshold: 0.8,
     });
   });
 });

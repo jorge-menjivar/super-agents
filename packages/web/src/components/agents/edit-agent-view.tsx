@@ -10,6 +10,7 @@ import {
   MAX_INTERNAL_TIMEOUT_MS,
   MIN_INTERNAL_TIMEOUT_MS,
 } from '@shared/types/data/system-settings';
+import { DEFAULT_WITHHOLD_THRESHOLD } from '@shared/types/middleware/hooks';
 import { sanitizeUserInput } from '@shared/utils/security';
 import { useParams } from '@tanstack/react-router';
 import { Button } from '@web/components/ui/button';
@@ -169,6 +170,12 @@ const EditAgentFormSchema = z
     // Null means responses go unreviewed.
     reviewer_agent_id: z.string().nullable(),
     review_timeout_seconds: TimeoutSecondsSchema,
+    // A probability; null means DEFAULT_WITHHOLD_THRESHOLD.
+    review_withhold_threshold: z
+      .number({ error: 'Enter a number between 0 and 1, or leave it empty' })
+      .min(0, 'Must be between 0 and 1')
+      .max(1, 'Must be between 0 and 1')
+      .nullable(),
     review_fail_closed: z.boolean(),
     review_expose_reason: z.boolean(),
   })
@@ -234,8 +241,12 @@ function roleUpdates(data: EditAgentFormData): AgentUpdateParams {
     options: {
       ...options,
       // Not one of the roles: the reviewer is another agent with models of
-      // its own, so all the reviewed agent says is how long it may take.
-      review: { timeout_ms: millisecondsOf(data.review_timeout_seconds) },
+      // its own, so what the reviewed agent says is how long it may take and,
+      // of a decision agent, how sure it must be.
+      review: {
+        timeout_ms: millisecondsOf(data.review_timeout_seconds),
+        withhold_threshold: data.review_withhold_threshold,
+      },
     },
   } as AgentUpdateParams;
 }
@@ -308,10 +319,18 @@ export function EditAgentView(): React.ReactElement {
       judge_max_tokens: null,
       reviewer_agent_id: null,
       review_timeout_seconds: null,
+      review_withhold_threshold: null,
       review_fail_closed: false,
       review_expose_reason: false,
     },
   });
+
+  // Whether the chosen reviewer answers with a probability, which is what
+  // the withhold threshold is about.
+  const chosenReviewerId = form.watch('reviewer_agent_id');
+  const reviewerIsDecisionAgent =
+    reviewerOptions.find((agent) => agent.id === chosenReviewerId)
+      ?.agent_type === 'decision';
 
   // Update form defaults when agent data is available
   React.useEffect(() => {
@@ -328,6 +347,8 @@ export function EditAgentView(): React.ReactElement {
           selectedAgent.options.review.timeout_ms === null
             ? null
             : selectedAgent.options.review.timeout_ms / 1000,
+        review_withhold_threshold:
+          selectedAgent.options.review.withhold_threshold,
         review_fail_closed: selectedAgent.review_fail_closed,
         review_expose_reason: selectedAgent.review_expose_reason,
       });
@@ -864,6 +885,47 @@ export function EditAgentView(): React.ReactElement {
                         </FormItem>
                       )}
                     />
+                    {/* Only a decision agent answers with a probability. */}
+                    {reviewerIsDecisionAgent && (
+                      <FormField
+                        control={form.control}
+                        name="review_withhold_threshold"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Withhold at</FormLabel>
+                            <FormDescription>
+                              The reviewer is a decision agent: it answers with
+                              the probability that a response should be
+                              withheld, and at this or above, it is. Lower
+                              withholds more, and lets less harm through; higher
+                              refuses less. Empty is{' '}
+                              {DEFAULT_WITHHOLD_THRESHOLD}.
+                            </FormDescription>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.05"
+                                min={0}
+                                max={1}
+                                placeholder={String(DEFAULT_WITHHOLD_THRESHOLD)}
+                                name={field.name}
+                                value={field.value ?? ''}
+                                onBlur={field.onBlur}
+                                onChange={(e) =>
+                                  field.onChange(
+                                    e.target.value === ''
+                                      ? null
+                                      : e.target.valueAsNumber,
+                                  )
+                                }
+                                disabled={isUpdating}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
                     <FormField
                       control={form.control}
                       name="review_fail_closed"

@@ -112,6 +112,51 @@ describe('reviewerHookFor', () => {
     expect(hook?.config).toEqual({ agent_name: 'guard', api: 'system_one' });
   });
 
+  // How sure the reviewer must be is the reviewed agent's to say.
+  it("carries the agent's withhold threshold to a decision agent", async () => {
+    const hook = await reviewerHookFor(
+      c,
+      connector([{ ...guard, agent_type: 'decision' }]),
+      {
+        ...agent,
+        options: AgentOptions.parse({ review: { withhold_threshold: 0.8 } }),
+      },
+      {},
+    );
+
+    expect(hook?.config).toEqual({
+      agent_name: 'guard',
+      api: 'system_one',
+      withhold_threshold: 0.8,
+    });
+  });
+
+  it('leaves the threshold out where it means nothing', async () => {
+    const options = AgentOptions.parse({
+      review: { withhold_threshold: 0.8 },
+    });
+    // A reviewer that writes its verdict has no probability to compare.
+    const writer = await reviewerHookFor(
+      c,
+      connector([guard]),
+      { ...agent, options },
+      {},
+    );
+    expect(writer?.config).toEqual({ agent_name: 'guard' });
+
+    // And an agent with no opinion follows the default.
+    const inherited = await reviewerHookFor(
+      c,
+      connector([{ ...guard, agent_type: 'decision' }]),
+      agent,
+      {},
+    );
+    expect(inherited?.config).toEqual({
+      agent_name: 'guard',
+      api: 'system_one',
+    });
+  });
+
   it('asks an LLM agent through chat completions', async () => {
     const hook = await reviewerHookFor(c, connector([guard]), agent, {});
 

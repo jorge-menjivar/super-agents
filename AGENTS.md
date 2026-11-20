@@ -704,8 +704,11 @@ System One instead (see "Decision models"): `reviewerHookFor` sets the hook's
 the review goes to `/v1/agents/<reviewer>/systemone` as a
 single yes-or-no question, `withhold`, about the request and the response.
 The reviewer's skill puts its system prompt -- the policy -- ahead of that
-question. A probability at `DECISION_REVIEW_THRESHOLD` (one half) or above
-denies, and the hook's reason is that probability and the model that gave it.
+question. A probability at the reviewed agent's
+`options.review.withhold_threshold` or above denies -- one half,
+`DEFAULT_WITHHOLD_THRESHOLD`, unless it says otherwise, since how sure a
+reviewer must be is the reviewed agent's call, its clients being the ones a
+wrong verdict reaches -- and the hook's reason is that probability and the model that gave it.
 It cannot `replace`; an answer without `withhold` fails open like any other.
 An image the reviewed request carries inline is shown to the reviewer as an
 image (`connectors/hooks/review-images.ts`): PNG and JPEG data URLs become
@@ -788,12 +791,14 @@ database does real work for them, keeping a named model from being deleted
 out from under an agent (`ON DELETE SET NULL`, where system settings
 `RESTRICT`) and keeping an embedding model out of a text slot. Everything
 else -- each role's timeout, its reasoning effort, the judge's token budget,
-and the wait the agent allows its reviewer -- means nothing to the database,
+and what the agent asks of its reviewer -- means nothing to the database,
 so it lives in one `options` JSON column typed by `AgentOptions` in
 `@shared/types/data/agent`. That last one, `review`, is not a role at all:
-the reviewer is another agent with models of its own, so a timeout is the
-only thing there is to say about it here. Adding a setting like it is a
-change to that schema and the agent form, and to neither backend's.
+the reviewer is another agent with models of its own, so what the agent says
+about it is its own terms -- how long its client waits for the verdict, and,
+of a decision-agent reviewer, how sure it must be to withhold
+(`withhold_threshold`). Adding a setting like these is a change to that
+schema and the agent form, and to neither backend's.
 
 **Null there means inherit**, not "send nothing": an agent with no opinion
 reads exactly as the settings say and keeps following them as they change,

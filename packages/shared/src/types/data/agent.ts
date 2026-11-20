@@ -14,6 +14,8 @@ const TimeoutValue = z
   .max(MAX_INTERNAL_TIMEOUT_MS)
   .nullable();
 const EffortValue = z.enum(ReasoningEffort).nullable();
+/** A probability, at or above which a decision-model reviewer withholds. */
+const WithholdThresholdValue = z.number().min(0).max(1).nullable();
 const TokenBudgetValue = z.int().positive().nullable();
 
 // On the row every field reads as null when it was never written; in a patch
@@ -59,12 +61,24 @@ export const AgentOptions = z
     skill_arbiter: textRole(),
     intent_compaction: textRole(),
     /**
-     * How long this agent's reviewer may take, the client waiting throughout.
-     * Not a model the agent names -- the reviewer is another agent, with its
-     * own skill and its own models -- so time is the only thing to say about
-     * it here. Null is `DEFAULT_REVIEW_TIMEOUT_MS`.
+     * What this agent asks of its reviewer. Not a model the agent names -- the
+     * reviewer is another agent, with its own skill and its own models -- but
+     * the agent's own terms, because it is the agent's client who waits and
+     * the agent's client who is affected when the reviewer is wrong:
+     *
+     * - `timeout_ms`, how long the review may take, the client waiting
+     *   throughout. Null is `DEFAULT_REVIEW_TIMEOUT_MS`.
+     * - `withhold_threshold`, for a decision-agent reviewer, how sure it must
+     *   be before a response is withheld: a probability. Lower withholds
+     *   more and lets through less harm; higher refuses less. Null is
+     *   `DEFAULT_WITHHOLD_THRESHOLD`.
      */
-    review: z.object({ timeout_ms: TimeoutOverride }).prefault({}),
+    review: z
+      .object({
+        timeout_ms: TimeoutOverride,
+        withhold_threshold: WithholdThresholdValue.default(null),
+      })
+      .prefault({}),
   })
   .prefault({});
 export type AgentOptions = z.infer<typeof AgentOptions>;
@@ -91,7 +105,12 @@ export const AgentOptionsUpdate = z.object({
     .optional(),
   skill_arbiter: textRoleUpdate(),
   intent_compaction: textRoleUpdate(),
-  review: z.object({ timeout_ms: TimeoutValue.optional() }).optional(),
+  review: z
+    .object({
+      timeout_ms: TimeoutValue.optional(),
+      withhold_threshold: WithholdThresholdValue.optional(),
+    })
+    .optional(),
 });
 export type AgentOptionsUpdate = z.infer<typeof AgentOptionsUpdate>;
 

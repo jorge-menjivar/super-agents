@@ -1,6 +1,5 @@
 import {
   agentHooksConnector,
-  DECISION_REVIEW_THRESHOLD,
   DEFAULT_REVIEW_TIMEOUT_MS,
   decisionReviewRequest,
   parseVerdict,
@@ -16,6 +15,7 @@ import type { ChatCompletionResponseBody } from '@shared/types/api/routes/chat-c
 import type { CompletionResponseBody } from '@shared/types/api/routes/completions-api/response';
 import { CacheMode } from '@shared/types/middleware/cache';
 import {
+  DEFAULT_WITHHOLD_THRESHOLD,
   type Hook,
   type HookInput,
   HookProvider,
@@ -517,7 +517,7 @@ describe('agentHooksConnector, for a decision-model reviewer', () => {
   });
 
   it('withholds at the threshold and above, and says how sure it was', async () => {
-    fetchMock.mockResolvedValue(answered(DECISION_REVIEW_THRESHOLD));
+    fetchMock.mockResolvedValue(answered(DEFAULT_WITHHOLD_THRESHOLD));
     const atThreshold = await agentHooksConnector.executeHook(
       context({}),
       decisionHook,
@@ -539,6 +539,32 @@ describe('agentHooksConnector, for a decision-model reviewer', () => {
     );
     expect(below.deny_request).toBe(false);
     expect(below.reason).toBe('P(withhold) = 0.49, by jev-1.13.0');
+  });
+
+  it("withholds at the reviewed agent's threshold when it has one", async () => {
+    const strict = {
+      ...decisionHook,
+      config: {
+        agent_name: 'guard',
+        api: 'system_one' as const,
+        withhold_threshold: 0.3,
+      },
+    };
+    fetchMock.mockResolvedValue(answered(0.35));
+    expect(
+      (await agentHooksConnector.executeHook(context({}), strict, input))
+        .deny_request,
+    ).toBe(true);
+
+    const lenient = {
+      ...strict,
+      config: { ...strict.config, withhold_threshold: 0.95 },
+    };
+    fetchMock.mockResolvedValue(answered(0.9));
+    expect(
+      (await agentHooksConnector.executeHook(context({}), lenient, input))
+        .deny_request,
+    ).toBe(false);
   });
 
   it("names the reviewer's skill in the path when the hook does", async () => {
