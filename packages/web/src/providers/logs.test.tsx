@@ -176,6 +176,23 @@ const neighborsOfLog2 = (params: unknown): Promise<Log[]> => {
   return Promise.resolve(asLogs([{ id: 'log-2', start_time: 2000 }]));
 };
 
+/** Agent-wide, and nothing else: how many logs the whole agent has. */
+function AgentWideLogCount(): React.ReactElement {
+  const { logs, setAgentId, setAgentWide } = useLogs();
+
+  React.useEffect(() => {
+    setAgentId('test-agent');
+    setAgentWide(true);
+  }, [setAgentId, setAgentWide]);
+
+  return <div data-testid="logs-length">{logs.length}</div>;
+}
+
+function BadComponent(): React.ReactElement | null {
+  useLogs();
+  return null;
+}
+
 describe('LogsProvider', (): void => {
   let queryClient: QueryClient;
 
@@ -220,23 +237,12 @@ describe('LogsProvider', (): void => {
   it('fetches agent-wide logs without a skill filter', async (): Promise<void> => {
     // The agent-level logs page has no skill: it turns on agentWide and the
     // query must go out with only the agent id, not wait for a skill id.
-    function AgentWideComponent(): React.ReactElement {
-      const { logs, setAgentId, setAgentWide } = useLogs();
-
-      React.useEffect(() => {
-        setAgentId('test-agent');
-        setAgentWide(true);
-      }, [setAgentId, setAgentWide]);
-
-      return <div data-testid="logs-length">{logs.length}</div>;
-    }
-
     await act(async (): Promise<void> => {
       await Promise.resolve();
       render(
         <QueryClientProvider client={queryClient}>
           <LogsProvider>
-            <AgentWideComponent />
+            <AgentWideLogCount />
           </LogsProvider>
         </QueryClientProvider>,
       );
@@ -437,10 +443,6 @@ describe('LogsProvider', (): void => {
   });
 
   it('throws if useLogs is used outside provider', (): void => {
-    function BadComponent(): React.ReactElement | null {
-      useLogs();
-      return null;
-    }
     expect(() => render(<BadComponent />)).toThrow();
   });
 });

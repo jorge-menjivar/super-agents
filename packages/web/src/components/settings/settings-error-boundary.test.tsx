@@ -11,6 +11,19 @@ const ThrowError: React.FC<{ shouldThrow: boolean }> = ({ shouldThrow }) => {
   return <div>Settings loaded successfully</div>;
 };
 
+/**
+ * Throws until the test sets `failing.current` to false. The flag is read on
+ * each render, so the retry after it changes renders the component whole.
+ */
+const ThrowsUntilFixed: React.FC<{ failing: { current: boolean } }> = ({
+  failing,
+}) => {
+  if (failing.current) {
+    throw new Error('Test error');
+  }
+  return <div>Settings loaded successfully</div>;
+};
+
 describe('SettingsErrorBoundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,24 +78,17 @@ describe('SettingsErrorBoundary', () => {
   });
 
   it('resets error state when Try Again is clicked', () => {
-    let shouldThrow = true;
-
-    const DynamicComponent = () => {
-      if (shouldThrow) {
-        throw new Error('Test error');
-      }
-      return <div>Settings loaded successfully</div>;
-    };
+    const failing = { current: true };
 
     render(
       <SettingsErrorBoundary>
-        <DynamicComponent />
+        <ThrowsUntilFixed failing={failing} />
       </SettingsErrorBoundary>,
     );
 
     expect(screen.getByText('Failed to Load Settings')).toBeInTheDocument();
 
-    shouldThrow = false;
+    failing.current = false;
     const retryButton = screen.getByText('Try Again');
     fireEvent.click(retryButton);
 

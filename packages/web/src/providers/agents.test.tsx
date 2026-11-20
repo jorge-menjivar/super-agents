@@ -251,6 +251,11 @@ function TestComponent(): React.ReactElement {
   );
 }
 
+function BadComponent(): React.ReactElement | null {
+  useAgents();
+  return null;
+}
+
 describe('AgentsProvider', () => {
   let queryClient: QueryClient;
 
@@ -496,11 +501,6 @@ describe('AgentsProvider', () => {
   });
 
   it('throws error when useAgents is used outside provider', () => {
-    function BadComponent(): React.ReactElement | null {
-      useAgents();
-      return null;
-    }
-
     expect(() => render(<BadComponent />)).toThrow(
       'useAgents must be used within an AgentsProvider',
     );
