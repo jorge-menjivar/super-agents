@@ -23,6 +23,8 @@ export interface Agent {
   name: string;
   description: string;
   metadata: Record<string, unknown>;
+  /** What serves it: text models, or decision models (System One). */
+  agent_type: 'text' | 'decision';
   auto_create_skills: boolean;
   skill_match_threshold: number;
   max_auto_created_skills: number;

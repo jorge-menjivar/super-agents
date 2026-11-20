@@ -157,6 +157,7 @@ describe('ManageSkillModelsDialog', () => {
           open={true}
           onOpenChange={mockOnOpenChange}
           skillId="skill-1"
+          agentType="text"
           {...props}
         />
       </QueryClientProvider>,

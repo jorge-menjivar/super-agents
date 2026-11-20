@@ -1627,6 +1627,7 @@ test.describe('decision skills', () => {
     decisionModel = await createDecisionModel(request, scope);
 
     agent = await createAgent(request, uniqueAgentName(scope), undefined, {
+      agent_type: 'decision',
       auto_create_skills: false,
     });
     // Seeded, so its arms carry the policy rather than a generated prompt.
@@ -1638,8 +1639,8 @@ test.describe('decision skills', () => {
       data: { modelIds: [decisionModel.id] },
     });
     expect(attached.status()).toBe(201);
-    // Its default model is what makes it a decision-model reviewer, asked
-    // through System One when another agent names it.
+    // A decision agent is asked through System One when another agent names
+    // it as reviewer; its default model is what its skills are served by.
     await addModelsToAgent(request, agent.id, [decisionModel.id]);
 
     // An ordinary agent on the stub's text model, reviewed by the above.

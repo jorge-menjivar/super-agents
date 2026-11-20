@@ -510,8 +510,21 @@ comes back stamped with its provider, and only the two vendors' errors differ.
 
 - **A model type of its own.** `models.model_type` is `text`, `embed` or
   `decision`, and the role slots' triggers already refuse anything but the
-  type they take, so a decision model can serve a skill (`servesSkills`) but
-  never write a prompt or judge an answer.
+  type they take, so a decision model never writes a prompt or judges an
+  answer.
+- **And an agent type.** `agents.agent_type` is `text` (an LLM agent) or
+  `decision`, chosen at creation, and says what serves the agent: its
+  default models and its skills' models are all of that type, so whichever
+  arm a request draws can answer it. The database refuses any other
+  (`agent_models_validate_type`, `skill_models_validate_type`, and
+  `validate_serving_model_type` on Postgres), and keeps an agent's type, and
+  a serving model's, fixed while either is in use. The API says so first,
+  with a 400 (`utils/super-agents/agent-type.ts`), and the gateway turns a
+  request away from an agent that cannot answer it -- chat to a decision
+  agent, System One to an LLM agent -- before routing it. The agent's own
+  role models are a separate matter: a decision agent still routes by
+  embeddings, so its embedding, arbiter and compaction models stay text and
+  embed models like anyone's.
 - **The skill's system prompt is its policy.** System One has no system
   message, so `withSystemOnePolicy` (`@shared/utils/system-one`) puts the
   served prompt ahead of each question's `instructions`; a skill created from
@@ -524,8 +537,8 @@ comes back stamped with its provider, and only the two vendors' errors differ.
   `optimize` off and gets no evaluations, realtime evaluations skip System One
   logs, clustering and prompt regeneration only ever ran for conversational
   requests, and an arm's sampling settings are not applied to one.
-- **A reviewer can be one.** An agent whose default models are decision
-  models reviews through System One; see "Hooks and Response Review".
+- **A reviewer can be one.** A decision agent reviews through System One;
+  see "Hooks and Response Review".
 
 ## Authentication
 
@@ -656,8 +669,8 @@ verdict fails open, with the error on the hook log.
 
 **A reviewer on decision models** writes no verdict, so it is asked through
 System One instead (see "Decision models"): `reviewerHookFor` sets the hook's
-`api: 'system_one'` when every one of the reviewer's default models is a
-decision model, and the review goes to `/v1/agents/<reviewer>/systemone` as a
+`api: 'system_one'` when the reviewer is a decision agent (`agent_type`), and
+the review goes to `/v1/agents/<reviewer>/systemone` as a
 single yes-or-no question, `withhold`, about the request and the response.
 The reviewer's skill puts its system prompt -- the policy -- ahead of that
 question. A probability at `DECISION_REVIEW_THRESHOLD` (one half) or above

@@ -47,11 +47,7 @@ const context = (
   const vars = new Map<string, unknown>([
     ['sa_config_pre_processed', preProcessed],
     ['sa_request_data', requestData],
-    [
-      'user_data_storage_connector',
-      // The reviewer's default models decide how it is asked; none here.
-      { getAgentModels: vi.fn().mockResolvedValue([]), ...connector },
-    ],
+    ['user_data_storage_connector', connector],
     ['skill', skill],
   ]);
   return {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ReasoningEffort } from '../api/routes/shared/thinking';
+import { ModelType } from './model';
 import {
   MAX_INTERNAL_TIMEOUT_MS,
   MIN_INTERNAL_TIMEOUT_MS,
@@ -131,11 +132,27 @@ export function mergeAgentOptions(
   };
 }
 
+/**
+ * The type of model that serves an agent, which is the type of request it
+ * answers: `text` for chat, completions and Responses, `decision` for System
+ * One. Spelled as the model types are, so that the check everywhere is the
+ * same comparison -- a serving model's type equals its agent's. No agent is
+ * served by embeddings.
+ */
+export const AgentType = z.enum([ModelType.TEXT, ModelType.DECISION]);
+export type AgentType = z.infer<typeof AgentType>;
+
 export const Agent = z.object({
   id: z.uuid(),
   name: z.string(),
   description: z.string(),
   metadata: z.record(z.string(), z.unknown()),
+
+  /** What serves the agent: text models, which answer the chat, completion
+   * and Responses APIs, or decision models, which answer System One. Its
+   * default models and its skills' models are all of this type, and it
+   * accepts only the requests they can answer. Fixed once it has models. */
+  agent_type: AgentType,
 
   /** Whether a request that names only the agent may become a new skill when
    * it resembles none of the existing ones. */
@@ -220,6 +237,7 @@ export const AgentCreateParams = z
           'The name "super-agents" is reserved for internal system use. Please choose a different name.',
       }),
     description: z.string().min(25).max(10000),
+    agent_type: AgentType.default(ModelType.TEXT),
     metadata: z.record(z.string(), z.unknown()).default({}),
     auto_create_skills: z.boolean().default(true),
     skill_match_threshold: z.number().min(0).max(1).default(0.8),
@@ -242,6 +260,7 @@ export type AgentCreateParams = z.infer<typeof AgentCreateParams>;
 export const AgentUpdateParams = z
   .object({
     description: z.string().nullable().optional(),
+    agent_type: AgentType.optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
     auto_create_skills: z.boolean().optional(),
     skill_match_threshold: z.number().min(0).max(1).optional(),
@@ -262,6 +281,7 @@ export const AgentUpdateParams = z
     (data) => {
       const updateFields = [
         'description',
+        'agent_type',
         'metadata',
         'auto_create_skills',
         'skill_match_threshold',

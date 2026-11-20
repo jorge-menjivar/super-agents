@@ -50,6 +50,7 @@ describe('useAgentUnreadySkills', () => {
     name: 'Test Agent',
     description: 'Test description',
     metadata: {},
+    agent_type: 'text' as const,
     auto_create_skills: true,
     skill_match_threshold: 0.8,
     max_auto_created_skills: 10,

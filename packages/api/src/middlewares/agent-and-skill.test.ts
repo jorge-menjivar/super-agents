@@ -103,6 +103,7 @@ describe('agentAndSkillMiddleware', () => {
         metadata: {},
         created_at: '2023-01-01T00:00:00.000Z',
         updated_at: '2023-01-01T00:00:00.000Z',
+        agent_type: 'text',
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
@@ -205,6 +206,7 @@ describe('agentAndSkillMiddleware', () => {
           metadata: {},
           created_at: '2023-01-01T00:00:00.000Z',
           updated_at: '2023-01-01T00:00:00.000Z',
+          agent_type: 'text',
           auto_create_skills: true,
           skill_match_threshold: 0.8,
           max_auto_created_skills: 10,
@@ -339,6 +341,7 @@ describe('agentAndSkillMiddleware', () => {
         metadata: {},
         created_at: '2023-01-01T00:00:00.000Z',
         updated_at: '2023-01-01T00:00:00.000Z',
+        agent_type: 'text',
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
@@ -684,5 +687,63 @@ describe('agentAndSkillMiddleware', () => {
         agentAndSkillMiddleware(createRoutingContext(), mockNext),
       ).rejects.toThrow('database down');
     });
+  });
+});
+
+describe('agentAndSkillMiddleware, for an agent of the wrong type', () => {
+  const agentOf = (agent_type: 'text' | 'decision') =>
+    ({ id: 'agent-1', name: 'guard', agent_type }) as Agent;
+
+  const contextFor = (functionName: string): AppContext =>
+    ({
+      req: { url: 'http://localhost/v1/agents/guard/chat/completions' },
+      get: vi.fn((key: string) => {
+        switch (key) {
+          case 'sa_config_pre_processed':
+            return { agent_name: 'guard' };
+          case 'sa_request_data':
+            return { functionName };
+          default:
+            return {};
+        }
+      }),
+      set: vi.fn(),
+      json: vi.fn(
+        (body: unknown, status: number) =>
+          new Response(JSON.stringify(body), { status }),
+      ),
+    }) as unknown as AppContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Refused before the request is announced or routed: no arm of a decision
+  // agent could have written the answer.
+  it('turns a chat request away from a decision agent', async () => {
+    vi.mocked(agentsUtils.getAgent).mockResolvedValue(agentOf('decision'));
+    const c = contextFor('chat_complete');
+    const next = vi.fn();
+
+    const response = (await agentAndSkillMiddleware(c, next)) as Response;
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Agent "guard" is a decision agent; ask it through /v1/systemone.',
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(markRequestStarted).not.toHaveBeenCalled();
+    expect(skillRouting.routeRequestToSkill).not.toHaveBeenCalled();
+  });
+
+  it('turns a System One request away from an LLM agent', async () => {
+    vi.mocked(agentsUtils.getAgent).mockResolvedValue(agentOf('text'));
+
+    const response = (await agentAndSkillMiddleware(
+      contextFor('system_one'),
+      vi.fn(),
+    )) as Response;
+
+    expect(response.status).toBe(400);
   });
 });

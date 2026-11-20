@@ -52,6 +52,7 @@ const seedAgent = (c: AppContext) =>
     name: 'test-agent',
     description: 'x'.repeat(30),
     metadata: {},
+    agent_type: 'text',
     auto_create_skills: true,
     skill_match_threshold: 0.8,
     max_auto_created_skills: 10,
@@ -130,6 +131,7 @@ describe('agents, skills and JSON columns', () => {
       name: 'my-agent',
       description: 'd'.repeat(30),
       metadata: { team: 'core', tags: ['a', 'b'] },
+      agent_type: 'text',
       auto_create_skills: true,
       skill_match_threshold: 0.8,
       max_auto_created_skills: 10,
@@ -151,6 +153,7 @@ describe('agents, skills and JSON columns', () => {
         name,
         description: 'd'.repeat(30),
         metadata: {},
+        agent_type: 'text',
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
@@ -332,6 +335,102 @@ describe('skill-model bridge', () => {
 });
 
 /** The five plpgsql functions the API actually calls, reimplemented in TS. */
+/**
+ * An agent is served by models of its own type: its defaults and its skills'
+ * models alike, so whichever arm a request draws can answer it. The API says
+ * so first; these are the database's own word on it.
+ */
+describe('what serves an agent', () => {
+  const seedModel = async (
+    c: AppContext,
+    name: string,
+    modelType: 'text' | 'decision',
+  ) => {
+    const provider = await store.createAIProvider(c, {
+      ai_provider: modelType === 'decision' ? 'typesafe' : 'openai',
+      name: `provider-${name}`,
+      api_key: null,
+      custom_fields: {},
+    } as Parameters<typeof store.createAIProvider>[1]);
+
+    return store.createModel(c, {
+      ai_provider_id: provider.id,
+      model_name: name,
+      model_type: modelType,
+    } as Parameters<typeof store.createModel>[1]);
+  };
+
+  it('makes an agent an LLM agent unless it says otherwise', async () => {
+    const { c } = await freshDatabase();
+    const agent = await seedAgent(c);
+    expect(agent.agent_type).toBe('text');
+
+    const decider = await store.createAgent(c, {
+      name: 'guard',
+      description: 'x'.repeat(30),
+      metadata: {},
+      agent_type: 'decision',
+      auto_create_skills: true,
+      skill_match_threshold: 0.8,
+      max_auto_created_skills: 10,
+      review_fail_closed: false,
+      review_expose_reason: false,
+    });
+    expect(decider.agent_type).toBe('decision');
+  });
+
+  it('refuses a model of another type, for the agent or its skills', async () => {
+    const { c } = await freshDatabase();
+    const agent = await seedAgent(c);
+    const skill = await seedSkill(c, agent.id);
+    const jev = await seedModel(c, 'jev-latest', 'decision');
+    const gpt = await seedModel(c, 'gpt-5', 'text');
+
+    await expect(store.addModelsToAgent(c, agent.id, [jev.id])).rejects.toThrow(
+      "model of the agent's type",
+    );
+    await expect(store.addModelsToSkill(c, skill.id, [jev.id])).rejects.toThrow(
+      "model of the skill's agent's type",
+    );
+
+    await store.addModelsToAgent(c, agent.id, [gpt.id]);
+    await store.addModelsToSkill(c, skill.id, [gpt.id]);
+    expect((await store.getSkillModels(c, skill.id)).map((m) => m.id)).toEqual([
+      gpt.id,
+    ]);
+  });
+
+  it('keeps the type of an agent while it has models, and lets it go after', async () => {
+    const { c } = await freshDatabase();
+    const agent = await seedAgent(c);
+    const skill = await seedSkill(c, agent.id);
+    const gpt = await seedModel(c, 'gpt-5', 'text');
+    await store.addModelsToSkill(c, skill.id, [gpt.id]);
+
+    await expect(
+      store.updateAgent(c, agent.id, { agent_type: 'decision' }),
+    ).rejects.toThrow('cannot change agent_type');
+
+    await store.removeModelsFromSkill(c, skill.id, [gpt.id]);
+    const changed = await store.updateAgent(c, agent.id, {
+      agent_type: 'decision',
+    });
+    expect(changed.agent_type).toBe('decision');
+  });
+
+  it('keeps the type of a model that serves a skill', async () => {
+    const { c } = await freshDatabase();
+    const agent = await seedAgent(c);
+    const skill = await seedSkill(c, agent.id);
+    const gpt = await seedModel(c, 'gpt-5', 'text');
+    await store.addModelsToSkill(c, skill.id, [gpt.id]);
+
+    await expect(
+      store.updateModel(c, gpt.id, { model_type: 'decision' }),
+    ).rejects.toThrow('cannot change model_type');
+  });
+});
+
 describe('atomic operations', () => {
   it('increments the skill request counter', async () => {
     const { c } = await freshDatabase();
@@ -547,6 +646,7 @@ describe('agent models and routing settings', () => {
       name: 'growing',
       description: 'x'.repeat(30),
       metadata: {},
+      agent_type: 'text',
       auto_create_skills: false,
       skill_match_threshold: 0.65,
       max_auto_created_skills: 3,
@@ -564,6 +664,7 @@ describe('agent models and routing settings', () => {
     expect(agent.options.judge.max_tokens).toBeNull();
 
     const updated = await store.updateAgent(c, agent.id, {
+      agent_type: 'text',
       auto_create_skills: true,
       max_auto_created_skills: 5,
       review_fail_closed: false,
@@ -595,6 +696,7 @@ describe('agent models and routing settings', () => {
       name: 'reviewed',
       description: 'x'.repeat(30),
       metadata: {},
+      agent_type: 'text',
       auto_create_skills: true,
       skill_match_threshold: 0.8,
       max_auto_created_skills: 10,
@@ -605,6 +707,7 @@ describe('agent models and routing settings', () => {
       name: 'guard',
       description: 'x'.repeat(30),
       metadata: {},
+      agent_type: 'text',
       auto_create_skills: true,
       skill_match_threshold: 0.8,
       max_auto_created_skills: 10,

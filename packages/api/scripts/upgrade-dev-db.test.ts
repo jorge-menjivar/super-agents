@@ -423,3 +423,163 @@ describe('upgrade-dev-db: decision models', () => {
     expect((await query('SELECT * FROM agent_models')).rows).toHaveLength(1);
   }, 120_000);
 });
+
+/**
+ * What serves an agent. `agents.agent_type` is added, the triggers that keep
+ * an agent's models of its type are created, and the guard on a model's own
+ * type -- which cannot be altered -- is replaced with one that also counts
+ * the models serving agents and skills.
+ */
+describe('upgrade-dev-db: agent types', () => {
+  let dir: string;
+  let dbPath: string;
+
+  const client = () => createClient({ url: `file:${dbPath}` });
+
+  const query = async (sql: string) => {
+    const c = client();
+    try {
+      await c.execute('PRAGMA foreign_keys = ON');
+      return await c.execute(sql);
+    } finally {
+      c.close();
+    }
+  };
+
+  const upgrade = () =>
+    run(
+      'pnpm',
+      ['exec', 'tsx', 'scripts/upgrade-dev-db.mjs', dbPath, '--no-backup'],
+      { cwd: apiRoot },
+    );
+
+  /** Agents, skills and their models as they were before agent types. */
+  const AGENT_TYPE_SETUP = [
+    'CREATE TABLE ai_providers (id TEXT PRIMARY KEY)',
+    `CREATE TABLE models (
+       id TEXT PRIMARY KEY,
+       ai_provider_id TEXT NOT NULL,
+       model_name TEXT NOT NULL,
+       model_type TEXT NOT NULL DEFAULT 'text' CHECK (model_type IN ('text', 'embed', 'decision')),
+       embedding_dimensions INTEGER,
+       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+       FOREIGN KEY (ai_provider_id) REFERENCES ai_providers(id) ON DELETE CASCADE,
+       UNIQUE (ai_provider_id, model_name),
+       CONSTRAINT embedding_dimensions_only_for_embed CHECK (
+         (model_type = 'embed') = (embedding_dimensions IS NOT NULL)
+       )
+     )`,
+    `CREATE TABLE agent_models (
+       agent_id TEXT NOT NULL, model_id TEXT NOT NULL,
+       PRIMARY KEY (agent_id, model_id),
+       FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
+     )`,
+    `CREATE TABLE skill_models (
+       skill_id TEXT NOT NULL, model_id TEXT NOT NULL,
+       PRIMARY KEY (skill_id, model_id),
+       FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
+     )`,
+    // What the guard on a model's type reads, as little of it as it reads.
+    'ALTER TABLE agents ADD COLUMN skill_arbiter_model_id TEXT',
+    'ALTER TABLE skill_optimization_evaluations ADD COLUMN model_id TEXT',
+    'ALTER TABLE skill_optimization_clusters ADD COLUMN embedding_model_id TEXT',
+    `CREATE TABLE system_settings (
+       id TEXT PRIMARY KEY,
+       system_prompt_reflection_model_id TEXT, evaluation_generation_model_id TEXT,
+       judge_model_id TEXT, skill_arbiter_model_id TEXT,
+       intent_compaction_model_id TEXT, embedding_model_id TEXT
+     )`,
+    'CREATE TABLE skill_routing (skill_id TEXT, embedding_model_id TEXT)',
+    // The guard as it was, before it knew about serving models.
+    `CREATE TRIGGER models_prevent_type_change_if_referenced
+     BEFORE UPDATE OF model_type ON models
+     FOR EACH ROW
+     WHEN NEW.model_type IS NOT OLD.model_type
+     BEGIN
+       SELECT CASE WHEN EXISTS (
+         SELECT 1 FROM agents WHERE skill_arbiter_model_id = NEW.id
+       ) THEN RAISE(ABORT, 'cannot change model_type while the model is referenced') END;
+     END`,
+    "INSERT INTO ai_providers (id) VALUES ('p1')",
+    "INSERT INTO models (id, ai_provider_id, model_name) VALUES ('gpt', 'p1', 'gpt-5')",
+    `INSERT INTO models (id, ai_provider_id, model_name, model_type)
+     VALUES ('jev', 'p1', 'jev-latest', 'decision')`,
+    "INSERT INTO skill_models (skill_id, model_id) VALUES ('s1', 'gpt')",
+  ];
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'sa-upgrade-agent-type-'));
+    dbPath = join(dir, 'dev.db');
+
+    const c = client();
+    await c.execute('PRAGMA foreign_keys = ON');
+    for (const sql of [...SETUP, ...SEED, ...AGENT_TYPE_SETUP]) {
+      await c.execute(sql);
+    }
+    c.close();
+  }, 30_000);
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('makes every existing agent an LLM agent', async () => {
+    await upgrade();
+
+    const { rows } = await query('SELECT id, agent_type FROM agents');
+    expect(rows.map((row) => [row.id, row.agent_type])).toEqual([
+      ['a1', 'text'],
+    ]);
+  }, 60_000);
+
+  it('refuses a model of another type for an agent or one of its skills', async () => {
+    await upgrade();
+
+    await expect(
+      query(
+        "INSERT INTO agent_models (agent_id, model_id) VALUES ('a1', 'jev')",
+      ),
+    ).rejects.toThrow("model of the agent's type");
+    await expect(
+      query(
+        "INSERT INTO skill_models (skill_id, model_id) VALUES ('s1', 'jev')",
+      ),
+    ).rejects.toThrow("model of the skill's agent's type");
+    await query(
+      "INSERT INTO agent_models (agent_id, model_id) VALUES ('a1', 'gpt')",
+    );
+  }, 60_000);
+
+  it('keeps the type of an agent whose skills have models', async () => {
+    await upgrade();
+
+    await expect(
+      query("UPDATE agents SET agent_type = 'decision' WHERE id = 'a1'"),
+    ).rejects.toThrow('cannot change agent_type');
+
+    await query("DELETE FROM skill_models WHERE skill_id = 's1'");
+    await query("UPDATE agents SET agent_type = 'decision' WHERE id = 'a1'");
+  }, 60_000);
+
+  it('keeps the type of a model that serves a skill', async () => {
+    // Before, nothing stopped it.
+    await query("UPDATE models SET model_type = 'decision' WHERE id = 'gpt'");
+    await query("UPDATE models SET model_type = 'text' WHERE id = 'gpt'");
+
+    await upgrade();
+
+    await expect(
+      query("UPDATE models SET model_type = 'decision' WHERE id = 'gpt'"),
+    ).rejects.toThrow('cannot change model_type');
+  }, 60_000);
+
+  it('is a no-op the second time', async () => {
+    await upgrade();
+    const { stdout } = await upgrade();
+
+    expect(stdout).toContain('Already up to date');
+  }, 120_000);
+});

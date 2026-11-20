@@ -52,7 +52,12 @@ test.describe('decision models', () => {
   test('answers a System One request as the decision model gave it, and logs it', async ({
     request,
   }) => {
-    const agent = await createAgent(request, uniqueAgentName('decide'));
+    const agent = await createAgent(
+      request,
+      uniqueAgentName('decide'),
+      undefined,
+      { agent_type: 'decision' },
+    );
     const skill = await createSkill(request, agent.id, 'decision_skill');
     const model = await createDecisionModel(request, 'direct');
 
@@ -120,7 +125,12 @@ test.describe('decision models', () => {
   test('refuses a question that could not be answered before asking anyone', async ({
     request,
   }) => {
-    const agent = await createAgent(request, uniqueAgentName('refused'));
+    const agent = await createAgent(
+      request,
+      uniqueAgentName('refused'),
+      undefined,
+      { agent_type: 'decision' },
+    );
     const skill = await createSkill(request, agent.id, 'decision_skill');
 
     try {
@@ -143,6 +153,67 @@ test.describe('decision models', () => {
       expect(response.status()).toBe(422);
     } finally {
       await deleteAgent(request, agent.id);
+    }
+  });
+
+  test('keeps each agent to the requests and models of its type', async ({
+    request,
+  }) => {
+    const guard = await createAgent(
+      request,
+      uniqueAgentName('typed'),
+      undefined,
+      { agent_type: 'decision' },
+    );
+    const helper = await createAgent(request, uniqueAgentName('typed-llm'));
+    const model = await createDecisionModel(request, 'typed');
+
+    try {
+      expect(guard.agent_type).toBe('decision');
+      expect(helper.agent_type).toBe('text');
+
+      // A chat request reaches no model of a decision agent that could
+      // write the answer, and the gateway says where to ask instead.
+      const chat = await request.post(
+        `/v1/agents/${guard.name}/chat/completions`,
+        {
+          data: {
+            model: 'ignored-by-the-gateway',
+            messages: [{ role: 'user', content: 'hello' }],
+          },
+        },
+      );
+      expect(chat.status()).toBe(400);
+      expect(((await chat.json()) as { error: string }).error).toContain(
+        '/v1/systemone',
+      );
+
+      const decide = await request.post(`/v1/agents/${helper.name}/systemone`, {
+        data: { state: 'x', questions: QUESTIONS },
+      });
+      expect(decide.status()).toBe(400);
+
+      // Its models are of its type, its own and its skills' alike.
+      const wrong = await request.post(`${AGENTS_PATH}/${helper.id}/models`, {
+        data: { modelIds: [model.id] },
+      });
+      expect(wrong.status()).toBe(400);
+      expect(((await wrong.json()) as { error: string }).error).toContain(
+        'is a decision model',
+      );
+      const right = await request.post(`${AGENTS_PATH}/${guard.id}/models`, {
+        data: { modelIds: [model.id] },
+      });
+      expect(right.status()).toBe(201);
+
+      // And with a model, its type is fixed.
+      const flipped = await request.patch(`${AGENTS_PATH}/${guard.id}`, {
+        data: { agent_type: 'text' },
+      });
+      expect(flipped.status()).toBe(400);
+    } finally {
+      await deleteAgent(request, guard.id);
+      await deleteAgent(request, helper.id);
     }
   });
 

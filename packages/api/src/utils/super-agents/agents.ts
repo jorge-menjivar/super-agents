@@ -18,6 +18,8 @@ export async function getAgent(
       const newAgent = await userDataStorageConnector.createAgent(c, {
         name: agentName,
         description: 'The Super Agents internal agent',
+        // Every internal skill writes its answer.
+        agent_type: 'text',
         metadata: {},
         // Its skills are the internal ones, named explicitly by every call.
         auto_create_skills: false,

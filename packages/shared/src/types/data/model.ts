@@ -16,21 +16,6 @@ export type ModelType = (typeof ModelType)[keyof typeof ModelType];
 
 export const ModelTypeSchema = z.enum(['text', 'embed', 'decision']);
 
-/**
- * The model types a skill can be served by: a text model answers its chat,
- * completion and Responses requests, a decision model its System One ones.
- * An embedding model serves no skill.
- */
-export const SKILL_MODEL_TYPES: readonly ModelType[] = [
-  ModelType.TEXT,
-  ModelType.DECISION,
-];
-
-/** Whether a model can serve a skill; see `SKILL_MODEL_TYPES`. */
-export function servesSkills(model: { model_type: ModelType }): boolean {
-  return SKILL_MODEL_TYPES.includes(model.model_type);
-}
-
 export const Model = z.object({
   id: z.uuid(),
   ai_provider_id: z.uuid(),

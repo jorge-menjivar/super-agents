@@ -195,6 +195,12 @@ BEGIN
     RAISE EXCEPTION 'Cannot change model_type for a model that skill routing centroids were computed with';
   END IF;
 
+  -- A model serving an agent or a skill is of that agent's type
+  IF EXISTS (SELECT 1 FROM public.agent_models WHERE model_id = NEW.id)
+     OR EXISTS (SELECT 1 FROM public.skill_models WHERE model_id = NEW.id) THEN
+    RAISE EXCEPTION 'Cannot change model_type for a model that serves an agent or a skill';
+  END IF;
+
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql
@@ -390,3 +396,82 @@ CREATE TRIGGER agents_model_type_validation
   BEFORE INSERT OR UPDATE ON agents
   FOR EACH ROW
   EXECUTE FUNCTION validate_agent_model_types();
+
+-- ============================================================================
+-- What serves an agent
+-- ============================================================================
+
+-- An agent is served by models of one type: text models answer the chat,
+-- completion and Responses APIs, decision models the System One API. Its own
+-- default models and its skills' models are all of that type, so whichever
+-- arm a request draws can answer it. No agent is served by embeddings. The
+-- models it asks for itself -- routing, judging, writing prompts -- are a
+-- different matter, kept to their own types by validate_agent_model_types.
+ALTER TABLE agents
+ADD COLUMN IF NOT EXISTS agent_type public.model_type NOT NULL DEFAULT 'text';
+
+ALTER TABLE agents
+ADD CONSTRAINT agents_agent_type_serves CHECK (agent_type <> 'embed');
+
+COMMENT ON COLUMN agents.agent_type IS 'The type of model that serves this agent and its skills: text or decision';
+
+-- Both tables are only ever inserted into and deleted from, so the inserts
+-- are what is checked.
+CREATE OR REPLACE FUNCTION validate_serving_model_type()
+RETURNS TRIGGER AS $$
+DECLARE
+  serving public.model_type;
+BEGIN
+  IF TG_TABLE_NAME = 'agent_models' THEN
+    SELECT a.agent_type INTO serving FROM public.agents a WHERE a.id = NEW.agent_id;
+  ELSE
+    SELECT a.agent_type INTO serving
+    FROM public.skills s JOIN public.agents a ON a.id = s.agent_id
+    WHERE s.id = NEW.skill_id;
+  END IF;
+
+  IF NOT public.check_model_type(NEW.model_id, serving) THEN
+    RAISE EXCEPTION 'model_id must reference a % model, the type its agent is served by', serving;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql
+SET search_path = '';
+
+CREATE TRIGGER agent_models_model_type_validation
+  BEFORE INSERT ON agent_models
+  FOR EACH ROW
+  EXECUTE FUNCTION validate_serving_model_type();
+
+CREATE TRIGGER skill_models_model_type_validation
+  BEFORE INSERT ON skill_models
+  FOR EACH ROW
+  EXECUTE FUNCTION validate_serving_model_type();
+
+-- Which follows: an agent served by models keeps its type.
+CREATE OR REPLACE FUNCTION prevent_agent_type_change_if_served()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.agent_type = NEW.agent_type THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.agent_models WHERE agent_id = NEW.id)
+     OR EXISTS (
+       SELECT 1 FROM public.skill_models sm
+       JOIN public.skills s ON s.id = sm.skill_id
+       WHERE s.agent_id = NEW.id
+     ) THEN
+    RAISE EXCEPTION 'Cannot change agent_type while the agent or its skills have models';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql
+SET search_path = '';
+
+CREATE TRIGGER agents_prevent_type_change_if_served
+  BEFORE UPDATE OF agent_type ON agents
+  FOR EACH ROW
+  EXECUTE FUNCTION prevent_agent_type_change_if_served();

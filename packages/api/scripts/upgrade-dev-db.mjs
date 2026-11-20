@@ -57,6 +57,13 @@
  * skips that re-parse, which is safe here because the table ends up under the
  * very name those triggers already use.
  *
+ * Also what serves an agent: `agents.agent_type`, text or decision, and the
+ * triggers that keep an agent's models -- its own defaults and its skills' --
+ * of that type, and its type fixed while it has any. The column and those
+ * triggers are additive. The guard on a model's own type grew two clauses
+ * (a model serving an agent or a skill keeps its type), and a trigger cannot
+ * be altered, so that one is dropped and created again.
+ *
  *   pnpm db:upgrade [-- path-to-db]
  *
  * Defaults to `.local-data/dev.db`. Takes a backup first unless --no-backup.
@@ -141,12 +148,20 @@ const main = async () => {
     ({ name }) => !columns.some((column) => column.name === name),
   );
   const needsModelsRebuild = await modelsLackDecisionType();
+  const needsAgentType = !agentColumns.some(
+    (column) => column.name === 'agent_type',
+  );
+  const needsServingTriggers = await servingTriggersMissing();
+  const needsModelTypeGuard = await modelTypeGuardOutdated();
 
   if (
     !needsLogsRebuild &&
     missingReviewColumns.length === 0 &&
     missingLogColumns.length === 0 &&
-    !needsModelsRebuild
+    !needsModelsRebuild &&
+    !needsAgentType &&
+    !needsServingTriggers &&
+    !needsModelTypeGuard
   ) {
     console.log('Already up to date; nothing to do.');
     await refreshFingerprints();
@@ -169,6 +184,11 @@ const main = async () => {
   if (needsModelsRebuild) {
     await rebuildModels();
   }
+  if (needsAgentType) {
+    await addColumn('agents', AGENT_TYPE_COLUMN);
+  }
+  // After the models rebuild, which puts back the guard as it found it.
+  await bringServingTriggersUpToDate();
 
   // Re-read: a rebuild builds the current shape, so what is still missing
   // afterwards is only what the rebuild did not cover.
@@ -358,6 +378,152 @@ const rebuildLogs = async (columns) => {
   }
 
   console.log('Rebuilt `logs`.');
+};
+
+/** The type of model that serves an agent, as `schema.ts` spells it. */
+const AGENT_TYPE_COLUMN = {
+  name: 'agent_type',
+  definition:
+    "TEXT NOT NULL DEFAULT 'text' CHECK (agent_type IN ('text', 'decision'))",
+  after: [],
+};
+
+/**
+ * The triggers that keep an agent served by models of its type, as
+ * `schema.ts` spells them, keyed by name.
+ */
+const SERVING_TRIGGERS = {
+  agent_models_validate_type: `CREATE TRIGGER IF NOT EXISTS agent_models_validate_type
+    BEFORE INSERT ON agent_models
+    FOR EACH ROW
+    WHEN (SELECT model_type FROM models WHERE id = NEW.model_id)
+      IS NOT (SELECT agent_type FROM agents WHERE id = NEW.agent_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'model_id must reference a model of the agent''s type');
+    END`,
+  skill_models_validate_type: `CREATE TRIGGER IF NOT EXISTS skill_models_validate_type
+    BEFORE INSERT ON skill_models
+    FOR EACH ROW
+    WHEN (SELECT model_type FROM models WHERE id = NEW.model_id)
+      IS NOT (
+        SELECT a.agent_type FROM skills s JOIN agents a ON a.id = s.agent_id
+        WHERE s.id = NEW.skill_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'model_id must reference a model of the skill''s agent''s type');
+    END`,
+  agents_prevent_type_change_if_served: `CREATE TRIGGER IF NOT EXISTS agents_prevent_type_change_if_served
+    BEFORE UPDATE OF agent_type ON agents
+    FOR EACH ROW
+    WHEN NEW.agent_type IS NOT OLD.agent_type AND (
+      EXISTS (SELECT 1 FROM agent_models WHERE agent_id = NEW.id) OR
+      EXISTS (
+        SELECT 1 FROM skill_models sm JOIN skills s ON s.id = sm.skill_id
+        WHERE s.agent_id = NEW.id
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'cannot change agent_type while the agent or its skills have models');
+    END`,
+};
+
+/** The guard on a model's own type, as `schema.ts` now spells it. */
+const MODEL_TYPE_GUARD = `CREATE TRIGGER IF NOT EXISTS models_prevent_type_change_if_referenced
+    BEFORE UPDATE OF model_type ON models
+    FOR EACH ROW
+    WHEN NEW.model_type IS NOT OLD.model_type
+    BEGIN
+      SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM system_settings
+        WHERE system_prompt_reflection_model_id = NEW.id
+           OR evaluation_generation_model_id = NEW.id
+           OR judge_model_id = NEW.id
+           OR skill_arbiter_model_id = NEW.id
+           OR intent_compaction_model_id = NEW.id
+           OR embedding_model_id = NEW.id
+      ) OR EXISTS (
+        SELECT 1 FROM agents WHERE skill_arbiter_model_id = NEW.id
+      ) OR EXISTS (
+        SELECT 1 FROM skill_optimization_evaluations WHERE model_id = NEW.id
+      ) OR EXISTS (
+        SELECT 1 FROM skill_optimization_clusters WHERE embedding_model_id = NEW.id
+      ) OR EXISTS (
+        SELECT 1 FROM skill_routing WHERE embedding_model_id = NEW.id
+      ) OR EXISTS (
+        SELECT 1 FROM agent_models WHERE model_id = NEW.id
+      ) OR EXISTS (
+        SELECT 1 FROM skill_models WHERE model_id = NEW.id
+      ) THEN RAISE(ABORT, 'cannot change model_type while the model is referenced') END;
+    END`;
+
+/** Every table the serving triggers are on or read. */
+const SERVING_TABLES = [
+  'agents',
+  'models',
+  'skills',
+  'agent_models',
+  'skill_models',
+];
+
+const tablesExist = async (names) => {
+  const { rows } = await client.execute(
+    "SELECT name FROM sqlite_master WHERE type = 'table'",
+  );
+  const present = new Set(rows.map((row) => String(row.name)));
+  return names.every((name) => present.has(name));
+};
+
+const triggerSql = async (name) => {
+  const { rows } = await client.execute({
+    sql: "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+    args: [name],
+  });
+  return rows.length > 0 ? String(rows[0].sql) : null;
+};
+
+/**
+ * Whether the serving triggers are missing from a database that has the
+ * tables they need. One without them -- a partial schema -- has nothing for
+ * them to guard.
+ */
+const servingTriggersMissing = async () => {
+  if (!(await tablesExist(SERVING_TABLES))) {
+    return false;
+  }
+  for (const name of Object.keys(SERVING_TRIGGERS)) {
+    if ((await triggerSql(name)) === null) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/** Whether a model's type guard predates the clauses for serving models. */
+const modelTypeGuardOutdated = async () => {
+  if (!(await tablesExist(SERVING_TABLES))) {
+    return false;
+  }
+  const sql = await triggerSql('models_prevent_type_change_if_referenced');
+  return sql !== null && !sql.includes('agent_models');
+};
+
+const bringServingTriggersUpToDate = async () => {
+  if (await servingTriggersMissing()) {
+    for (const sql of Object.values(SERVING_TRIGGERS)) {
+      await client.execute(sql);
+    }
+    console.log('Added the triggers that keep each agent served by its type.');
+  }
+  if (await modelTypeGuardOutdated()) {
+    await client.batch(
+      [
+        'DROP TRIGGER IF EXISTS models_prevent_type_change_if_referenced',
+        MODEL_TYPE_GUARD,
+      ],
+      'write',
+    );
+    console.log('Replaced the guard on a model type, for serving models.');
+  }
 };
 
 /**

@@ -515,6 +515,7 @@ describe('Agent Data Transforms and Validation', () => {
         metadata: { model: 'gpt-4' },
         created_at: '2023-01-01T00:00:00.000Z',
         updated_at: '2023-01-01T00:00:00.000Z',
+        agent_type: 'text',
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
@@ -540,6 +541,7 @@ describe('Agent Data Transforms and Validation', () => {
         name: 'test-agent',
         description: 'A test agent with sufficient description length',
         metadata: {},
+        agent_type: 'text',
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
@@ -605,6 +607,7 @@ describe('Agent Data Transforms and Validation', () => {
         name: '',
         description: '',
         metadata: {},
+        agent_type: 'text',
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
@@ -644,6 +647,7 @@ describe('Agent Data Transforms and Validation', () => {
         name: 'test-agent',
         description: 'A test agent with sufficient description length',
         metadata: complexMetadata,
+        agent_type: 'text',
         auto_create_skills: true,
         skill_match_threshold: 0.8,
         max_auto_created_skills: 10,
@@ -672,6 +676,7 @@ describe('automatic skill settings', () => {
 
   it('default to creating skills, a 0.8 threshold and a cap of 10', () => {
     expect(AgentCreateParams.parse(minimal)).toMatchObject({
+      agent_type: 'text',
       auto_create_skills: true,
       skill_match_threshold: 0.8,
       max_auto_created_skills: 10,
@@ -848,5 +853,33 @@ describe('reviewer_agent_id', () => {
       AgentUpdateParams.parse({ reviewer_agent_id: reviewer })
         .reviewer_agent_id,
     ).toBe(reviewer);
+  });
+});
+
+describe('agent type', () => {
+  const minimal = { name: 'guard', description: 'x'.repeat(30) };
+
+  it('is an LLM agent unless created otherwise', () => {
+    expect(AgentCreateParams.parse(minimal).agent_type).toBe('text');
+    expect(
+      AgentCreateParams.parse({ ...minimal, agent_type: 'decision' })
+        .agent_type,
+    ).toBe('decision');
+  });
+
+  // No agent is served by embeddings.
+  it('is never embed', () => {
+    expect(
+      AgentCreateParams.safeParse({ ...minimal, agent_type: 'embed' }).success,
+    ).toBe(false);
+    expect(AgentUpdateParams.safeParse({ agent_type: 'embed' }).success).toBe(
+      false,
+    );
+  });
+
+  it('can be updated on its own', () => {
+    expect(AgentUpdateParams.parse({ agent_type: 'decision' })).toEqual({
+      agent_type: 'decision',
+    });
   });
 });

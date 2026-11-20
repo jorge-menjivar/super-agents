@@ -35,6 +35,7 @@ describe('useAgentValidation', () => {
       id: 'agent-1',
       name: 'helper',
       description: 'Helps with things.',
+      agent_type: 'text',
       metadata: {},
       auto_create_skills,
       skill_match_threshold: 0.8,

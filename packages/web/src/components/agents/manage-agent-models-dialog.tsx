@@ -1,8 +1,8 @@
 'use client';
 
 import { type AIProvider, PrettyAIProvider } from '@shared/types/constants';
+import type { AgentType } from '@shared/types/data/agent';
 import type { Model } from '@shared/types/data/model';
-import { servesSkills } from '@shared/types/data/model';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   addModelsToAgent,
@@ -40,6 +40,8 @@ interface ManageAgentModelsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agentId: string;
+  /** What serves the agent, and so the only models on offer. */
+  agentType: AgentType;
 }
 
 /**
@@ -51,6 +53,7 @@ export function ManageAgentModelsDialog({
   open,
   onOpenChange,
   agentId,
+  agentType,
 }: ManageAgentModelsDialogProps): ReactElement {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -171,9 +174,10 @@ export function ManageAgentModelsDialog({
     return { providerType, providerName };
   };
 
-  // What a skill can be served by: text models for chat, decision models for
-  // System One. Embedding models serve no skill.
-  const servingModels = models.filter(servesSkills);
+  // The models of the agent's own type: the database takes no other.
+  const servingModels = models.filter(
+    (model) => model.model_type === agentType,
+  );
 
   const modelsByProvider = servingModels.reduce(
     (acc, model) => {

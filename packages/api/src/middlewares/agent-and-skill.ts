@@ -1,5 +1,6 @@
 import { markRequestStarted } from '@api/middlewares/logs';
 import type { AppContext } from '@api/types/hono';
+import { requestTypeProblem } from '@api/utils/super-agents/agent-type';
 import { getAgent } from '@api/utils/super-agents/agents';
 import {
   learnSkillIntent,
@@ -33,6 +34,16 @@ export const agentAndSkillMiddleware = createMiddleware(
           );
         }
 
+        // An agent answers only what its models can: chat and the like for
+        // an LLM agent, System One for a decision agent.
+        const saRequestData = c.get('sa_request_data');
+        const typeProblem = saRequestData
+          ? requestTypeProblem(agent, saRequestData.functionName)
+          : null;
+        if (typeProblem) {
+          return c.json({ error: typeProblem }, 400);
+        }
+
         // Announced now, before the skill is known: routing can be slow
         // enough to watch, and a request that fails inside it should leave
         // a row too. Announced again once the skill has been chosen.
@@ -57,7 +68,6 @@ export const agentAndSkillMiddleware = createMiddleware(
           // A request that names its skill is the surest sign of what the
           // skill is for. The internal skills are exempt: their traffic is
           // the server's own, and embedding is one of them.
-          const saRequestData = c.get('sa_request_data');
           if (agent.name !== 'super-agents' && saRequestData) {
             const named = skill;
             learn = () =>

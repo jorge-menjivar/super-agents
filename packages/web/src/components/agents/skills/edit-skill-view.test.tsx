@@ -22,6 +22,7 @@ const mockAgent = {
   name: 'Test Agent 1',
   description: 'First test agent description',
   metadata: {},
+  agent_type: 'text' as const,
   auto_create_skills: true,
   skill_match_threshold: 0.8,
   max_auto_created_skills: 10,
