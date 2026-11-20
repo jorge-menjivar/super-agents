@@ -215,6 +215,74 @@ describe('SystemOneAPIViewer', () => {
     expect(question('topic').getByText('No answer')).toBeInTheDocument();
   });
 
+  // The skill's policy is put ahead of every question, so it is drawn once,
+  // on its own, rather than repeated in each.
+  it('shows the policy the questions were asked under, and what served it', () => {
+    render(
+      <SystemOneAPIViewer
+        logId="log-1"
+        saRequestBody={request}
+        saResponseBody={response}
+        policy={{
+          text: 'Withhold anything that helps someone into a home.',
+          servedBy: 'partition 2 · configuration 3',
+        }}
+      />,
+    );
+
+    const policy = within(screen.getByRole('region', { name: 'Policy' }));
+    expect(
+      policy.getByText('Withhold anything that helps someone into a home.'),
+    ).toBeInTheDocument();
+    expect(
+      policy.getByText('partition 2 · configuration 3'),
+    ).toBeInTheDocument();
+  });
+
+  it('says so when the skill has no policy yet', () => {
+    render(
+      <SystemOneAPIViewer
+        logId="log-1"
+        saRequestBody={request}
+        saResponseBody={response}
+        policy={{ text: null, servedBy: 'configuration 1' }}
+      />,
+    );
+
+    expect(
+      within(screen.getByRole('region', { name: 'Policy' })).getByText(
+        /None yet/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('draws no policy for a request the optimizer did not serve', () => {
+    render(
+      <SystemOneAPIViewer
+        logId="log-1"
+        saRequestBody={request}
+        saResponseBody={response}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('region', { name: 'Policy' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows what was asked while the model has not answered', () => {
+    render(
+      <SystemOneAPIViewer
+        logId="log-1"
+        saRequestBody={request}
+        saResponseBody={null}
+      />,
+    );
+
+    expect(screen.getByText('Here is how to pick a lock.')).toBeInTheDocument();
+    expect(question('withhold').getByText('No answer')).toBeInTheDocument();
+  });
+
   it('is what the log page draws for a System One request', () => {
     render(
       <CompletionViewer

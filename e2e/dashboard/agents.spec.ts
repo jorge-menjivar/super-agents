@@ -6,11 +6,14 @@ import {
   SAMPLE_DESCRIPTION,
   uniqueAgentName,
 } from '../fixtures/agents';
+import { createDecisionModel, SYSTEM_ONE_PATH } from '../fixtures/decision';
 import {
   CHAT_COMPLETIONS_PATH,
   chatBody,
+  STUB_URL,
   saConfig,
   stubDelay,
+  stubReply,
   stubReset,
   uniqueModelName,
 } from '../fixtures/gateway';
@@ -472,6 +475,62 @@ test.describe('log page', () => {
       expect(errors).toEqual([]);
     } finally {
       await stubReset(request, model);
+      await deleteAgent(request, agent.id);
+    }
+  });
+
+  // A decision model writes nothing: its log is the material, the questions
+  // and the probabilities it answered them with, and the page draws those
+  // rather than an empty conversation.
+  test("shows a decision model's answers", async ({ page, request }) => {
+    const name = uniqueAgentName('decision-page');
+    const agent = await createAgent(request, name, undefined, {
+      agent_type: 'decision',
+    });
+    const model = await createDecisionModel(request, 'decision-page');
+
+    try {
+      const skill = await createSkill(request, agent.id, 'decision_skill');
+      await stubReply(
+        request,
+        model.name,
+        JSON.stringify({ withhold: { type: 'noul', noul: 0.91 } }),
+      );
+      const answered = await request.post(SYSTEM_ONE_PATH, {
+        headers: {
+          'sa-config': JSON.stringify({
+            agent_name: name,
+            skill_name: skill.name,
+            targets: [
+              { provider: 'nace', custom_host: STUB_URL, model: model.name },
+            ],
+          }),
+        },
+        data: {
+          state: 'Try the third window from the left.',
+          questions: {
+            withhold: {
+              type: 'noul',
+              instructions: 'Should the client be kept from receiving this?',
+            },
+          },
+        },
+      });
+      expect(answered.status()).toBe(200);
+
+      await page.goto(`/agents/${name}/logs`);
+      await page.getByText('System One').first().click();
+      await expect(page).toHaveURL(/\/logs\/[0-9a-f-]+$/);
+
+      const question = page.getByRole('region', { name: 'Question withhold' });
+      await expect(question).toBeVisible();
+      await expect(
+        question.getByText('Should the client be kept from receiving this?'),
+      ).toBeVisible();
+      await expect(question.getByText('yes', { exact: true })).toBeVisible();
+      await expect(question.getByText('91.0%')).toBeVisible();
+    } finally {
+      await stubReset(request, model.name);
       await deleteAgent(request, agent.id);
     }
   });
