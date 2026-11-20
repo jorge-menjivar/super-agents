@@ -20,7 +20,11 @@ import type { AIProvider } from '@shared/types/constants';
  * reads both.
  */
 
-/** The request as the caller sent it. */
+/**
+ * The request as the caller sent it, images included in the form the gateway
+ * takes them -- named `assets`, which is Jev's. A provider that names its
+ * images otherwise overrides `assets`, `state` and `questions` (see `nace`).
+ */
 export function systemOneRequestConfig(
   defaultModel?: string,
 ): AIProviderFunctionConfig {
@@ -31,7 +35,15 @@ export function systemOneRequestConfig(
     },
     state: { param: 'state', required: true },
     questions: { param: 'questions', required: true },
+    assets: { param: 'assets' },
   };
+}
+
+/** Whether a System One request shows the model any image. */
+export function hasImages(requestBody: unknown): boolean {
+  const assets = (requestBody as { assets?: Record<string, unknown> } | null)
+    ?.assets;
+  return !!assets && Object.keys(assets).length > 0;
 }
 
 /** What one of a FastAPI validation error's items says, as Jev sends them. */

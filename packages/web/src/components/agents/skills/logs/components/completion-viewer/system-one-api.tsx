@@ -2,6 +2,7 @@
 
 import type {
   SystemOneAnswer,
+  SystemOneImageAsset,
   SystemOneQuestion,
   SystemOneRequestBody,
   SystemOneResponseBody,
@@ -15,6 +16,45 @@ import { cn } from '@web/utils/ui/utils';
  * question with the answer it got. The answers are probabilities, so they are
  * drawn as bars rather than printed as the JSON they arrive in.
  */
+
+const MIME_TYPES: Record<SystemOneImageAsset['format'], string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+};
+
+/**
+ * The images the model was shown, each under the reference the text uses
+ * for it -- which is how a reader of the state knows which is which.
+ */
+function Images({
+  assets,
+}: {
+  assets: Record<string, SystemOneImageAsset>;
+}): React.ReactElement {
+  return (
+    <section
+      aria-label="Images"
+      className="rounded-md border bg-card p-3 space-y-2"
+    >
+      <div className="text-sm font-medium">Images</div>
+      <div className="flex flex-wrap gap-3">
+        {Object.entries(assets).map(([reference, image]) => (
+          <figure key={reference} className="space-y-1">
+            <img
+              src={`data:${MIME_TYPES[image.format]};base64,${image.data_base64}`}
+              alt={`Shown to the model as ${reference}`}
+              className="max-h-48 max-w-xs rounded border object-contain"
+            />
+            <figcaption className="font-mono text-xs text-muted-foreground">
+              {reference}
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 const percent = (probability: number): string =>
   `${(probability * 100).toFixed(1)}%`;
@@ -208,6 +248,9 @@ export function SystemOneAPIViewer({
       >
         <div className="text-sm font-normal text-right">State</div>
       </GenericViewer>
+      {saRequestBody.assets && Object.keys(saRequestBody.assets).length > 0 && (
+        <Images assets={saRequestBody.assets} />
+      )}
       {ids.map((id) => (
         <Decision
           key={id}

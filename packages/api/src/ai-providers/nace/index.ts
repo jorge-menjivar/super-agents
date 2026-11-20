@@ -1,3 +1,4 @@
+import { drexImages, withImageOrdinals } from '@api/ai-providers/nace/images';
 import {
   systemOneRequestConfig,
   systemOneResponseTransform,
@@ -7,6 +8,11 @@ import type {
   InternalProviderAPIConfig,
 } from '@shared/types/ai-providers/config';
 import { FunctionName } from '@shared/types/api/request';
+import type {
+  ChatCompletionParameterTransformFunction,
+  ParameterValueTypes,
+} from '@shared/types/api/response/body';
+import type { SystemOneRequestBody } from '@shared/types/api/routes/system-one-api';
 import { AIProvider } from '@shared/types/constants';
 import { z } from 'zod';
 
@@ -51,10 +57,40 @@ export const naceAPIConfig: InternalProviderAPIConfig = {
   isAPIKeyRequired: false,
 };
 
+/**
+ * A parameter transform over the System One body. The provider config types
+ * every transform by the chat API's body, as for every other provider.
+ */
+const fromBody =
+  (
+    pick: (body: SystemOneRequestBody) => unknown,
+  ): ChatCompletionParameterTransformFunction =>
+  (params) =>
+    pick(params as unknown as SystemOneRequestBody) as ParameterValueTypes;
+
 export const naceConfig: AIProviderConfig = {
   api: naceAPIConfig,
-  // Drex's `model` is optional, and served as `drex-latest` when left out.
-  [FunctionName.SYSTEM_ONE]: systemOneRequestConfig(),
+  [FunctionName.SYSTEM_ONE]: {
+    // Drex's `model` is optional, and served as `drex-latest` when left out.
+    ...systemOneRequestConfig(),
+    // Drex numbers its images: each reference becomes "Image N".
+    state: {
+      param: 'state',
+      required: true,
+      transform: fromBody((body) => withImageOrdinals(body.state, body.assets)),
+    },
+    questions: {
+      param: 'questions',
+      required: true,
+      transform: fromBody((body) =>
+        withImageOrdinals(body.questions, body.assets),
+      ),
+    },
+    assets: {
+      param: 'images',
+      transform: fromBody((body) => drexImages(body.assets)),
+    },
+  },
   responseTransforms: {
     [FunctionName.SYSTEM_ONE]: systemOneResponseTransform(AIProvider.NACE),
   },

@@ -537,6 +537,14 @@ comes back stamped with its provider, and only the two vendors' errors differ.
   `optimize` off and gets no evaluations, realtime evaluations skip System One
   logs, clustering and prompt regeneration only ever ran for conversational
   requests, and an arm's sampling settings are not applied to one.
+- **Images, as Jev names them.** A request shows the model images through
+  `assets`: a map of reference to a PNG or JPEG in base64, the reference
+  written as plain text wherever the image belongs, in the state, an
+  instruction or a criterion. TypeSafe takes that as it is, with the
+  `TypeSafe-Danger-Zone-Images` header the gateway adds; for Drex, which
+  numbers its images, `ai-providers/nace/images.ts` sends them as an ordered
+  `images` list and renames each reference "Image 1", "Image 2". Drex takes
+  at most eight, and only its Max models see images.
 - **A reviewer can be one.** A decision agent reviews through System One;
   see "Hooks and Response Review".
 
@@ -676,6 +684,10 @@ The reviewer's skill puts its system prompt -- the policy -- ahead of that
 question. A probability at `DECISION_REVIEW_THRESHOLD` (one half) or above
 denies, and the hook's reason is that probability and the model that gave it.
 It cannot `replace`; an answer without `withhold` fails open like any other.
+An image the reviewed request carries inline is shown to the reviewer as an
+image (`connectors/hooks/review-images.ts`): PNG and JPEG data URLs become
+assets, up to eight, and any other inline file is replaced by a note saying
+what it was, rather than handed over as base64 text.
 
 **Configured on the agent, not in the header.** `agents.reviewer_agent_id`
 names the reviewer of every response the agent gives; `reviewerHookFor`

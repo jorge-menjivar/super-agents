@@ -122,6 +122,65 @@ test.describe('decision models', () => {
     }
   });
 
+  // The gateway takes images as Jev names them; Drex numbers them instead.
+  test('shows the decision model an image, numbered for Drex', async ({
+    request,
+  }) => {
+    const agent = await createAgent(
+      request,
+      uniqueAgentName('seeing'),
+      undefined,
+      { agent_type: 'decision' },
+    );
+    const skill = await createSkill(request, agent.id, 'decision_skill');
+    const model = await createDecisionModel(request, 'seeing');
+
+    try {
+      const response = await request.post(SYSTEM_ONE_PATH, {
+        headers: {
+          'sa-config': JSON.stringify({
+            agent_name: agent.name,
+            skill_name: skill.name,
+            targets: [
+              { provider: 'nace', custom_host: STUB_URL, model: model.name },
+            ],
+          }),
+        },
+        data: {
+          state: { photo: 'door-cam' },
+          questions: {
+            withhold: {
+              type: 'noul',
+              instructions: 'Is anyone at the door in door-cam?',
+            },
+          },
+          assets: {
+            'door-cam': {
+              type: 'image',
+              format: 'jpg',
+              data_base64: '/9j/4AAQ',
+            },
+          },
+        },
+      });
+      expect(response.status()).toBe(200);
+
+      const [forwarded] = await stubRequests(request, model.name);
+      expect(forwarded.images).toEqual(['data:image/jpeg;base64,/9j/4AAQ']);
+      expect(forwarded.state).toEqual({ photo: 'Image 1' });
+      expect(forwarded.questions).toEqual({
+        withhold: {
+          type: 'noul',
+          instructions: 'Is anyone at the door in Image 1?',
+        },
+      });
+      expect(forwarded).not.toHaveProperty('assets');
+    } finally {
+      await stubReset(request, model.name);
+      await deleteAgent(request, agent.id);
+    }
+  });
+
   test('refuses a question that could not be answered before asking anyone', async ({
     request,
   }) => {

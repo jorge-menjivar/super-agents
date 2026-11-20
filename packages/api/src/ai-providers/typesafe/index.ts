@@ -1,4 +1,5 @@
 import {
+  hasImages,
   systemOneRequestConfig,
   systemOneResponseTransform,
 } from '@api/ai-providers/system-one';
@@ -15,9 +16,14 @@ import { AIProvider } from '@shared/types/constants';
  */
 export const typesafeAPIConfig: InternalProviderAPIConfig = {
   getBaseURL: () => 'https://api.typesafe.ai',
-  headers: ({ saTarget }) => ({
+  headers: ({ saTarget, saRequestData }) => ({
     Authorization: `Bearer ${saTarget.api_key}`,
     'Content-Type': 'application/json',
+    // Images are not on by default: a request carrying any says so, or is
+    // refused with "Images are not turned on".
+    ...(hasImages(saRequestData.requestBody)
+      ? { 'TypeSafe-Danger-Zone-Images': 'true' }
+      : {}),
   }),
   getEndpoint: ({ saRequestData }) =>
     saRequestData.functionName === FunctionName.SYSTEM_ONE
