@@ -324,6 +324,31 @@ const renderWithProviders = (component: React.ReactElement) => {
   );
 };
 
+const TestComponentWithSkill: React.FC = () => {
+  const navigation = useNavigation();
+
+  return (
+    <div>
+      <div data-testid="selected-agent">
+        {navigation.navigationState.selectedAgentName || 'None'}
+      </div>
+      <button
+        data-testid="navigate-skill"
+        onClick={() =>
+          navigation.navigateToSkillDashboard('Test Agent 1', 'Test Skill 1')
+        }
+        type="button"
+      >
+        Navigate to Skill
+      </button>
+    </div>
+  );
+};
+
+const TestSanitizeComponent: React.FC = () => {
+  return <div data-testid="test">Test</div>;
+};
+
 describe('NavigationProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -459,30 +484,6 @@ describe('NavigationProvider', () => {
     setParams({ agentName: 'Test%20Agent%201' });
     setNavigationState({ selectedAgentName: 'Test Agent 1' });
 
-    const TestComponentWithSkill: React.FC = () => {
-      const navigation = useNavigation();
-
-      return (
-        <div>
-          <div data-testid="selected-agent">
-            {navigation.navigationState.selectedAgentName || 'None'}
-          </div>
-          <button
-            data-testid="navigate-skill"
-            onClick={() =>
-              navigation.navigateToSkillDashboard(
-                'Test Agent 1',
-                'Test Skill 1',
-              )
-            }
-            type="button"
-          >
-            Navigate to Skill
-          </button>
-        </div>
-      );
-    };
-
     act(() => {
       renderWithProviders(<TestComponentWithSkill />);
     });
@@ -570,10 +571,6 @@ describe('Navigation helper functions', () => {
 
   it('sanitizes dangerous characters from names', () => {
     setParams({ agentName: 'Test%3Cscript%3EAgent' });
-
-    const TestSanitizeComponent: React.FC = () => {
-      return <div data-testid="test">Test</div>;
-    };
 
     act(() => {
       renderWithProviders(<TestSanitizeComponent />);

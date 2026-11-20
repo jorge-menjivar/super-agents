@@ -32,6 +32,28 @@ function TestComponent(): React.ReactElement {
   );
 }
 
+function BadComponent(): React.ReactElement | null {
+  useQueryClient();
+  return null;
+}
+
+function ErrorComponent(): React.ReactElement {
+  throw new Error('Test component error');
+}
+
+function MutationTestComponent(): React.ReactElement {
+  const queryClient = useQueryClient();
+  const defaultOptions = queryClient.getDefaultOptions();
+
+  return (
+    <div>
+      <div data-testid="mutation-retry">
+        {defaultOptions.mutations?.retry?.toString() ?? 'not set'}
+      </div>
+    </div>
+  );
+}
+
 describe('ReactQueryProvider', (): void => {
   it('provides a QueryClient with correct default options', (): void => {
     render(
@@ -86,19 +108,10 @@ describe('ReactQueryProvider', (): void => {
   });
 
   it('throws error when useQueryClient is used outside provider', (): void => {
-    function BadComponent(): React.ReactElement | null {
-      useQueryClient();
-      return null;
-    }
-
     expect(() => render(<BadComponent />)).toThrow();
   });
 
   it('handles component errors gracefully with error boundary', (): void => {
-    function ErrorComponent(): React.ReactElement {
-      throw new Error('Test component error');
-    }
-
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {
       // Suppress console errors in tests
     });
@@ -119,19 +132,6 @@ describe('ReactQueryProvider', (): void => {
   });
 
   it('configures mutation retry in default options', (): void => {
-    function MutationTestComponent(): React.ReactElement {
-      const queryClient = useQueryClient();
-      const defaultOptions = queryClient.getDefaultOptions();
-
-      return (
-        <div>
-          <div data-testid="mutation-retry">
-            {defaultOptions.mutations?.retry?.toString() ?? 'not set'}
-          </div>
-        </div>
-      );
-    }
-
     render(
       <ReactQueryProvider>
         <MutationTestComponent />

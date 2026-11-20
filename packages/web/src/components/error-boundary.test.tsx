@@ -14,6 +14,19 @@ function ThrowError({
   return <div>Working component</div>;
 }
 
+/**
+ * Throws until the test sets `failing.current` to false. The flag is read on
+ * each render, so the retry after it changes renders the component whole.
+ */
+const ThrowsUntilFixed: React.FC<{ failing: { current: boolean } }> = ({
+  failing,
+}) => {
+  if (failing.current) {
+    throw new Error('Test error');
+  }
+  return <div>Working component</div>;
+};
+
 describe('ErrorBoundary', (): void => {
   it('renders children when no error occurs', (): void => {
     render(
@@ -92,25 +105,18 @@ describe('ErrorBoundary', (): void => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {
       // Suppress console errors in tests
     });
-    let shouldThrow = true;
-
-    function DynamicErrorComponent(): React.ReactElement {
-      if (shouldThrow) {
-        throw new Error('Test error');
-      }
-      return <div>Working component</div>;
-    }
+    const failing = { current: true };
 
     render(
       <ErrorBoundary>
-        <DynamicErrorComponent />
+        <ThrowsUntilFixed failing={failing} />
       </ErrorBoundary>,
     );
 
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
 
     // Reset error state and component state
-    shouldThrow = false;
+    failing.current = false;
     fireEvent.click(screen.getByText('Try again'));
 
     // The error boundary should have reset its error state

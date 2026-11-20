@@ -1,6 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTestWrapper } from '../test-utils/test-providers';
 
 // Create mock state using vi.hoisted - MUST be before vi.mock
 const mockState = vi.hoisted(() => ({
@@ -93,10 +92,7 @@ describe('useNavigationPerformance', () => {
   });
 
   it('should initialize with empty metrics', () => {
-    const wrapper = createTestWrapper();
-    const { result } = renderHook(() => useNavigationPerformance(), {
-      wrapper,
-    });
+    const { result } = renderHook(() => useNavigationPerformance());
 
     expect(result.current.metrics).toEqual([]);
     expect(result.current.getPerformanceReport()).toBeNull();
@@ -114,10 +110,7 @@ describe('useNavigationPerformance', () => {
 
     mockLocalStorage.getItem.mockReturnValue(JSON.stringify(storedMetrics));
 
-    const wrapper = createTestWrapper();
-    const { result } = renderHook(() => useNavigationPerformance(), {
-      wrapper,
-    });
+    const { result } = renderHook(() => useNavigationPerformance());
 
     expect(mockLocalStorage.getItem).toHaveBeenCalledWith(
       'agent-navigation-metrics',
@@ -134,10 +127,7 @@ describe('useNavigationPerformance', () => {
       // Intentionally empty mock implementation
     });
 
-    const wrapper = createTestWrapper();
-    const { result } = renderHook(() => useNavigationPerformance(), {
-      wrapper,
-    });
+    const { result } = renderHook(() => useNavigationPerformance());
 
     expect(result.current.metrics).toEqual([]);
     expect(consoleSpy).toHaveBeenCalledWith(
@@ -149,10 +139,7 @@ describe('useNavigationPerformance', () => {
   });
 
   it('should provide performance tracking functions', () => {
-    const wrapper = createTestWrapper();
-    const { result } = renderHook(() => useNavigationPerformance(), {
-      wrapper,
-    });
+    const { result } = renderHook(() => useNavigationPerformance());
 
     expect(typeof result.current.getPerformanceReport).toBe('function');
     expect(typeof result.current.getRouteMetrics).toBe('function');
@@ -168,10 +155,7 @@ describe('useNavigationPerformance', () => {
 
     mockLocalStorage.getItem.mockReturnValue(JSON.stringify(existingMetrics));
 
-    const wrapper = createTestWrapper();
-    const { result } = renderHook(() => useNavigationPerformance(), {
-      wrapper,
-    });
+    const { result } = renderHook(() => useNavigationPerformance());
 
     const report = result.current.getPerformanceReport();
 
@@ -182,10 +166,7 @@ describe('useNavigationPerformance', () => {
   });
 
   it('should clear metrics and localStorage', () => {
-    const wrapper = createTestWrapper();
-    const { result } = renderHook(() => useNavigationPerformance(), {
-      wrapper,
-    });
+    const { result } = renderHook(() => useNavigationPerformance());
 
     act(() => {
       result.current.clearMetrics();
@@ -206,10 +187,7 @@ describe('useNavigationPerformance', () => {
 
     mockLocalStorage.getItem.mockReturnValue(JSON.stringify(existingMetrics));
 
-    const wrapper = createTestWrapper();
-    const { result } = renderHook(() => useNavigationPerformance(), {
-      wrapper,
-    });
+    const { result } = renderHook(() => useNavigationPerformance());
 
     const routeMetrics = result.current.getRouteMetrics('/route-1');
 
@@ -227,20 +205,14 @@ describe('useNavigationPerformance', () => {
 
     mockLocalStorage.getItem.mockReturnValue(JSON.stringify(manyMetrics));
 
-    const wrapper = createTestWrapper();
-    const { result } = renderHook(() => useNavigationPerformance(), {
-      wrapper,
-    });
+    const { result } = renderHook(() => useNavigationPerformance());
 
     // Should load the metrics
     expect(result.current.metrics).toHaveLength(50);
   });
 
   it('should cleanup on unmount', () => {
-    const wrapper = createTestWrapper();
-    const { unmount } = renderHook(() => useNavigationPerformance(), {
-      wrapper,
-    });
+    const { unmount } = renderHook(() => useNavigationPerformance());
 
     // Should not throw when unmounting
     expect(() => unmount()).not.toThrow();
@@ -255,8 +227,7 @@ describe('useNavigationPerformance', () => {
 
     const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
 
-    const wrapper = createTestWrapper();
-    renderHook(() => useNavigationPerformance(), { wrapper });
+    renderHook(() => useNavigationPerformance());
 
     expect(addEventListenerSpy).toHaveBeenCalledWith(
       'DOMContentLoaded',

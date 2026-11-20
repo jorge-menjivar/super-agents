@@ -19,6 +19,23 @@ const TestComponent: React.FC = () => {
   return <div>Test Component</div>;
 };
 
+const ErrorComponent: React.FC = () => {
+  throw new Error('HOC test error');
+};
+
+/**
+ * Throws until the test sets `failing.current` to false. The flag is read on
+ * each render, so the retry after it changes renders the component whole.
+ */
+const ThrowsUntilFixed: React.FC<{ failing: { current: boolean } }> = ({
+  failing,
+}) => {
+  if (failing.current) {
+    throw new Error('Test error');
+  }
+  return <div>Component rendered successfully</div>;
+};
+
 describe('AgentErrorBoundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -53,25 +70,18 @@ describe('AgentErrorBoundary', () => {
   });
 
   it('resets error state when Try Again is clicked', () => {
-    let shouldThrow = true;
-
-    const DynamicComponent = () => {
-      if (shouldThrow) {
-        throw new Error('Test error');
-      }
-      return <div>Component rendered successfully</div>;
-    };
+    const failing = { current: true };
 
     render(
       <AgentErrorBoundary sectionName="Test Section">
-        <DynamicComponent />
+        <ThrowsUntilFixed failing={failing} />
       </AgentErrorBoundary>,
     );
 
     expect(screen.getByText(/Error in Test Section/)).toBeInTheDocument();
 
     // Click Try Again - this should reset the error boundary
-    shouldThrow = false; // Component won't throw on next render
+    failing.current = false; // Component won't throw on next render
     const retryButton = screen.getByText('Try Again');
     fireEvent.click(retryButton);
 
@@ -175,10 +185,6 @@ describe('withAgentErrorBoundary HOC', () => {
   });
 
   it('catches errors in wrapped component', () => {
-    const ErrorComponent: React.FC = () => {
-      throw new Error('HOC test error');
-    };
-
     const WrappedComponent = withAgentErrorBoundary(ErrorComponent, 'Test HOC');
 
     // Mock console.error to avoid test output noise
