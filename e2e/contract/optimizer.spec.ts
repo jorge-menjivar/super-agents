@@ -1726,6 +1726,57 @@ test.describe('decision skills', () => {
     });
   });
 
+  // What a decision agent's first request does: it creates the skill it is
+  // served by. Nobody has written that skill's policy yet, so its arms carry
+  // an empty prompt -- which has to store, read back, and serve as no prompt.
+  test("creates a decision agent's first skill, and serves it before it has a policy", async ({
+    request,
+  }) => {
+    const fresh = await createAgent(
+      request,
+      uniqueAgentName('decide-first'),
+      undefined,
+      { agent_type: 'decision' },
+    );
+    try {
+      await addModelsToAgent(request, fresh.id, [decisionModel.id]);
+      const state = `A first look at the door ${Date.now()}`;
+
+      const response = await request.post(
+        `/v1/agents/${encodeURIComponent(fresh.name)}/systemone`,
+        { data: { state, questions: { withhold: question } } },
+      );
+      expect(response.status(), await response.text()).toBe(200);
+
+      // Asked as the caller asked: there is no policy to put ahead of it.
+      const forwarded = await askedAbout(request, state);
+      expect(forwarded?.questions).toEqual({ withhold: question });
+
+      // And the skill it made can be read, arms and all.
+      const [skill] = (await (
+        await request.get(SKILLS_PATH, { params: { agent_id: fresh.id } })
+      ).json()) as { id: string }[];
+      const arms = await request.get(`${SKILLS_PATH}/${skill.id}/arms`);
+      expect(arms.status(), await arms.text()).toBe(200);
+      expect(
+        ((await arms.json()) as { params: { system_prompt: string } }[]).every(
+          (arm) => arm.params.system_prompt === '',
+        ),
+      ).toBe(true);
+
+      // A second request reads those arms back to serve it.
+      const again = await request.post(
+        `/v1/agents/${encodeURIComponent(fresh.name)}/systemone`,
+        {
+          data: { state: `${state}, again`, questions: { withhold: question } },
+        },
+      );
+      expect(again.status(), await again.text()).toBe(200);
+    } finally {
+      await deleteAgent(request, fresh.id);
+    }
+  });
+
   test('withholds the reply a decision-model reviewer leans toward withholding', async ({
     request,
   }) => {

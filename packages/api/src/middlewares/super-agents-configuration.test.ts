@@ -174,6 +174,61 @@ describe('saConfigurationInjectorMiddleware', () => {
     );
   });
 
+  // A decision skill the gateway created has no policy yet: its arms carry
+  // an empty prompt, and the request goes through as the caller sent it.
+  it('serves an arm with an empty prompt as no system prompt', async () => {
+    const preProcessed = SuperAgentsConfigPreProcessed.parse({
+      agent_name: 'helper',
+      skill_name: 'routed-skill',
+    });
+    const c = context(preProcessed, {
+      getSkillOptimizationClusters: vi
+        .fn()
+        .mockResolvedValue([{ id: 'cluster-1', centroid: [1, 0] }]),
+      getSkillOptimizationArms: vi.fn().mockResolvedValue([
+        {
+          id: 'arm-1',
+          cluster_id: 'cluster-1',
+          params: {
+            system_prompt: '',
+            model_id: 'model-1',
+            temperature_min: 0,
+            temperature_max: 0,
+            top_p_min: 1,
+            top_p_max: 1,
+            frequency_penalty_min: 0,
+            frequency_penalty_max: 0,
+            presence_penalty_min: 0,
+            presence_penalty_max: 0,
+            thinking_min: null,
+            thinking_max: null,
+          },
+        },
+      ]),
+      getSkillOptimizationEvaluations: vi.fn().mockResolvedValue([]),
+      getSkillOptimizationArmStats: vi.fn().mockResolvedValue([]),
+      getModels: vi.fn().mockResolvedValue([
+        {
+          id: 'model-1',
+          model_name: 'drex-latest',
+          ai_provider_id: 'prov-1',
+        },
+      ]),
+      getAIProviderAPIKeyById: vi.fn().mockResolvedValue({
+        ai_provider: 'nace',
+        api_key: 'nace_sk_x',
+        custom_fields: {},
+      }),
+    });
+    const next = vi.fn();
+
+    await saConfigurationInjectorMiddleware(c, next);
+
+    expect(next).toHaveBeenCalled();
+    const saConfig = setValue(c, 'sa_config') as SuperAgentsConfig;
+    expect(saConfig.targets[0].configuration.system_prompt).toBeNull();
+  });
+
   it('answers 422 when the optimized skill has no arms to serve with', async () => {
     // A skill without models has clusters but no arms -- a skill the gateway
     // created for an agent without default models, for instance.
