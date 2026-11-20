@@ -20,30 +20,30 @@
   },
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
-    "@hono/node-server": "^2.1.1",
+    "@hono/node-server": "^2.1.11",
     "@hono/zod-validator": "^0.9.1",
     "@libsql/client": "^0.18.0",
-    "@smithy/signature-v4": "^5.7.3",
+    "@smithy/signature-v4": "^5.7.5",
     "@super-agents/shared": "workspace:*",
     "async-retry": "^1.3.3",
-    "hono": "^4.13.7",
+    "hono": "^4.13.19",
     "json-stable-stringify": "^1.3.0",
     "libsql": "^0.5.29",
     "lodash": "^4.18.1",
-    "nanoid": "^6.0.1",
-    "openai": "^7.21.0",
-    "uuid": "^14.0.2",
-    "ws": "^8.21.3",
-    "zod": "^4.6.6"
+    "nanoid": "^6.0.2",
+    "openai": "^7.62.0",
+    "uuid": "^14.0.3",
+    "ws": "^8.23.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/async-retry": "^1.4.9",
-    "@types/lodash": "^4.17.25",
-    "@types/node": "^26.4.1",
-    "@types/ws": "^8.18.1",
+    "@types/lodash": "^4.17.27",
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0",
-    "wrangler": "^4.129.0"
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
   }
 }
