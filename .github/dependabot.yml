@@ -16,6 +16,13 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # @dicebear/collection has no 10 and peers on @dicebear/core ^9, so core
+      # 10 cannot be taken on its own (#341 failed to build). Remove this once
+      # collection publishes a 10, and take the two together.
+      - dependency-name: "@dicebear/core"
+        update-types:
+          - "version-update:semver-major"
 
   - package-ecosystem: "github-actions"
     directory: "/"
