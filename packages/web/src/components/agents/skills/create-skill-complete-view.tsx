@@ -2,9 +2,10 @@
 
 import type { AIProvider } from '@shared/types/constants';
 import { PrettyAIProvider } from '@shared/types/constants';
-import type {
-  EvaluationMethodDetails,
-  EvaluationMethodName,
+import {
+  type EvaluationMethodDetails,
+  type EvaluationMethodName,
+  evaluationMethodAppliesTo,
 } from '@shared/types/evaluations';
 import {
   addModelsToSkill,
@@ -237,6 +238,10 @@ export function CreateSkillCompleteView(): ReactElement {
   const servingModels = models.filter(
     (model) => model.model_type === selectedAgent.agent_type,
   );
+  // And the methods that can judge its skills: the API takes no other.
+  const applicableMethods = evaluationMethods.filter((method) =>
+    evaluationMethodAppliesTo(method, selectedAgent.agent_type),
+  );
 
   // Group models by provider
   const modelsByProvider = servingModels.reduce(
@@ -381,7 +386,7 @@ export function CreateSkillCompleteView(): ReactElement {
                   <Skeleton className="h-20 w-full" />
                   <Skeleton className="h-20 w-full" />
                 </div>
-              ) : evaluationMethods.length === 0 ? (
+              ) : applicableMethods.length === 0 ? (
                 <div className="text-center py-8">
                   <CheckCircle2 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">
@@ -393,7 +398,7 @@ export function CreateSkillCompleteView(): ReactElement {
                 </div>
               ) : (
                 <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 border rounded-md p-3">
-                  {evaluationMethods.map((method) => (
+                  {applicableMethods.map((method) => (
                     <Card
                       key={method.method}
                       className={`cursor-pointer transition-all ${

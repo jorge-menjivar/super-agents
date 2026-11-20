@@ -12,6 +12,7 @@ import { evaluateLog } from './service/evaluate';
 // Simplified method configuration constant - only essential fields for standardization
 const conversationCompletenessMethodConfig: EvaluationMethodDetails = {
   method: EvaluationMethodName.CONVERSATION_COMPLETENESS,
+  agent_types: ['text'],
   name: 'Conversation Completeness',
   description:
     'Evaluates how well an AI assistant completes conversations by satisfying user needs throughout the interaction',

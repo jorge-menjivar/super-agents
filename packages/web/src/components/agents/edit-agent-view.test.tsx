@@ -645,15 +645,18 @@ describe('EditAgentView', () => {
       expect(screen.getByLabelText('Agent Type')).toHaveValue('Decision');
     });
 
-    // Its answers are probabilities: nothing reviews them, and the optimizer
-    // -- the judge, the prompt writer, the evaluation generator -- leaves
-    // them alone. What routes its requests still applies.
+    // Its answers are probabilities: nothing reviews them. Its skills are
+    // routed, judged and given policies like any other's, but the method
+    // that judges a decision has nothing for the evaluation generator to
+    // write.
     it('offers only the settings that mean something for it', () => {
       asDecisionAgent();
       renderEditAgentView();
 
       expect(screen.queryByText('Response review')).not.toBeInTheDocument();
-      expect(screen.queryByText(/^Judge model$/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Evaluations model$/)).not.toBeInTheDocument();
+      expect(screen.getByText(/^Judge model$/)).toBeInTheDocument();
+      expect(screen.getByText(/^System prompts model$/)).toBeInTheDocument();
       expect(screen.getByText(/^Embedding model$/)).toBeInTheDocument();
     });
 

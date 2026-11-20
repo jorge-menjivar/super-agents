@@ -4,10 +4,12 @@ import {
   embedText,
   extractMessagesFromRequestData,
   formatMessagesForEmbedding,
+  generateEmbeddingForRequest,
   RequestEmbeddingError,
 } from '@api/utils/embeddings';
 import { resolveEmbeddingModelConfig } from '@api/utils/evaluation-model-resolver';
 import { FunctionName } from '@shared/types/api/request';
+import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import { ChatCompletionMessageRole } from '@shared/types/api/routes/shared/messages';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -72,6 +74,89 @@ describe('embedText', () => {
     ).rejects.toBeInstanceOf(RequestEmbeddingError);
 
     vi.unstubAllGlobals();
+  });
+});
+
+// What places a request in its skill's clusters.
+describe('generateEmbeddingForRequest', () => {
+  const connector = {
+    getAIProviderAPIKeys: vi
+      .fn()
+      .mockResolvedValue([{ ai_provider: 'openai', api_key: 'sk-test' }]),
+  } as unknown as UserDataStorageConnector;
+  const systemOne = (state: unknown) =>
+    ({
+      functionName: FunctionName.SYSTEM_ONE,
+      requestBody: {
+        state,
+        questions: {
+          withhold: { type: 'noul', instructions: 'Withhold it?' },
+        },
+      },
+    }) as unknown as SuperAgentsRequestData;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(resolveEmbeddingModelConfig).mockResolvedValue({
+      modelId: 'embed-model',
+      model: {
+        id: 'embed-model',
+        ai_provider_id: 'provider-1',
+        model_name: 'text-embedding-3-small',
+      },
+      dimensions: 1536,
+      timeoutMs: 7_000,
+    } as never);
+  });
+
+  // Its questions stay the same request after request; the material is what
+  // tells one kind of request from another.
+  it("embeds a decision request's state", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ embedding: [0.1, 0.2] }] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const embedding = await generateEmbeddingForRequest(
+      createMockContext(),
+      systemOne('Try the third window from the left.'),
+      connector,
+    );
+
+    expect(embedding).toEqual([0.1, 0.2]);
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(JSON.stringify(body.input)).toContain(
+      'Try the third window from the left.',
+    );
+    expect(JSON.stringify(body.input)).not.toContain('Withhold it?');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('has nothing to embed in an empty state', async () => {
+    await expect(
+      generateEmbeddingForRequest(
+        createMockContext(),
+        systemOne(''),
+        connector,
+      ),
+    ).rejects.toBeInstanceOf(RequestEmbeddingError);
+  });
+
+  it('embeds no request a system prompt does not shape', async () => {
+    await expect(
+      generateEmbeddingForRequest(
+        createMockContext(),
+        {
+          functionName: FunctionName.EMBED,
+          requestBody: { input: 'x' },
+        } as unknown as SuperAgentsRequestData,
+        connector,
+      ),
+    ).rejects.toBeInstanceOf(RequestEmbeddingError);
   });
 });
 

@@ -523,20 +523,43 @@ comes back stamped with its provider, and only the two vendors' errors differ.
   request away from an agent that cannot answer it -- chat to a decision
   agent, System One to an LLM agent -- before routing it. The agent's own
   role models are a separate matter: a decision agent still routes by
-  embeddings, so its embedding, arbiter and compaction models stay text and
-  embed models like anyone's.
+  embeddings and is judged and given policies by LLMs, so its embedding,
+  arbiter, compaction, judge and reflection models stay text and embed
+  models like anyone's.
 - **The skill's system prompt is its policy.** System One has no system
   message, so `withSystemOnePolicy` (`@shared/utils/system-one`) puts the
   served prompt ahead of each question's `instructions`; a skill created from
   a System One request starts with an empty one, so it is a pass-through
-  until someone writes the policy. Where a system prompt is *read* -- routing,
-  `original_system_prompt` -- it is the questions' instructions, and `state`
-  is the conversation.
-- **The optimizer leaves decision skills alone.** Its judges and prompt
-  writers are LLMs reading text. A skill created from a System One request has
-  `optimize` off and gets no evaluations, realtime evaluations skip System One
-  logs, clustering and prompt regeneration only ever ran for conversational
-  requests, and an arm's sampling settings are not applied to one.
+  until the optimizer writes the policy. Where a system prompt is *read* --
+  routing, `original_system_prompt` -- it is the questions' instructions, and
+  `state` is the conversation.
+- **Decision skills are optimized like any other.** `isOptimizedFunction`
+  (`@shared/utils/optimized-functions`) is the one list of the traffic the
+  optimizer works on, and System One is on it. A request is embedded by its
+  state (`systemOneStateText`, what routing reads too), so it finds its
+  cluster and its logs reach early regeneration, clustering and reflection.
+  It is judged by **decision correctness**
+  (`connectors/evaluations/decision-correctness/`): an LLM judge answers the
+  questions the caller asked -- from `log.request_body`, so blind to the
+  policy, and blind to the model's answers -- and each answer is scored
+  against it with the Brier score, a proper scoring rule, so a policy that
+  makes the model rightly sure scores best and one that makes it confidently
+  wrong worst. A question the judge marks `unknown` (one that turns on an
+  image it is not shown) is left out, and a log it cannot judge at all scores
+  the neutral 0.5. A thumbs up or down shows the judge the answers and the
+  verdict. The policy writers know what they are writing: for a decision
+  agent, seeding and reflection (`optimization/utils/system-prompt.ts`) ask
+  for definitions and rules rather than a persona or an output format, and
+  read each example as its state, questions and answers
+  (`utils/super-agents/decision-logs.ts`). An arm's sampling settings are
+  still not applied to System One, so a decision skill's arms differ only in
+  their policy.
+- **Evaluation methods say whose skills they judge.** Each method's details
+  carry `agent_types`: the conversation judges are `text`, decision
+  correctness is `decision`, and latency -- which reads only timing -- is
+  both. A skill is given the methods for its agent's type
+  (`evaluationConnectorsFor`), and the evaluations route refuses the others
+  with a 400.
 - **Images, as Jev names them.** A request shows the model images through
   `assets`: a map of reference to a PNG or JPEG in base64, the reference
   written as plain text wherever the image belongs, in the state, an
@@ -738,11 +761,12 @@ System prompts evolve through two distinct phases:
 ### Internal Skills
 
 The system uses special auto-generated skills in the `super-agents` agent (defined in `SA_SKILLS` constant):
-- `system-prompt-seeding`: Initial prompt generation
+- `system-prompt-seeding`: Initial prompt generation (a policy, for a decision agent)
 - `system-prompt-seeding-with-context`: Context-aware generation
 - `system-prompt-reflection`: Reflection-based improvements
 - `create-evaluations`: Evaluation method generation
-- `judge`: Evaluation scoring
+- `judge`: Evaluation scoring -- and, for decision correctness, the right
+  answers a decision model's are scored against
 - `extract-task-and-outcome`: Task/outcome extraction
 - `embedding`: Text embedding generation
 - `describe-skill`: Name and description for a skill the gateway creates

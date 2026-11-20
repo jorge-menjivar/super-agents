@@ -12,6 +12,7 @@ import {
 // Simplified method configuration constant - only essential fields for standardization
 const taskCompletionMethodConfig: EvaluationMethodDetails = {
   method: EvaluationMethodName.TASK_COMPLETION,
+  agent_types: ['text'],
   name: 'Task Completion',
   description:
     'Evaluates whether an AI agent successfully completed a given task using LLM-as-a-judge',

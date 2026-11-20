@@ -599,6 +599,7 @@ export const toolCorrectnessEvaluationConnector: EvaluationMethodConnector = {
   getDetails(): EvaluationMethodDetails {
     return {
       method: EvaluationMethodName.TOOL_CORRECTNESS,
+      agent_types: ['text'],
       name: 'Tool Correctness Evaluation',
       description: 'Evaluates the correctness of tool calls made by agents',
     };

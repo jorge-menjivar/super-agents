@@ -10,9 +10,11 @@ import {
   type ResponsesRequestData,
   type StreamChatCompletionRequestData,
 } from '@shared/types/api/request';
+import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import type { ChatCompletionMessage } from '@shared/types/api/routes/shared/messages';
 import { ChatCompletionMessageRole } from '@shared/types/api/routes/shared/messages';
 import type { Agent } from '@shared/types/data';
+import { systemOneStateText } from '@shared/utils/system-one';
 import { nanoid } from 'nanoid';
 
 export class RequestEmbeddingError extends Error {
@@ -389,16 +391,39 @@ export async function embedText(
   }
 }
 
+/**
+ * The messages a request is clustered by: its conversation, minus its system
+ * messages. A System One request's conversation is its state, the material
+ * that changes request by request, read as routing reads it.
+ */
+function clusteringMessages(
+  saRequestData: SuperAgentsRequestData,
+): ChatCompletionMessage[] {
+  switch (saRequestData.functionName) {
+    case FunctionName.CHAT_COMPLETE:
+    case FunctionName.STREAM_CHAT_COMPLETE:
+    case FunctionName.CREATE_MODEL_RESPONSE:
+      return extractMessagesFromRequestData(saRequestData);
+    case FunctionName.SYSTEM_ONE: {
+      const state = systemOneStateText(saRequestData.requestBody.state);
+      return state
+        ? [{ role: ChatCompletionMessageRole.USER, content: state }]
+        : [];
+    }
+    default:
+      throw new RequestEmbeddingError(
+        `A ${saRequestData.functionName} request is not embedded`,
+      );
+  }
+}
+
 /** The embedding of a request's conversation, minus its system messages. */
 export async function generateEmbeddingForRequest(
   c: AppContext,
-  saRequestData:
-    | ChatCompletionRequestData
-    | StreamChatCompletionRequestData
-    | ResponsesRequestData,
+  saRequestData: SuperAgentsRequestData,
   connector: UserDataStorageConnector,
 ): Promise<number[]> {
-  const messages = extractMessagesFromRequestData(saRequestData);
+  const messages = clusteringMessages(saRequestData);
   const inputText = formatMessagesForEmbedding(messages);
 
   if (!inputText.trim()) {

@@ -11,6 +11,7 @@ import {
 
 const roleAdherenceMethodConfig: EvaluationMethodDetails = {
   method: EvaluationMethodName.ROLE_ADHERENCE,
+  agent_types: ['text'],
   name: 'Role Adherence',
   description:
     'Evaluates whether assistant output adheres to a specified role and constraints using LLM-as-a-judge',

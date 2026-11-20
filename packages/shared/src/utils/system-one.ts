@@ -25,6 +25,22 @@ export function systemOneInstructionsText(
   return texts.length > 0 ? texts.join('\n\n') : null;
 }
 
+/**
+ * What a System One request is about, as text: its state, which is the
+ * material that changes request by request while the questions stay the
+ * same. A string as it came, anything else as indented JSON, and nothing for
+ * an empty state. It is what routes the request (as its conversation) and
+ * what places it in its skill's clusters, so the two read the same text.
+ */
+export function systemOneStateText(
+  state: SystemOneRequestBody['state'],
+): string | null {
+  if (state === null || state === undefined || state === '') {
+    return null;
+  }
+  return typeof state === 'string' ? state : JSON.stringify(state, null, 2);
+}
+
 /** A question's instructions with a policy ahead of them. */
 function withPolicyAhead(
   policy: string,

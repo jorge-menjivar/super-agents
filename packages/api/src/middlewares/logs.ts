@@ -532,7 +532,7 @@ async function processLogs({
 
     // Trigger evaluations asynchronously (non-blocking) if conditions are met
     if (
-      shouldTriggerRealtimeEvaluation(status, url, functionName) &&
+      shouldTriggerRealtimeEvaluation(status, url) &&
       userDataStorageConnector &&
       evaluationConnectorsMap
     ) {

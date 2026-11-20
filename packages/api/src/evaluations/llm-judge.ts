@@ -10,6 +10,8 @@ import {
 } from '@api/evaluations/generic-judge-defaults';
 import {
   type EvaluationInput,
+  type JudgeAnswer,
+  type JudgePrompt,
   type LLMJudge,
   type LLMJudgeConfig,
   LLMJudgeResult,
@@ -252,24 +254,33 @@ Provide a score between 0 and 1 with detailed reasoning for your evaluation.`;
   }
 
   /**
-   * Core evaluation method using OpenAI library
+   * One judging call, answered in `format`'s shape and read by `read`,
+   * retried while the failure is one a retry can fix. A judge that cannot be
+   * asked, or never answers readably, is the fallback result -- a neutral 0.5
+   * that says why -- rather than an error.
    */
-  async function evaluate(input: EvaluationInput): Promise<LLMJudgeResult> {
+  async function ask<T>(
+    prompt: JudgePrompt,
+    format: { name: string; schema: z.ZodType },
+    read: (parsed: object) => T,
+  ): Promise<JudgeAnswer<T>> {
     // Self-hosted providers such as Ollama are called without a key, so only
     // the providers that need one are held to it.
     if (apiKey.trim() === '' && isAPIKeyRequiredForProvider(provider)) {
       warn('[LLM_JUDGE] API key not configured for evaluation model');
-      return getFallbackResult('no_api_key', undefined, {
-        retryCount: 0,
-        maxRetries: LLM_JUDGE_MAX_RETRIES,
-      });
+      return {
+        ok: false,
+        fallback: getFallbackResult('no_api_key', undefined, {
+          retryCount: 0,
+          maxRetries: LLM_JUDGE_MAX_RETRIES,
+        }),
+      };
     }
 
     let lastError: unknown;
     let retryCount = 0;
     for (let i = 0; i < LLM_JUDGE_MAX_RETRIES; i++) {
       try {
-        const prompt = generateEvaluationPrompt(input);
         // Identical requests share a cache entry, and a retry is identical to
         // the attempt whose answer was no good. It has to bypass the cache or
         // it is handed that same answer again; the fresh one takes its place.
@@ -313,9 +324,9 @@ Provide a score between 0 and 1 with detailed reasoning for your evaluation.`;
           response_format: {
             type: 'json_schema',
             json_schema: {
-              name: 'evaluation_result',
+              name: format.name,
               strict: true,
-              schema: z.toJSONSchema(EvaluationResultSchema),
+              schema: z.toJSONSchema(format.schema),
             },
           },
         });
@@ -345,7 +356,7 @@ Provide a score between 0 and 1 with detailed reasoning for your evaluation.`;
           throw new Error('No parsed response from AI provider');
         }
 
-        return LLMJudgeResult.parse(parsed);
+        return { ok: true, value: read(parsed) };
       } catch (err) {
         lastError = err;
         if (i < LLM_JUDGE_MAX_RETRIES - 1 && isRetryableLLMJudgeError(err)) {
@@ -362,6 +373,11 @@ Provide a score between 0 and 1 with detailed reasoning for your evaluation.`;
       }
     }
 
+    return { ok: false, fallback: fallbackFor(lastError, retryCount) };
+  }
+
+  /** The fallback result for the error a judging call ended on. */
+  function fallbackFor(lastError: unknown, retryCount: number): LLMJudgeResult {
     // Categorize error type for better fallback messaging
     const retryInfo = {
       retryCount,
@@ -425,8 +441,29 @@ Provide a score between 0 and 1 with detailed reasoning for your evaluation.`;
     return getFallbackResult('unknown_error', String(lastError), retryInfo);
   }
 
+  /**
+   * Core evaluation method using OpenAI library
+   */
+  async function evaluate(input: EvaluationInput): Promise<LLMJudgeResult> {
+    const answer = await ask(
+      generateEvaluationPrompt(input),
+      { name: 'evaluation_result', schema: EvaluationResultSchema },
+      (parsed) => LLMJudgeResult.parse(parsed),
+    );
+    return answer.ok ? answer.value : answer.fallback;
+  }
+
+  /** A judging call answered in a shape of the caller's own. */
+  function answer<T>(
+    prompt: JudgePrompt,
+    format: { name: string; schema: z.ZodType<T> },
+  ): Promise<JudgeAnswer<T>> {
+    return ask(prompt, format, (parsed) => format.schema.parse(parsed));
+  }
+
   return {
     evaluate,
+    answer,
     config: judgeConfig,
   };
 }

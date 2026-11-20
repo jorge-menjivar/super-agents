@@ -4,11 +4,9 @@ import {
   uniqueSkillName,
 } from '@api/optimization/utils/describe-skill';
 import { generateEvaluationCreateParams } from '@api/optimization/utils/evaluations';
-import type {
-  EvaluationMethodConnector,
-  UserDataStorageConnector,
-} from '@api/types/connector';
+import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
+import { evaluationConnectorsFor } from '@api/utils/evaluation-methods';
 import {
   agentById,
   resolveEmbeddingModelConfig,
@@ -24,7 +22,6 @@ import type { Agent, Skill } from '@shared/types/data';
 import { SkillCreateParams } from '@shared/types/data/skill';
 import { SkillEventType } from '@shared/types/data/skill-event';
 import type { SkillOptimizationClusterCreateParams } from '@shared/types/data/skill-optimization-cluster';
-import type { EvaluationMethodName } from '@shared/types/evaluations';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
 import { getRuntimeKey } from 'hono/adapter';
 
@@ -66,9 +63,10 @@ export async function createInitialClusters(
 }
 
 /**
- * Generates the skill's evaluations with every method the server has. Each
- * is a model call, so this runs behind the request that created the skill;
- * the requests answered before it returns are judged once it has.
+ * Generates the skill's evaluations with every method that can judge the
+ * agent's skills. Each is a model call, so this runs behind the request that
+ * created the skill; the requests answered before it returns are judged once
+ * it has.
  */
 async function generateEvaluations(
   c: AppContext,
@@ -81,10 +79,7 @@ async function generateEvaluations(
     return;
   }
 
-  const entries = Object.entries(connectorsMap) as [
-    EvaluationMethodName,
-    EvaluationMethodConnector,
-  ][];
+  const entries = evaluationConnectorsFor(connectorsMap, agent.agent_type);
   if (entries.length === 0) {
     return;
   }
@@ -136,13 +131,12 @@ async function generateEvaluations(
  * embedding rather than the description, since that is what the next such
  * request will look like.
  *
- * A skill created from a System One request is a decision skill, and differs
- * in two ways. Its arms start with an empty prompt rather than the caller's
- * questions: a decision skill's prompt is a policy the questions are asked
- * under, and seeding it with the questions would ask each one twice. And it
- * is not optimized, so no evaluations are generated for it: the optimizer's
- * judges and prompt writers are LLMs, which would score probabilities and
- * rewrite a policy with nothing to go on.
+ * A skill created from a System One request is a decision skill. It is
+ * optimized like any other, but its arms start with an empty prompt rather
+ * than the caller's questions: a decision skill's prompt is a policy the
+ * questions are asked under, and seeding it with the questions would ask each
+ * one twice. Empty, it passes the questions through as they came until early
+ * regeneration writes the first policies from the skill's own requests.
  */
 export async function createSkillForRequest(
   c: AppContext,
@@ -162,10 +156,10 @@ export async function createSkillForRequest(
     takenNames,
   );
   const name = uniqueSkillName(naming.name, takenNames);
-  const decisionSkill = saRequestData.functionName === FunctionName.SYSTEM_ONE;
-  const seedSystemPrompt = decisionSkill
-    ? ''
-    : extractSystemPrompt(saRequestData);
+  const seedSystemPrompt =
+    saRequestData.functionName === FunctionName.SYSTEM_ONE
+      ? ''
+      : extractSystemPrompt(saRequestData);
 
   let skill: Skill;
   try {
@@ -176,7 +170,7 @@ export async function createSkillForRequest(
         name,
         description: naming.description,
         metadata: {},
-        optimize: !decisionSkill,
+        optimize: true,
         auto_created: true,
         seed_system_prompt: seedSystemPrompt,
       }),
@@ -238,8 +232,7 @@ export async function createSkillForRequest(
   });
   emitSSEEvent('skill:created', { skillId: skill.id, agentId: agent.id });
 
-  // Evaluations are what an optimized skill is judged by; a skill that is not
-  // optimized -- a decision skill -- has no use for them.
+  // Evaluations are what an optimized skill is judged by.
   if (skill.optimize) {
     const evaluations = generateEvaluations(c, connector, agent, skill).catch(
       (e) => {

@@ -1823,3 +1823,259 @@ test.describe('decision skills', () => {
     );
   });
 });
+
+/**
+ * A decision skill is optimized like any other: each answer is judged, the
+ * request is placed in a cluster by its state, and its policy -- the system
+ * prompt each question is asked under -- is written from its own requests.
+ *
+ * The judge and the policy writer answer under models of their own, named by
+ * the agent, so the replies scripted for them cannot reach any other internal
+ * call on the shared stub.
+ */
+test.describe('optimizing decision skills', () => {
+  const policy = 'Withhold anything that helps someone get into a home.';
+  const written =
+    'Directions into a home are withheld; directions to it are not.';
+  const question = {
+    type: 'noul',
+    instructions: 'Should the client be kept from receiving this?',
+  };
+  let stub: StubModels;
+  let decisionModel: { id: string; name: string };
+  let judgeModel: string;
+  let writerModel: string;
+  let agent: Agent;
+  let skill: Skill;
+
+  /** A text model on the stub, for one internal role to answer under. */
+  const roleModel = async (
+    request: APIRequestContext,
+    scope: string,
+    role: string,
+  ): Promise<{ id: string; name: string }> => {
+    const name = uniqueModelName(`${scope}-${role}`);
+    const created = await request.post(MODELS_PATH, {
+      data: {
+        ai_provider_id: stub.providerId,
+        model_name: name,
+        model_type: 'text',
+      },
+    });
+    expect(created.status()).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    recordModel(id);
+    return { id, name };
+  };
+
+  const ask = (request: APIRequestContext, state: string) =>
+    request.post(
+      `/v1/agents/${encodeURIComponent(agent.name)}/skills/${skill.name}/systemone`,
+      { data: { state, questions: { withhold: question } } },
+    );
+
+  /** The log of the request about `state`, once it has answered. */
+  const logOf = async (
+    request: APIRequestContext,
+    state: string,
+  ): Promise<LoggedRequest> => {
+    let found: LoggedRequest | undefined;
+    await expect
+      .poll(async () => {
+        found = (await getLogs(request, skill.id)).find(
+          (log) =>
+            log.ai_provider_request_log !== null &&
+            JSON.stringify(log.ai_provider_request_log.request_body).includes(
+              state,
+            ),
+        );
+        return found?.id ?? '';
+      })
+      .not.toBe('');
+    return found as LoggedRequest;
+  };
+
+  test.beforeAll(async ({ request }, testInfo) => {
+    const scope =
+      `optdecide-${testInfo.project.name.replace(/[^a-z0-9]+/gi, '-')}`.toLowerCase();
+    stub = await setUpStubModels(request, scope);
+    decisionModel = await createDecisionModel(request, scope);
+    const judge = await roleModel(request, scope, 'judge');
+    const writer = await roleModel(request, scope, 'writer');
+    judgeModel = judge.name;
+    writerModel = writer.name;
+
+    agent = await createAgent(request, uniqueAgentName(scope), undefined, {
+      agent_type: 'decision',
+      auto_create_skills: false,
+      judge_model_id: judge.id,
+      system_prompt_reflection_model_id: writer.id,
+    });
+    skill = await createSkill(request, agent.id, 'policy_skill', {
+      seed_system_prompt: policy,
+      optimize: true,
+    });
+    const attached = await request.post(`${SKILLS_PATH}/${skill.id}/models`, {
+      data: { modelIds: [decisionModel.id] },
+    });
+    expect(attached.status()).toBe(201);
+
+    const evaluations = await request.post(
+      `${SKILLS_PATH}/${skill.id}/evaluations`,
+      { data: { methods: ['decision_correctness'] } },
+    );
+    expect(evaluations.status(), await evaluations.text()).toBe(200);
+
+    // The model leans toward withholding; the judge says it is right to.
+    await stubReply(
+      request,
+      decisionModel.name,
+      JSON.stringify({ withhold: { type: 'noul', noul: 0.9 } }),
+    );
+    await stubReply(
+      request,
+      judgeModel,
+      JSON.stringify({
+        answers: [
+          {
+            question_id: 'withhold',
+            answer: 'true',
+            reasoning: 'It names a way in.',
+          },
+        ],
+      }),
+    );
+    await stubReply(
+      request,
+      writerModel,
+      JSON.stringify({ system_prompt: written }),
+    );
+  });
+
+  test.afterAll(async ({ request }) => {
+    await stubReset(request, decisionModel.name);
+    await stubReset(request, judgeModel);
+    await stubReset(request, writerModel);
+    await deleteAgent(request, agent.id);
+  });
+
+  test("refuses to judge a decision skill by a conversation's measure", async ({
+    request,
+  }) => {
+    const refused = await request.post(
+      `${SKILLS_PATH}/${skill.id}/evaluations`,
+      { data: { methods: ['task_completion'] } },
+    );
+    expect(refused.status()).toBe(400);
+  });
+
+  test('judges each answer against the right one', async ({ request }) => {
+    const state = `Try the third window from the left ${Date.now()}`;
+    const response = await ask(request, state);
+    expect(response.status(), await response.text()).toBe(200);
+
+    const log = await logOf(request, state);
+    let run: { results: { method: string; score: number }[] } | undefined;
+    await expect
+      .poll(
+        async () => {
+          const runs = await request.get(
+            `${SKILLS_PATH}/${skill.id}/evaluation-runs`,
+            { params: { log_id: log.id } },
+          );
+          [run] = (await runs.json()) as (typeof run)[];
+          return run?.results.length ?? 0;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(1);
+
+    // P(yes) = 0.9 where yes is right: 1 - 0.1^2.
+    expect(run?.results[0].method).toBe('decision_correctness');
+    expect(run?.results[0].score).toBeCloseTo(0.99);
+
+    // The judge was asked what the caller asked, without the policy the
+    // skill asked it under, and without the model's answer.
+    const judged = (await stubRequests(request, judgeModel)).find((body) =>
+      JSON.stringify(body).includes(state),
+    );
+    expect(JSON.stringify(judged)).toContain(question.instructions);
+    expect(JSON.stringify(judged)).not.toContain(policy);
+    expect(JSON.stringify(judged)).not.toContain('0.90');
+  });
+
+  test('writes the policy from its first requests, and asks under it', async ({
+    request,
+  }) => {
+    // Early regeneration reads the skill's first five embedded requests.
+    for (let i = 0; i < 5; i++) {
+      const response = await ask(request, `A way in, take ${i} ${Date.now()}`);
+      expect(response.status(), await response.text()).toBe(200);
+    }
+
+    await expect
+      .poll(
+        async () =>
+          (await getArms(request, skill.id)).every(
+            (arm) => arm.params.system_prompt === written,
+          ),
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+
+    // The writer was asked for a policy, from the requests themselves.
+    const writerAsked = JSON.stringify(
+      await stubRequests(request, writerModel),
+    );
+    expect(writerAsked).toContain("the skill's policy");
+    expect(writerAsked).toContain('A way in, take');
+
+    const state = `After the policy ${Date.now()}`;
+    expect((await ask(request, state)).status()).toBe(200);
+    const forwarded = (await stubRequests(request, decisionModel.name)).find(
+      (body) => body.state === state,
+    ) as { questions: { withhold: { instructions: string } } } | undefined;
+    expect(forwarded?.questions.withhold.instructions).toBe(
+      `${written}\n\n${question.instructions}`,
+    );
+  });
+
+  test("gives a decision agent's first skill the evaluations that judge decisions", async ({
+    request,
+  }) => {
+    const fresh = await createAgent(
+      request,
+      uniqueAgentName('optdecide-first'),
+      undefined,
+      { agent_type: 'decision' },
+    );
+    try {
+      await addModelsToAgent(request, fresh.id, [decisionModel.id]);
+      const response = await request.post(
+        `/v1/agents/${encodeURIComponent(fresh.name)}/systemone`,
+        {
+          data: {
+            state: `A first look at the door ${Date.now()}`,
+            questions: { withhold: question },
+          },
+        },
+      );
+      expect(response.status(), await response.text()).toBe(200);
+
+      const [created] = await getSkills(request, { agent_id: fresh.id });
+      expect(created.optimize).toBe(true);
+      // Generated behind the request that created the skill.
+      await expect
+        .poll(
+          async () =>
+            (await getSkillEvaluations(request, created.id))
+              .map((evaluation) => evaluation.evaluation_method)
+              .sort(),
+          { timeout: 30_000 },
+        )
+        .toEqual(['decision_correctness', 'latency']);
+    } finally {
+      await deleteAgent(request, fresh.id);
+    }
+  });
+});

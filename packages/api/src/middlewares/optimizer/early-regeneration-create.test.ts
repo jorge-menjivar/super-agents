@@ -91,8 +91,16 @@ const usableLog = (): Log =>
   }) as unknown as Log;
 
 const connectorsMap = {
-  latency: {} as EvaluationMethodConnector,
-  task_completion: {} as EvaluationMethodConnector,
+  latency: {
+    getDetails: () => ({ agent_types: ['text', 'decision'] }),
+  } as unknown as EvaluationMethodConnector,
+  task_completion: {
+    getDetails: () => ({ agent_types: ['text'] }),
+  } as unknown as EvaluationMethodConnector,
+  // Registered, but no judge of a conversation: a chat skill never gets it.
+  decision_correctness: {
+    getDetails: () => ({ agent_types: ['decision'] }),
+  } as unknown as EvaluationMethodConnector,
 };
 
 type Evaluation = { id: string; evaluation_method: string };

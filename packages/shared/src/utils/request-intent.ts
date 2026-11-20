@@ -1,6 +1,7 @@
 import { FunctionName } from '@shared/types/api/request';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import { ChatCompletionMessageRole } from '@shared/types/api/routes/shared/messages';
+import { systemOneStateText } from '@shared/utils/system-one';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
 
 /**
@@ -163,13 +164,8 @@ function conversationMessages(
     // What a decision model is asked about is the conversation it is part
     // of: the material changes request by request, the questions do not.
     case FunctionName.SYSTEM_ONE: {
-      const { state } = saRequestData.requestBody;
-      if (state === null || state === undefined || state === '') {
-        return [];
-      }
-      const content =
-        typeof state === 'string' ? state : JSON.stringify(state, null, 2);
-      return [{ role: ChatCompletionMessageRole.USER, content }];
+      const content = systemOneStateText(saRequestData.requestBody.state);
+      return content ? [{ role: ChatCompletionMessageRole.USER, content }] : [];
     }
     default:
       return [];

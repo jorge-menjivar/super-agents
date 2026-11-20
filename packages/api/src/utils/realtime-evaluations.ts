@@ -5,7 +5,6 @@ import type {
 } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { error } from '@shared/console-logging';
-import { FunctionName } from '@shared/types/api/request/function-name';
 import type {
   SkillOptimizationEvaluation,
   SkillOptimizationEvaluationResult,
@@ -84,16 +83,9 @@ export async function runEvaluationsForLog(
 export function shouldTriggerRealtimeEvaluation(
   status: number,
   url: URL,
-  functionName?: FunctionName,
 ): boolean {
   // Only trigger on successful responses
   if (status !== 200) {
-    return false;
-  }
-
-  // A decision model's answer is a set of probabilities, and the evaluations
-  // are judged by LLMs reading text: there is nothing in it for them to read.
-  if (functionName === FunctionName.SYSTEM_ONE) {
     return false;
   }
 

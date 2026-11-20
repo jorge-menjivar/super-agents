@@ -12,10 +12,12 @@ import type {
   UserDataStorageConnector,
 } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
+import { evaluationConnectorsFor } from '@api/utils/evaluation-methods';
 import { agentById } from '@api/utils/evaluation-model-resolver';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
+import { agentTypeFor } from '@api/utils/super-agents/agent-type';
 import { judgeLogsWithoutRuns } from '@api/utils/super-agents/judge-backlog';
-import { FunctionName } from '@shared/types/api/request';
+import type { FunctionName } from '@shared/types/api/request';
 import type {
   Skill,
   SkillOptimizationArm,
@@ -24,7 +26,7 @@ import type {
 } from '@shared/types/data';
 import { isCompletedLog } from '@shared/types/data/log';
 import { SkillEventType } from '@shared/types/data/skill-event';
-import type { EvaluationMethodName } from '@shared/types/evaluations';
+import { isOptimizedFunction } from '@shared/utils/optimized-functions';
 
 /** The shortest a regeneration lock is ever held. */
 const EVALUATION_LOCK_FLOOR_MS = 5 * 60 * 1000;
@@ -74,14 +76,8 @@ export async function checkAndRegenerateEvaluationsEarly(
   evaluationConnectorsMap: Record<string, EvaluationMethodConnector>,
 ): Promise<void> {
   try {
-    // Only attempt to optimize for specific endpoints
-    if (
-      !(
-        functionName === FunctionName.CHAT_COMPLETE ||
-        functionName === FunctionName.STREAM_CHAT_COMPLETE ||
-        functionName === FunctionName.CREATE_MODEL_RESPONSE
-      )
-    ) {
+    // Only requests a skill's system prompt shapes are optimized on
+    if (!isOptimizedFunction(functionName)) {
       return;
     }
 
@@ -240,7 +236,9 @@ export async function checkAndRegenerateEvaluationsEarly(
     // in the background at creation, that can fail -- system settings without
     // an evaluation model yet, a provider down -- and nothing else retries.
     // This pass is the retry: an auto-created skill with no evaluations gets
-    // every method the server has, generated from these first real examples.
+    // every method that can judge its requests, generated from these first
+    // real examples. The request reached this skill's agent, so its type is
+    // the agent's.
     const existingEvaluations =
       await userDataStorageConnector.getSkillOptimizationEvaluations(c, {
         skill_id: skill.id,
@@ -249,7 +247,10 @@ export async function checkAndRegenerateEvaluationsEarly(
       existingEvaluations.length > 0
         ? existingEvaluations.map((e) => e.evaluation_method)
         : skill.auto_created
-          ? (Object.keys(evaluationConnectorsMap) as EvaluationMethodName[])
+          ? evaluationConnectorsFor(
+              evaluationConnectorsMap,
+              agentTypeFor(functionName) ?? 'text',
+            ).map(([method]) => method)
           : [];
 
     // Regenerate evaluations with real examples

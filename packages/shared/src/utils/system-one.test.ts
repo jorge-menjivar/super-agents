@@ -4,6 +4,7 @@ import type { SystemOneQuestion } from '@shared/types/api/routes/system-one-api'
 import { describeRequestIntent } from '@shared/utils/request-intent';
 import {
   systemOneInstructionsText,
+  systemOneStateText,
   withSystemOnePolicy,
 } from '@shared/utils/system-one';
 import { extractSystemPrompt } from '@shared/utils/system-prompt';
@@ -83,6 +84,26 @@ describe('withSystemOnePolicy', () => {
     const before = structuredClone(questions);
     withSystemOnePolicy(questions, POLICY);
     expect(questions).toEqual(before);
+  });
+});
+
+// What routes a request and places it in a cluster: the same text for both.
+describe('systemOneStateText', () => {
+  it('is a text state as it came', () => {
+    expect(systemOneStateText('Try the third window.')).toBe(
+      'Try the third window.',
+    );
+  });
+
+  it('is any other state as indented JSON', () => {
+    expect(systemOneStateText({ reply: 'Try the window.' })).toBe(
+      '{\n  "reply": "Try the window."\n}',
+    );
+  });
+
+  it('is nothing for an empty state', () => {
+    expect(systemOneStateText('')).toBeNull();
+    expect(systemOneStateText(null)).toBeNull();
   });
 });
 

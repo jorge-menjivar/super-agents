@@ -1,9 +1,10 @@
 'use client';
 
 import type { SkillOptimizationEvaluation } from '@shared/types/data';
-import type {
-  EvaluationMethodDetails,
-  EvaluationMethodName,
+import {
+  type EvaluationMethodDetails,
+  type EvaluationMethodName,
+  evaluationMethodAppliesTo,
 } from '@shared/types/evaluations';
 import { getEvaluationMethods } from '@web/api/v1/super-agents/skills';
 import { Button } from '@web/components/ui/button';
@@ -272,9 +273,12 @@ export function EvaluationsListView(): ReactElement {
   // Get already added evaluation methods
   const addedMethods = new Set(evaluations.map((e) => e.evaluation_method));
 
-  // Get available methods that haven't been added yet
+  // Get available methods that haven't been added yet, of those that can
+  // judge this agent's skills
   const availableMethods = evaluationMethods.filter(
-    (method) => !addedMethods.has(method.method),
+    (method) =>
+      !addedMethods.has(method.method) &&
+      evaluationMethodAppliesTo(method, selectedAgent.agent_type),
   );
 
   if (isLoading || isLoadingMethods) {

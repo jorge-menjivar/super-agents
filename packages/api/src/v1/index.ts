@@ -6,6 +6,7 @@ import {
 } from '@api/connectors';
 // import { argumentCorrectnessEvaluationConnector } from '@api/connectors/evaluations/argument-correctness';
 import { conversationCompletenessEvaluationConnector } from '@api/connectors/evaluations/conversation-completeness';
+import { decisionCorrectnessEvaluationConnector } from '@api/connectors/evaluations/decision-correctness';
 import { knowledgeRetentionEvaluationConnector } from '@api/connectors/evaluations/knowledge-retention';
 import { latencyEvaluationConnector } from '@api/connectors/evaluations/latency/latency';
 // import { roleAdherenceEvaluationConnector } from '@api/connectors/evaluations/role-adherence';
@@ -100,6 +101,7 @@ app.use(
   evaluationMethodConnectors(factory, [
     // argumentCorrectnessEvaluationConnector,
     conversationCompletenessEvaluationConnector,
+    decisionCorrectnessEvaluationConnector,
     knowledgeRetentionEvaluationConnector,
     latencyEvaluationConnector,
     // roleAdherenceEvaluationConnector,
