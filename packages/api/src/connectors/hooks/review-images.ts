@@ -9,9 +9,12 @@ import type { SystemOneImageAsset } from '@shared/types/api/routes/system-one-ap
  * it sees the image, and the text keeps a reference where the image was.
  *
  * Only PNG and JPEG are lifted, the formats both vendors take, and at most
- * eight, which is all Drex takes. Any other inline file -- WebP, a PDF, a
- * ninth image -- is replaced by a note saying what was there, so the review
- * still says something was, without the bytes.
+ * eight, which is all Drex takes: the newest eight, which are the ones the
+ * review is about -- the image in the last turn, the one in the response --
+ * and the ones that survive when the review's budget drops the oldest turns.
+ * Any other inline file -- WebP, a PDF, an older image past the eight -- is
+ * replaced by a note saying what was there, so the review still says
+ * something was, without the bytes.
  */
 
 /** As many images as Drex takes; Jev takes more, but the reviewer may be Drex. */
@@ -37,9 +40,38 @@ export interface LiftedImages<T> {
   assets?: Record<string, SystemOneImageAsset>;
 }
 
+/** The format an inline image is lifted as, or null when it is not one. */
+function liftedFormat(value: unknown): SystemOneImageAsset['format'] | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const inline = INLINE_FILE.exec(value);
+  return inline ? (LIFTED_FORMATS[inline[1].toLowerCase()] ?? null) : null;
+}
+
+/** How many images the material carries inline, in the formats lifted. */
+function countImages(value: unknown): number {
+  if (liftedFormat(value)) {
+    return 1;
+  }
+  if (Array.isArray(value)) {
+    return value.reduce((total: number, item) => total + countImages(item), 0);
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value).reduce(
+      (total: number, item) => total + countImages(item),
+      0,
+    );
+  }
+  return 0;
+}
+
 /** The material with its inline images replaced by references to assets. */
 export function liftImages<T>(material: T): LiftedImages<T> {
   const assets: Record<string, SystemOneImageAsset> = {};
+  // The material is walked oldest first, so the images past the eight are
+  // the first ones met.
+  let older = Math.max(0, countImages(material) - MAX_REVIEW_IMAGES);
   let count = 0;
 
   const lift = (value: unknown): unknown => {
@@ -53,8 +85,9 @@ export function liftImages<T>(material: T): LiftedImages<T> {
       if (!format) {
         return `[an inline ${mimeType} file, not shown]`;
       }
-      if (count >= MAX_REVIEW_IMAGES) {
-        return `[an image, not shown: only the first ${MAX_REVIEW_IMAGES} are]`;
+      if (older > 0) {
+        older -= 1;
+        return `[an earlier image, not shown: only the newest ${MAX_REVIEW_IMAGES} are]`;
       }
       count += 1;
       const reference = referenceTo(count);

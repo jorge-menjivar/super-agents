@@ -2,7 +2,10 @@ import type { HooksConnector } from '@api/types/connector';
 import type { AppContext, AppEnv } from '@api/types/hono';
 import { warn } from '@shared/console-logging';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
-import { FunctionName } from '@shared/types/api/request/function-name';
+import {
+  FunctionName,
+  PrettyFunctionName,
+} from '@shared/types/api/request/function-name';
 import type { SuperAgentsConfig } from '@shared/types/api/request/headers';
 import type { SuperAgentsResponseBody } from '@shared/types/api/response/body';
 import type { HookLog } from '@shared/types/data';
@@ -92,6 +95,49 @@ const judgedResponse = (
     ? { response_body: saResponseBody as Record<string, unknown> }
     : {};
 
+/** The requests a hook can read: a chat or text completion, and an embedding's input. */
+const READABLE_FUNCTIONS: ReadonlySet<FunctionName> = new Set([
+  FunctionName.CHAT_COMPLETE,
+  FunctionName.COMPLETE,
+  FunctionName.EMBED,
+]);
+
+/**
+ * Why a hook that should judge this request cannot, or null when it can.
+ *
+ * A hook that cannot run is a failed hook, not a skipped one: it fails open
+ * unless it fails closed, and the hook log says the request went unjudged.
+ * Skipping it instead is what let a client avoid its agent's reviewer by
+ * asking through another API -- the Responses API, or System One -- which
+ * served the answer unreviewed and unremarked, `review_fail_closed` or not.
+ */
+function cannotRunReason(
+  hook: Hook,
+  fn: FunctionName,
+  statusCode: number | null,
+  isStreamingRequest: boolean,
+  saResponseBody?: unknown,
+): string | null {
+  // An answer that never reached the client has nothing to judge.
+  if (hook.type === HookType.OUTPUT_HOOK && statusCode !== 200) {
+    return null;
+  }
+  if (!READABLE_FUNCTIONS.has(fn)) {
+    return `Hooks cannot read a ${PrettyFunctionName[fn]} request, so it went unjudged`;
+  }
+  // Blocking output hooks hold a stream until they have judged it; one that
+  // could not be held streamed straight past them.
+  if (
+    hook.type === HookType.OUTPUT_HOOK &&
+    hook.await &&
+    isStreamingRequest &&
+    !saResponseBody
+  ) {
+    return 'The response streamed to the client before it could be judged';
+  }
+  return null;
+}
+
 function shouldSkipHook(
   hook: Hook,
   fn: FunctionName,
@@ -104,11 +150,6 @@ function shouldSkipHook(
     | ArrayBuffer,
 ): boolean {
   return (
-    ![
-      FunctionName.CHAT_COMPLETE,
-      FunctionName.COMPLETE,
-      FunctionName.EMBED,
-    ].includes(fn) ||
     (fn === FunctionName.EMBED && hook.type !== HookType.INPUT_HOOK) ||
     (hook.type === HookType.OUTPUT_HOOK && statusCode !== 200) ||
     (hook.type === HookType.OUTPUT_HOOK &&
@@ -128,6 +169,20 @@ async function executeHook(
   hookResult: HookResult;
   cacheStatus: CacheStatus;
 }> {
+  const cannotRun = cannotRunReason(
+    hook,
+    saRequestData.functionName,
+    statusCode,
+    isStreamingRequest,
+    saResponseBody,
+  );
+  if (cannotRun) {
+    return {
+      hookResult: failedHookResult(hook, cannotRun),
+      cacheStatus: CacheStatus.DISABLED,
+    };
+  }
+
   if (
     shouldSkipHook(
       hook,

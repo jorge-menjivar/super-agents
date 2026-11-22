@@ -311,6 +311,12 @@ export const BaseSuperAgentsConfig = NonPrivateSuperAgentsConfig.extend({
    * what keeps two agents that review each other from looping.
    */
   reviewing_trace_id: z.string().optional(),
+  /**
+   * The gateway's signature of `reviewing_trace_id`. Only a signed one is
+   * honoured: a client sending the trace id alone would otherwise switch off
+   * its agent's reviewer. See `utils/super-agents/review-signature.ts`.
+   */
+  reviewing_signature: z.string().optional(),
 
   // Observability
   app_id: z.string().optional(),

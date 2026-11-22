@@ -64,16 +64,24 @@ describe('liftImages', () => {
     expect(JSON.stringify(lifted.material)).not.toContain('UklGRg');
   });
 
-  it('lifts no more images than Drex takes', () => {
+  // The newest are what the review is about -- the last turn's, the
+  // response's -- and what survives when its budget drops the oldest turns.
+  it('lifts no more images than Drex takes: the newest', () => {
     const messages = Array.from({ length: MAX_REVIEW_IMAGES + 2 }, (_, i) =>
       withImage(png(`image${i}`)),
     );
 
     const lifted = liftImages({ request: { messages } });
 
-    expect(Object.keys(lifted.assets ?? {})).toHaveLength(MAX_REVIEW_IMAGES);
+    const liftedBytes = Object.values(lifted.assets ?? {}).map(
+      (asset) => asset.data_base64,
+    );
+    expect(liftedBytes).toHaveLength(MAX_REVIEW_IMAGES);
+    expect(liftedBytes).not.toContain('image0');
+    expect(liftedBytes).not.toContain('image1');
+    expect(liftedBytes.at(-1)).toBe(`image${MAX_REVIEW_IMAGES + 1}`);
     expect(JSON.stringify(lifted.material)).toContain(
-      `[an image, not shown: only the first ${MAX_REVIEW_IMAGES} are]`,
+      `[an earlier image, not shown: only the newest ${MAX_REVIEW_IMAGES} are]`,
     );
   });
 

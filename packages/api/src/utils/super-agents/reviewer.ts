@@ -1,5 +1,6 @@
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
+import { isSignedReview } from '@api/utils/super-agents/review-signature';
 import { warn } from '@shared/console-logging';
 import type { SuperAgentsConfigPreProcessed } from '@shared/types/api/request/headers';
 import type { Agent } from '@shared/types/data';
@@ -44,10 +45,24 @@ export async function reviewerHookFor(
         | 'options'
       >
     | undefined,
-  config: Pick<SuperAgentsConfigPreProcessed, 'reviewing_trace_id'>,
+  config: Pick<
+    SuperAgentsConfigPreProcessed,
+    'reviewing_trace_id' | 'reviewing_signature'
+  >,
 ): Promise<Hook | null> {
-  if (!agent?.reviewer_agent_id || config.reviewing_trace_id) {
+  if (!agent?.reviewer_agent_id) {
     return null;
+  }
+  // A review is never itself reviewed -- but only the gateway's own review,
+  // signed, counts as one. A client naming a trace is reviewed like any
+  // other request.
+  if (await isSignedReview(c, config)) {
+    return null;
+  }
+  if (config.reviewing_trace_id) {
+    warn(
+      `[HOOKS] A request to agent "${agent.name}" claimed to be a review without the gateway's signature; it is reviewed`,
+    );
   }
   // Both schemas refuse this row; a reviewer cannot wait on its own verdict.
   if (agent.reviewer_agent_id === agent.id) {
