@@ -29,22 +29,46 @@ export function drexImages(assets: Assets): string[] | undefined {
   );
 }
 
-/** Each reference and the name Drex gives its image, longest first. */
-function ordinalsOf(assets: Assets): [string, string][] {
-  return Object.keys(assets ?? {})
-    .map((reference, index): [string, string] => [
-      reference,
-      `Image ${index + 1}`,
-    ])
-    .sort(([a], [b]) => b.length - a.length);
+/**
+ * What finds the references in a text, and the name each one becomes.
+ *
+ * One pattern for all of them, so every reference is replaced in a single
+ * pass over the text as it was written. Renaming them one after another lets
+ * a later reference match inside an earlier one's replacement: with the
+ * references "0" and "1", "compare 0 with 1" would become "compare Image
+ * Image 2 with Image 2", and a reference written "Image 2" would take over
+ * whichever image had been renamed to that before it. The alternatives go
+ * longest first, so a reference that contains another is matched whole.
+ */
+interface Ordinals {
+  pattern: RegExp;
+  names: Map<string, string>;
 }
 
-function rename(value: unknown, ordinals: [string, string][]): unknown {
+function ordinalsOf(assets: Assets): Ordinals | undefined {
+  const references = Object.keys(assets ?? {});
+  if (references.length === 0) {
+    return undefined;
+  }
+  const names = new Map(
+    references.map((reference, index) => [reference, `Image ${index + 1}`]),
+  );
+  const alternatives = [...references]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeForPattern);
+  return { pattern: new RegExp(alternatives.join('|'), 'g'), names };
+}
+
+/** The text as a pattern that matches it literally. */
+function escapeForPattern(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function rename(value: unknown, ordinals: Ordinals): unknown {
   if (typeof value === 'string') {
-    // Longest first, so a reference that contains another is renamed whole.
-    return ordinals.reduce(
-      (text, [reference, name]) => text.split(reference).join(name),
-      value,
+    return value.replace(
+      ordinals.pattern,
+      (reference) => ordinals.names.get(reference) ?? reference,
     );
   }
   if (Array.isArray(value)) {
@@ -66,5 +90,5 @@ function rename(value: unknown, ordinals: [string, string][]): unknown {
  */
 export function withImageOrdinals<T>(value: T, assets: Assets): T {
   const ordinals = ordinalsOf(assets);
-  return ordinals.length === 0 ? value : (rename(value, ordinals) as T);
+  return ordinals ? (rename(value, ordinals) as T) : value;
 }

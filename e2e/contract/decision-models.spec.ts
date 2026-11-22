@@ -1,9 +1,11 @@
+import type { APIRequestContext } from '@playwright/test';
 import {
   AGENTS_PATH,
   createAgent,
   deleteAgent,
   uniqueAgentName,
 } from '../fixtures/agents';
+import { recordModel, recordProvider } from '../fixtures/cleanup';
 import {
   createDecisionModel,
   SYSTEM_ONE_PATH,
@@ -14,6 +16,7 @@ import {
   stubReply,
   stubRequests,
   stubReset,
+  uniqueModelName,
 } from '../fixtures/gateway';
 import { getLogs } from '../fixtures/logs';
 import { createSkill } from '../fixtures/skills';
@@ -35,6 +38,47 @@ import { expect, test } from '../fixtures/test';
  * skill served by its own arms needs the embedding model they configure, so
  * that case is in `optimizer.spec.ts` ("decision skills").
  */
+
+const PROVIDERS_PATH = '/v1/super-agents/ai-providers';
+const MODELS_PATH = '/v1/super-agents/models';
+
+/**
+ * A text or embed model nothing asks, for what the database says about a
+ * model changing its type. Not `setUpStubModels`, which writes the system
+ * settings -- one global row, which other specs are relying on.
+ */
+const createModel = async (
+  request: APIRequestContext,
+  scope: string,
+  type: { model_type: 'text' } | { model_type: 'embed'; dimensions: number },
+): Promise<string> => {
+  const provider = await request.post(PROVIDERS_PATH, {
+    data: {
+      ai_provider: 'ollama',
+      name: uniqueModelName(`${scope}-provider`),
+      api_key: 'unused-by-the-stub',
+      custom_fields: { custom_host: STUB_URL },
+    },
+  });
+  expect(provider.status()).toBe(201);
+  const { id: providerId } = (await provider.json()) as { id: string };
+  recordProvider(providerId);
+
+  const model = await request.post(MODELS_PATH, {
+    data: {
+      ai_provider_id: providerId,
+      model_name: uniqueModelName(`${scope}-${type.model_type}`),
+      model_type: type.model_type,
+      ...(type.model_type === 'embed'
+        ? { embedding_dimensions: type.dimensions }
+        : {}),
+    },
+  });
+  expect(model.status()).toBe(201);
+  const { id } = (await model.json()) as { id: string };
+  recordModel(id);
+  return id;
+};
 
 const QUESTIONS = {
   withhold: {
@@ -302,5 +346,67 @@ test.describe('decision models', () => {
     } finally {
       await deleteAgent(request, agent.id);
     }
+  });
+
+  // The same slot from the other side: a judge cannot become a decision
+  // model either. libSQL once counted only an agent's arbiter here, and let
+  // this through where Postgres refused it.
+  test('keeps the type of a model an agent judges with, on either backend', async ({
+    request,
+  }) => {
+    const judge = await createModel(request, 'judge', { model_type: 'text' });
+    const agent = await createAgent(request, uniqueAgentName('judged'));
+
+    try {
+      const named = await request.patch(`${AGENTS_PATH}/${agent.id}`, {
+        data: { judge_model_id: judge },
+      });
+      expect(named.status()).toBe(200);
+
+      const retyped = await request.patch(`${MODELS_PATH}/${judge}`, {
+        data: { model_type: 'decision' },
+      });
+      // Refused by the database's guard, in the same words on both backends.
+      expect(retyped.status()).toBe(400);
+      expect(((await retyped.json()) as { error: string }).error).toBe(
+        'Cannot change model_type for a model that an agent asks for itself',
+      );
+
+      const reread = await request.get(`${MODELS_PATH}/${judge}`);
+      expect(((await reread.json()) as { model_type: string }).model_type).toBe(
+        'text',
+      );
+    } finally {
+      await deleteAgent(request, agent.id);
+    }
+  });
+
+  // Only an embed model has dimensions, and both databases check it; the
+  // change that ends one clears them without the client having to know.
+  test('lets an embed model become a decision model, its dimensions cleared', async ({
+    request,
+  }) => {
+    const model = await createModel(request, 'retyped', {
+      model_type: 'embed',
+      dimensions: 8,
+    });
+
+    const retyped = await request.patch(`${MODELS_PATH}/${model}`, {
+      data: { model_type: 'decision' },
+    });
+    expect(retyped.status()).toBe(200);
+    expect(await retyped.json()).toMatchObject({
+      model_type: 'decision',
+      embedding_dimensions: null,
+    });
+
+    // And back needs the dimensions, which nothing can make up.
+    const back = await request.patch(`${MODELS_PATH}/${model}`, {
+      data: { model_type: 'embed' },
+    });
+    expect(back.status()).toBe(400);
+    expect(await back.text()).toContain(
+      'embedding_dimensions is required when changing model_type to embed',
+    );
   });
 });

@@ -64,6 +64,11 @@
  * (a model serving an agent or a skill keeps its type), and a trigger cannot
  * be altered, so that one is dropped and created again.
  *
+ * The same guard then learned every one of an agent's own models, where it
+ * had counted only the arbiter, and took Postgres's words for each refusal.
+ * It is replaced whenever its text is not the current one, so the same step
+ * covers that and any later change to it.
+ *
  *   pnpm db:upgrade [-- path-to-db]
  *
  * Defaults to `.local-data/dev.db`. Takes a backup first unless --no-backup.
@@ -427,7 +432,11 @@ const SERVING_TRIGGERS = {
     END`,
 };
 
-/** The guard on a model's own type, as `schema.ts` now spells it. */
+/**
+ * The guard on a model's own type, exactly as `schema.ts` spells it: an
+ * upgraded database should hold the same trigger a new one is created with,
+ * and `modelTypeGuardOutdated` tells the two apart by their text.
+ */
 const MODEL_TYPE_GUARD = `CREATE TRIGGER IF NOT EXISTS models_prevent_type_change_if_referenced
     BEFORE UPDATE OF model_type ON models
     FOR EACH ROW
@@ -441,19 +450,30 @@ const MODEL_TYPE_GUARD = `CREATE TRIGGER IF NOT EXISTS models_prevent_type_chang
            OR skill_arbiter_model_id = NEW.id
            OR intent_compaction_model_id = NEW.id
            OR embedding_model_id = NEW.id
-      ) OR EXISTS (
-        SELECT 1 FROM agents WHERE skill_arbiter_model_id = NEW.id
-      ) OR EXISTS (
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that is referenced in system_settings') END;
+      SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM agents
+        WHERE system_prompt_reflection_model_id = NEW.id
+           OR evaluation_generation_model_id = NEW.id
+           OR judge_model_id = NEW.id
+           OR skill_arbiter_model_id = NEW.id
+           OR intent_compaction_model_id = NEW.id
+           OR embedding_model_id = NEW.id
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that an agent asks for itself') END;
+      SELECT CASE WHEN EXISTS (
         SELECT 1 FROM skill_optimization_evaluations WHERE model_id = NEW.id
-      ) OR EXISTS (
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that evaluations are run with') END;
+      SELECT CASE WHEN EXISTS (
         SELECT 1 FROM skill_optimization_clusters WHERE embedding_model_id = NEW.id
-      ) OR EXISTS (
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that cluster centroids were computed with') END;
+      SELECT CASE WHEN EXISTS (
         SELECT 1 FROM skill_routing WHERE embedding_model_id = NEW.id
-      ) OR EXISTS (
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that skill routing centroids were computed with') END;
+      SELECT CASE WHEN EXISTS (
         SELECT 1 FROM agent_models WHERE model_id = NEW.id
       ) OR EXISTS (
         SELECT 1 FROM skill_models WHERE model_id = NEW.id
-      ) THEN RAISE(ABORT, 'cannot change model_type while the model is referenced') END;
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that serves an agent or a skill') END;
     END`;
 
 /** Every table the serving triggers are on or read. */
@@ -498,13 +518,20 @@ const servingTriggersMissing = async () => {
   return false;
 };
 
-/** Whether a model's type guard predates the clauses for serving models. */
+/**
+ * Whether a model's type guard is any other than the current one: one that
+ * predates the clauses for serving models, or that counted only one of an
+ * agent's own models. SQLite keeps a trigger's statement as it was written,
+ * less its `IF NOT EXISTS`, so comparing the text finds every older guard --
+ * and the next one, when the guard changes again -- without a marker to
+ * keep up to date.
+ */
 const modelTypeGuardOutdated = async () => {
   if (!(await tablesExist(SERVING_TABLES))) {
     return false;
   }
   const sql = await triggerSql('models_prevent_type_change_if_referenced');
-  return sql !== null && !sql.includes('agent_models');
+  return sql !== null && sql !== MODEL_TYPE_GUARD.replace('IF NOT EXISTS ', '');
 };
 
 const bringServingTriggersUpToDate = async () => {
@@ -522,7 +549,7 @@ const bringServingTriggersUpToDate = async () => {
       ],
       'write',
     );
-    console.log('Replaced the guard on a model type, for serving models.');
+    console.log('Replaced the guard on a model type with the current one.');
   }
 };
 

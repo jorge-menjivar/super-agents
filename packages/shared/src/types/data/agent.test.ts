@@ -357,14 +357,13 @@ describe('Agent Data Transforms and Validation', () => {
       });
     });
 
-    it('should accept null description', () => {
-      const inputData = {
-        description: null,
-      };
+    // Every agent has a description, NOT NULL on both backends, so null is
+    // refused here rather than left to each backend to answer differently.
+    it('should reject null description', () => {
+      const result = AgentUpdateParams.safeParse({ description: null });
 
-      const result = AgentUpdateParams.parse(inputData);
-
-      expect(result.description).toBeNull();
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(['description']);
     });
   });
 

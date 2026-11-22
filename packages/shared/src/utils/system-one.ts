@@ -12,17 +12,36 @@ import type {
  * unchanged on every request just as a tool does its system prompt. So those
  * instructions are what the gateway reads where it would read a system prompt:
  * to route the request to a skill, and as the prompt the caller sent.
+ *
+ * Instructions may be structured data as well as text, and a caller who
+ * writes them that way is no less sending them on every request, so they are
+ * read as their JSON. Leaving them out would give such a caller no prompt to
+ * route by and nothing to show as the prompt it sent.
  */
 export function systemOneInstructionsText(
   body: Pick<SystemOneRequestBody, 'questions'>,
 ): string | null {
   const texts: string[] = [];
   for (const question of Object.values(body.questions ?? {})) {
-    if (typeof question?.instructions === 'string' && question.instructions) {
-      texts.push(question.instructions);
+    const text = instructionsText(question?.instructions);
+    if (text) {
+      texts.push(text);
     }
   }
   return texts.length > 0 ? texts.join('\n\n') : null;
+}
+
+/** A question's instructions as text: as written, or as their JSON. */
+function instructionsText(
+  instructions: SystemOneGuidance | undefined,
+): string | null {
+  if (instructions === undefined || instructions === null) {
+    return null;
+  }
+  if (typeof instructions === 'string') {
+    return instructions || null;
+  }
+  return JSON.stringify(instructions, null, 2) ?? null;
 }
 
 /**

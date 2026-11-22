@@ -114,12 +114,33 @@ describe('systemOneInstructionsText', () => {
     );
   });
 
-  it('is null when no question says anything in words', () => {
+  // A caller that writes its instructions as data sends them on every
+  // request just the same, so they are what it routes by.
+  it('reads structured instructions as their JSON, in order with the rest', () => {
+    expect(
+      systemOneInstructionsText({
+        questions: {
+          a: { type: 'noul', instructions: 'Is it harmful?' },
+          b: { type: 'noul', instructions: { rubric: ['strict', 'brief'] } },
+          c: { type: 'noul', instructions: ['Be strict.', 'Be brief.'] },
+        },
+      }),
+    ).toBe(
+      [
+        'Is it harmful?',
+        '{\n  "rubric": [\n    "strict",\n    "brief"\n  ]\n}',
+        '[\n  "Be strict.",\n  "Be brief."\n]',
+      ].join('\n\n'),
+    );
+  });
+
+  it('is null when no question has instructions', () => {
     expect(
       systemOneInstructionsText({
         questions: {
           a: { type: 'noul', criteria: { true: 'Yes' } },
-          b: { type: 'noul', instructions: { structured: true } },
+          b: { type: 'noul', instructions: null },
+          c: { type: 'noul', instructions: '' },
         },
       }),
     ).toBeNull();
@@ -137,6 +158,19 @@ describe('a System One request where a system prompt is read', () => {
     expect(extractSystemPrompt(data)).toBe(
       'Should the client be kept from receiving this?\n\nWhat is it about?',
     );
+  });
+
+  it('is there when the instructions are structured', () => {
+    expect(
+      extractSystemPrompt(
+        systemOne({
+          state: 'Take two.',
+          questions: {
+            withhold: { type: 'noul', instructions: { policy: 'strict' } },
+          },
+        }),
+      ),
+    ).toBe('{\n  "policy": "strict"\n}');
   });
 
   it('routes by the questions and the material they are about', () => {

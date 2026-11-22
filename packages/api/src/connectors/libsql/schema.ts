@@ -651,6 +651,11 @@ const initialSchema: LibsqlMigration = {
       SELECT CASE WHEN (SELECT model_type FROM models WHERE id = NEW.model_id) IS NOT 'text'
         THEN RAISE(ABORT, 'evaluation model_id must reference a text model') END;
     END`,
+    // A model keeps its type while anything holds it in a place that takes
+    // only that type. One check per kind of holder, in the order and the
+    // words of `prevent_model_type_change_if_referenced`, so a refused change
+    // reads the same on both backends. `upgrade-dev-db.mjs` carries a copy of
+    // this statement, which has to change with it.
     `CREATE TRIGGER IF NOT EXISTS models_prevent_type_change_if_referenced
     BEFORE UPDATE OF model_type ON models
     FOR EACH ROW
@@ -664,19 +669,30 @@ const initialSchema: LibsqlMigration = {
            OR skill_arbiter_model_id = NEW.id
            OR intent_compaction_model_id = NEW.id
            OR embedding_model_id = NEW.id
-      ) OR EXISTS (
-        SELECT 1 FROM agents WHERE skill_arbiter_model_id = NEW.id
-      ) OR EXISTS (
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that is referenced in system_settings') END;
+      SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM agents
+        WHERE system_prompt_reflection_model_id = NEW.id
+           OR evaluation_generation_model_id = NEW.id
+           OR judge_model_id = NEW.id
+           OR skill_arbiter_model_id = NEW.id
+           OR intent_compaction_model_id = NEW.id
+           OR embedding_model_id = NEW.id
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that an agent asks for itself') END;
+      SELECT CASE WHEN EXISTS (
         SELECT 1 FROM skill_optimization_evaluations WHERE model_id = NEW.id
-      ) OR EXISTS (
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that evaluations are run with') END;
+      SELECT CASE WHEN EXISTS (
         SELECT 1 FROM skill_optimization_clusters WHERE embedding_model_id = NEW.id
-      ) OR EXISTS (
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that cluster centroids were computed with') END;
+      SELECT CASE WHEN EXISTS (
         SELECT 1 FROM skill_routing WHERE embedding_model_id = NEW.id
-      ) OR EXISTS (
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that skill routing centroids were computed with') END;
+      SELECT CASE WHEN EXISTS (
         SELECT 1 FROM agent_models WHERE model_id = NEW.id
       ) OR EXISTS (
         SELECT 1 FROM skill_models WHERE model_id = NEW.id
-      ) THEN RAISE(ABORT, 'cannot change model_type while the model is referenced') END;
+      ) THEN RAISE(ABORT, 'Cannot change model_type for a model that serves an agent or a skill') END;
     END`,
 
     // ------------------------------------------------------- reporting views

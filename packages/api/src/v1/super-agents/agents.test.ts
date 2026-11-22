@@ -260,6 +260,18 @@ describe('Agents API Status Codes', () => {
       expect(res.status).toBe(400);
       expect(mockUserDataStorageConnector.updateAgent).not.toHaveBeenCalled();
     });
+
+    // The column is NOT NULL on both backends, which used to answer this
+    // differently: libSQL ignored the null, Supabase sent it and failed.
+    it('should refuse a null description before either backend sees it', async () => {
+      const res = await client[':agentId'].$patch({
+        param: { agentId: 'c13d1678-150a-466b-804f-ecc82de3680e' },
+        json: { description: null } as unknown as { description: string },
+      });
+
+      expect(res.status).toBe(400);
+      expect(mockUserDataStorageConnector.updateAgent).not.toHaveBeenCalled();
+    });
   });
 
   describe('DELETE /:agentId', () => {

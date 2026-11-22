@@ -344,7 +344,7 @@ describe('what serves an agent', () => {
   const seedModel = async (
     c: AppContext,
     name: string,
-    modelType: 'text' | 'decision',
+    modelType: 'text' | 'embed' | 'decision',
   ) => {
     const provider = await store.createAIProvider(c, {
       ai_provider: modelType === 'decision' ? 'typesafe' : 'openai',
@@ -357,6 +357,7 @@ describe('what serves an agent', () => {
       ai_provider_id: provider.id,
       model_name: name,
       model_type: modelType,
+      embedding_dimensions: modelType === 'embed' ? 768 : null,
     } as Parameters<typeof store.createModel>[1]);
   };
 
@@ -427,7 +428,49 @@ describe('what serves an agent', () => {
 
     await expect(
       store.updateModel(c, gpt.id, { model_type: 'decision' }),
-    ).rejects.toThrow('cannot change model_type');
+    ).rejects.toThrow(
+      'Cannot change model_type for a model that serves an agent or a skill',
+    );
+  });
+
+  // Every one of them, as on Postgres: the guard once counted only the
+  // arbiter, and let an agent's judge become a model that writes nothing.
+  it.each([
+    'system_prompt_reflection_model_id',
+    'evaluation_generation_model_id',
+    'judge_model_id',
+    'skill_arbiter_model_id',
+    'intent_compaction_model_id',
+  ] as const)(
+    'keeps the type of a model an agent names as its %s',
+    async (column) => {
+      const { c } = await freshDatabase();
+      const agent = await seedAgent(c);
+      const gpt = await seedModel(c, 'gpt-5', 'text');
+      await store.updateAgent(c, agent.id, { [column]: gpt.id });
+
+      await expect(
+        store.updateModel(c, gpt.id, { model_type: 'decision' }),
+      ).rejects.toThrow(
+        'Cannot change model_type for a model that an agent asks for itself',
+      );
+    },
+  );
+
+  it('keeps the type of the model an agent embeds with', async () => {
+    const { c } = await freshDatabase();
+    const agent = await seedAgent(c);
+    const embed = await seedModel(c, 'embed-3', 'embed');
+    await store.updateAgent(c, agent.id, { embedding_model_id: embed.id });
+
+    await expect(
+      store.updateModel(c, embed.id, {
+        model_type: 'text',
+        embedding_dimensions: null,
+      }),
+    ).rejects.toThrow(
+      'Cannot change model_type for a model that an agent asks for itself',
+    );
   });
 });
 

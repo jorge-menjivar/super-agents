@@ -278,7 +278,13 @@ export type AgentCreateParams = z.infer<typeof AgentCreateParams>;
 
 export const AgentUpdateParams = z
   .object({
-    description: z.string().nullable().optional(),
+    /**
+     * Not nullable: every agent has a description, and the column is NOT
+     * NULL on both backends. Accepting null left each to make up its own
+     * answer -- one ignored it, the other sent it to the database and was
+     * refused -- so it is refused here, before either is asked.
+     */
+    description: z.string().optional(),
     agent_type: AgentType.optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
     auto_create_skills: z.boolean().optional(),
