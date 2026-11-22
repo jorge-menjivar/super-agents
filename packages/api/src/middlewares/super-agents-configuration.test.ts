@@ -3,6 +3,7 @@ import { handleGenerateArms } from '@api/optimization/skill-optimizations';
 import type { AppContext } from '@api/types/hono';
 import { generateEmbeddingForRequest } from '@api/utils/embeddings';
 import { resolveEmbeddingModelConfig } from '@api/utils/evaluation-model-resolver';
+import { signReview } from '@api/utils/super-agents/review-signature';
 import { FunctionName } from '@shared/types/api/request';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import {
@@ -53,6 +54,7 @@ const context = (
   ]);
   return {
     req: { url: 'http://localhost/v1/chat/completions' },
+    env: { AUTH_JWT_SECRET: 'test-secret' },
     get: (key: string) => vars.get(key),
     set: vi.fn((key: string, value: unknown) => vars.set(key, value)),
     json: vi.fn(
@@ -491,13 +493,18 @@ describe('saConfigurationInjectorMiddleware reviewer', () => {
   });
 
   it('adds no hook to the review itself', async () => {
+    const getAgents = vi.fn();
+    const signer = {
+      env: { AUTH_JWT_SECRET: 'test-secret' },
+    } as unknown as AppContext;
     const preProcessed = SuperAgentsConfigPreProcessed.parse({
       agent_name: 'guard',
       skill_name: 'routed-skill',
       targets: [{ provider: 'openai', model: 'gpt-4o' }],
       reviewing_trace_id: 'trace-1',
+      // Signed by the gateway: only its own reviews go unreviewed.
+      reviewing_signature: await signReview(signer, 'trace-1'),
     });
-    const getAgents = vi.fn();
     const c = context(preProcessed, { getAgents });
     setAgent(c, { id: 'agent-2', name: 'guard', reviewer_agent_id: 'agent-1' });
 

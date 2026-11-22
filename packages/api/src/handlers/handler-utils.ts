@@ -10,7 +10,11 @@ import type { AppContext } from '@api/types/hono';
 import { HttpMethod } from '@api/types/http';
 import { getCachedResponse } from '@api/utils/cache';
 import { heldStreamFunction, releaseHeldStream } from '@api/utils/held-stream';
-import { inputHookHandler, outputHookHandler } from '@api/utils/hooks';
+import {
+  inputHookHandler,
+  outputHookHandler,
+  unjudgedStreamDenial,
+} from '@api/utils/hooks';
 import {
   validateAndTransformParameter,
   validateParameter,
@@ -1009,10 +1013,13 @@ export async function recursiveOutputHookHandler(
     throw new GatewayError('No response body from target');
   }
 
-  // For streaming responses, skip output hooks and return the streaming response directly
+  // A stream goes straight to the client: one an output hook had to judge was
+  // held, and served as a whole answer above, so whatever streams here was
+  // not -- and a hook that fails closed withholds it.
   if (isStreamingMode) {
+    const denial = await unjudgedStreamDenial(c, saRequestData, mappedResponse);
     return {
-      mappedResponse,
+      mappedResponse: denial ?? mappedResponse,
       retryCount: retryCount || 0,
       createdAt,
       originalResponseJson,

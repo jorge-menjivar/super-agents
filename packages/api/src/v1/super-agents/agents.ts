@@ -13,6 +13,7 @@ import {
   AgentQueryParams,
   AgentUpdateParams,
 } from '@shared/types/data';
+import type { AgentType } from '@shared/types/data/agent';
 import { Hono } from 'hono';
 import { z } from 'zod';
 
@@ -24,6 +25,7 @@ async function reviewerProblem(
   c: AppContext,
   connector: UserDataStorageConnector,
   reviewerId: string | null | undefined,
+  reviewedType: AgentType,
   agentId?: string,
 ): Promise<string | null> {
   if (!reviewerId) {
@@ -31,6 +33,11 @@ async function reviewerProblem(
   }
   if (reviewerId === agentId) {
     return 'An agent cannot be its own reviewer.';
+  }
+  // A reviewer reads what an agent answers, and a decision agent answers
+  // with probabilities no hook can read: its reviewer would never run.
+  if (reviewedType === 'decision') {
+    return 'A decision agent cannot have a reviewer: its answers are probabilities, which a reviewer cannot read.';
   }
   const reviewers = await connector.getAgents(c, { id: reviewerId });
   return reviewers.length > 0 ? null : 'The reviewer agent does not exist.';
@@ -46,6 +53,7 @@ export const agentsRouter = new Hono<AppEnv>()
         c,
         connector,
         data.reviewer_agent_id,
+        data.agent_type,
       );
       if (problem) {
         return c.json({ error: problem }, 400);
@@ -84,21 +92,40 @@ export const agentsRouter = new Hono<AppEnv>()
         const data = c.req.valid('json');
         const connector = c.get('user_data_storage_connector');
 
+        // Answered before anything is read: no agent can be its own reviewer.
+        if (data.reviewer_agent_id === agentId) {
+          return c.json({ error: 'An agent cannot be its own reviewer.' }, 400);
+        }
+
+        // The agent as it is, where the change has to be read against it:
+        // its type, for a reviewer, and its reviewer, for a type.
+        const [agent] =
+          data.agent_type !== undefined || data.reviewer_agent_id
+            ? await connector.getAgents(c, { id: agentId })
+            : [];
+        if (
+          (data.agent_type !== undefined || data.reviewer_agent_id) &&
+          !agent
+        ) {
+          return c.json({ error: 'Agent not found' }, 404);
+        }
+
         const problem = await reviewerProblem(
           c,
           connector,
-          data.reviewer_agent_id,
+          data.reviewer_agent_id !== undefined
+            ? data.reviewer_agent_id
+            : data.agent_type !== undefined
+              ? agent?.reviewer_agent_id
+              : undefined,
+          data.agent_type ?? agent?.agent_type ?? 'text',
           agentId,
         );
         if (problem) {
           return c.json({ error: problem }, 400);
         }
 
-        if (data.agent_type !== undefined) {
-          const [agent] = await connector.getAgents(c, { id: agentId });
-          if (!agent) {
-            return c.json({ error: 'Agent not found' }, 404);
-          }
+        if (data.agent_type !== undefined && agent) {
           const typeProblem = await agentTypeChangeProblem(
             c,
             connector,

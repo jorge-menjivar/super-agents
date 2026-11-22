@@ -1,11 +1,13 @@
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
+import { signReview } from '@api/utils/super-agents/review-signature';
 import { reviewerHookFor } from '@api/utils/super-agents/reviewer';
 import { AgentOptions } from '@shared/types/data';
 import { HookProvider, HookType } from '@shared/types/middleware/hooks';
 import { describe, expect, it, vi } from 'vitest';
 
-const c = {} as AppContext;
+// The signing secret is read off the environment, as on every runtime.
+const c = { env: { AUTH_JWT_SECRET: 'test-secret' } } as unknown as AppContext;
 const connector = (agents: unknown[]): UserDataStorageConnector =>
   ({
     getAgents: vi.fn().mockResolvedValue(agents),
@@ -90,9 +92,50 @@ describe('reviewerHookFor', () => {
     // reviewing each other would never finish.
     const store = connector([guard]);
     expect(
-      await reviewerHookFor(c, store, agent, { reviewing_trace_id: 'trace-1' }),
+      await reviewerHookFor(c, store, agent, {
+        reviewing_trace_id: 'trace-1',
+        reviewing_signature: await signReview(c, 'trace-1'),
+      }),
     ).toBeNull();
     expect(store.getAgents).not.toHaveBeenCalled();
+  });
+
+  // The gateway and its clients share a bearer token, so a client could
+  // claim its request is a review -- and switch its agent's reviewer off.
+  describe('a client claiming its request is a review', () => {
+    it('is reviewed when it names a trace without a signature', async () => {
+      const hook = await reviewerHookFor(c, connector([guard]), agent, {
+        reviewing_trace_id: 'trace-1',
+      });
+      expect(hook?.config).toMatchObject({ agent_name: 'guard' });
+    });
+
+    it('is reviewed when the signature is for another trace', async () => {
+      const hook = await reviewerHookFor(c, connector([guard]), agent, {
+        reviewing_trace_id: 'trace-2',
+        reviewing_signature: await signReview(c, 'trace-1'),
+      });
+      expect(hook).not.toBeNull();
+    });
+
+    it('is reviewed when the signature is under another secret', async () => {
+      const elsewhere = {
+        env: { AUTH_JWT_SECRET: 'another-secret' },
+      } as unknown as AppContext;
+      const hook = await reviewerHookFor(c, connector([guard]), agent, {
+        reviewing_trace_id: 'trace-1',
+        reviewing_signature: await signReview(elsewhere, 'trace-1'),
+      });
+      expect(hook).not.toBeNull();
+    });
+
+    it('is reviewed when the signature is not even hex', async () => {
+      const hook = await reviewerHookFor(c, connector([guard]), agent, {
+        reviewing_trace_id: 'trace-1',
+        reviewing_signature: 'not-a-signature',
+      });
+      expect(hook).not.toBeNull();
+    });
   });
 
   it('adds nothing when the reviewer no longer exists', async () => {

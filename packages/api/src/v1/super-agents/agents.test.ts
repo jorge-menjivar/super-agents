@@ -586,4 +586,44 @@ describe('Agents API reviewer_agent_id', () => {
     expect(res.status).toBe(200);
     expect(mockUserDataStorageConnector.getAgents).not.toHaveBeenCalled();
   });
+
+  // A reviewer reads what an agent answers; a decision agent answers with
+  // probabilities, so its reviewer would never run.
+  it('refuses a reviewer for a decision agent', async () => {
+    mockUserDataStorageConnector.getAgents.mockResolvedValue([
+      { id: reviewerId, name: 'guard' },
+    ]);
+
+    const res = await client.index.$post({
+      json: {
+        name: 'decider',
+        description: 'Decides whether a refund request is genuine.',
+        agent_type: 'decision',
+        reviewer_agent_id: reviewerId,
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(
+      /decision agent cannot have a reviewer/,
+    );
+    expect(mockUserDataStorageConnector.createAgent).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reviewer added to a decision agent later', async () => {
+    mockUserDataStorageConnector.getAgents.mockImplementation(
+      async (_c: unknown, { id }: { id: string }) =>
+        id === agentId
+          ? [{ id: agentId, agent_type: 'decision', reviewer_agent_id: null }]
+          : [{ id: reviewerId, name: 'guard' }],
+    );
+
+    const res = await client[':agentId'].$patch({
+      param: { agentId },
+      json: { reviewer_agent_id: reviewerId },
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockUserDataStorageConnector.updateAgent).not.toHaveBeenCalled();
+  });
 });

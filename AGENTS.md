@@ -659,6 +659,16 @@ hook log is the only record that the request went unreviewed. A hook with
 check that matters more than availability. On an agent,
 `review_fail_closed` sets it for the reviewer hook.
 
+**Hooks read chat and text completions** -- and, for an input hook, an
+embedding's input. A hook asked to judge anything else (a Responses API
+request, System One, an image) cannot, and neither can a blocking output
+hook whose stream could not be held; either is a *failed* hook, not a
+skipped one (`cannotRunReason` in `middlewares/hooks.ts`), so it fails open
+or closed like any other and the log says the request went unjudged. A skip
+used to be what let a client get past its agent's reviewer by asking
+through another API. A decision agent cannot have a reviewer at all: its
+answers are probabilities, and the agents API refuses one.
+
 A hook that denies turns the answer into a 446 (`HookDenialResponseBody`):
 an `error` shaped like any other gateway error, whose `message` says which
 hook withheld the request or the response and, only when that hook has
@@ -712,16 +722,22 @@ wrong verdict reaches -- and the hook's reason is that probability and the model
 It cannot `replace`; an answer without `withhold` fails open like any other.
 An image the reviewed request carries inline is shown to the reviewer as an
 image (`connectors/hooks/review-images.ts`): PNG and JPEG data URLs become
-assets, up to eight, and any other inline file is replaced by a note saying
-what it was, rather than handed over as base64 text. The material is kept
-within `REVIEW_MATERIAL_BUDGET` -- 60,000 characters, under the tightest
-input a decision model is published at -- by `withinReviewBudget`
+assets, the newest eight -- the ones the review is about, and the ones its
+budget keeps -- and any other inline file is replaced by a note saying what
+it was, rather than handed over as base64 text. The material is kept within
+`REVIEW_MATERIAL_BUDGET` -- 60,000 characters, under the tightest input a
+decision model is published at -- by `withinReviewBudget`
 (`connectors/hooks/review-budget.ts`): an agent harness's request carries its
 whole session, which outgrows any model (Jev refuses one with
-`max_tokens_exceeded`). The response is kept whole, then the start of the
-system prompt, the last thing the user asked and the newest turns, each long
-one clipped; tools are named rather than described, and each run of turns
-left out is an `{omitted_messages: n}` entry where they were.
+`max_tokens_exceeded`). The response comes first, whole whenever it fits in
+three quarters of the budget, without the token log-probabilities that say
+nothing about it; then the start of the system prompt, the last thing the
+user asked and the newest turns, each long one clipped; tools are named
+rather than described, and each run of turns left out is an
+`{omitted_messages: n}` entry where they were. The bound holds for any
+shape, cutting what still does not fit to its newest end. A response that
+had to be cut can still be withheld, but a reviewer shown part of it cannot
+clear the rest: allowed, it is a review it could not give.
 
 **Configured on the agent, not in the header.** `agents.reviewer_agent_id`
 names the reviewer of every response the agent gives; `reviewerHookFor`
@@ -731,7 +747,13 @@ leave it out. Both schemas refuse an agent as its own reviewer and forget a
 deleted one (`ON DELETE SET NULL`). The request the gateway sends a reviewer
 carries `reviewing_trace_id`, and a request carrying it gets no reviewer hook
 of its own: a review is never reviewed, which is what keeps two agents that
-review each other from looping.
+review each other from looping. It is signed (`reviewing_signature`, an HMAC
+under `AUTH_JWT_SECRET`; `utils/super-agents/review-signature.ts`), because
+the gateway and its clients share a bearer token: a client sending the trace
+id itself would otherwise switch its agent's reviewer off. Unsigned, it is
+ignored. A signed review is also routed without creating a skill once its
+reviewer has one, since every review is the same job about different
+material, and a new skill would start without the reviewer's policy.
 
 **The client waits for the verdict**, so how long it may wait is the
 reviewed agent's to say: `options.review.timeout_ms`, null meaning
@@ -748,7 +770,8 @@ provider is asked without `stream`, the hooks judge the JSON -- and what they
 allow is streamed to the client at the end, all at once
 (`utils/held-stream.ts`). A denial reaches a streaming client as the same
 446 JSON error. Only chat and text completions are held; a streaming
-Responses API request is not reviewed today.
+Responses API request cannot be, so its blocking output hooks fail -- a
+fail-closed one withholds the stream before the client reads it.
 
 ## Skill Optimization System
 

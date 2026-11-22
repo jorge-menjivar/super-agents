@@ -2,6 +2,7 @@ import { markRequestStarted } from '@api/middlewares/logs';
 import type { AppContext } from '@api/types/hono';
 import { requestTypeProblem } from '@api/utils/super-agents/agent-type';
 import { getAgent } from '@api/utils/super-agents/agents';
+import { isSignedReview } from '@api/utils/super-agents/review-signature';
 import {
   learnSkillIntent,
   routeRequestToSkill,
@@ -81,6 +82,7 @@ export const agentAndSkillMiddleware = createMiddleware(
               connector,
               agent,
               c.get('sa_request_data'),
+              { review: await isSignedReview(c, saConfig) },
             );
             skill = routed.skill;
             c.set('skill_routing', routed.decision);

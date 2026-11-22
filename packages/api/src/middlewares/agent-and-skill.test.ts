@@ -653,6 +653,8 @@ describe('agentAndSkillMiddleware', () => {
         mockConnector,
         agent,
         undefined,
+        // An ordinary request, not a review the gateway signed.
+        { review: false },
       );
       expect(c.set).toHaveBeenCalledWith('skill', routedSkill);
       expect(c.set).toHaveBeenCalledWith('skill_routing', decision);

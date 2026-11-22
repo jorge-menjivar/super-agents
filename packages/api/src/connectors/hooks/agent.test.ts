@@ -9,6 +9,7 @@ import {
   reviewMessage,
 } from '@api/connectors/hooks/agent';
 import type { AppContext } from '@api/types/hono';
+import { signReview } from '@api/utils/super-agents/review-signature';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import { FunctionName } from '@shared/types/api/request/function-name';
 import type { ChatCompletionResponseBody } from '@shared/types/api/routes/chat-completions-api/response';
@@ -142,6 +143,8 @@ describe('agentHooksConnector', () => {
       span_name: 'review',
       parent_span_id: 'span-1',
       reviewing_trace_id: 'trace-1',
+      // Signed, so the reviewer's gateway knows the claim is the gateway's.
+      reviewing_signature: await signReview(c, 'trace-1'),
     });
 
     const body = mockCreate.mock.calls[0][0];
@@ -432,6 +435,8 @@ describe('agentHooksConnector, for a decision-model reviewer', () => {
       span_name: 'review',
       parent_span_id: 'span-1',
       reviewing_trace_id: 'trace-1',
+      // Signed, so the reviewer's gateway knows the claim is the gateway's.
+      reviewing_signature: await signReview(c, 'trace-1'),
     });
     expect(JSON.parse(init.body as string)).toEqual(
       decisionReviewRequest(decisionHook, input),
@@ -516,6 +521,50 @@ describe('agentHooksConnector, for a decision-model reviewer', () => {
     );
   });
 
+  // Shown part of a response, a reviewer can withhold it but cannot clear
+  // what it was not shown.
+  describe('a response too long to review whole', () => {
+    const long: HookInput = {
+      ...input,
+      responseBody: {
+        ...responseBody,
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'q'.repeat(90_000) },
+            finish_reason: 'stop',
+          },
+        ],
+      } as HookInput['responseBody'],
+    };
+
+    it('is a review it could not give when the reviewer would allow it', async () => {
+      fetchMock.mockResolvedValue(answered(0.1));
+
+      const result = await agentHooksConnector.executeHook(
+        context({}),
+        decisionHook,
+        long,
+      );
+
+      expect(result.deny_request).toBe(false);
+      expect(result.error).toMatch(/only part of the response/);
+    });
+
+    it('is withheld when the reviewer would withhold even the part', async () => {
+      fetchMock.mockResolvedValue(answered(0.9));
+
+      const result = await agentHooksConnector.executeHook(
+        context({}),
+        decisionHook,
+        long,
+      );
+
+      expect(result.deny_request).toBe(true);
+      expect(result.error).toBeUndefined();
+    });
+  });
+
   it('withholds at the threshold and above, and says how sure it was', async () => {
     fetchMock.mockResolvedValue(answered(DEFAULT_WITHHOLD_THRESHOLD));
     const atThreshold = await agentHooksConnector.executeHook(
@@ -528,7 +577,8 @@ describe('agentHooksConnector, for a decision-model reviewer', () => {
       request_body_override: undefined,
       response_body_override: undefined,
       skipped: false,
-      reason: 'P(withhold) = 0.50, by jev-1.13.0',
+      reason:
+        'P(withhold) = 0.500, at or above the 0.5 threshold, by jev-1.13.0',
     });
 
     fetchMock.mockResolvedValue(answered(0.49));
@@ -538,7 +588,9 @@ describe('agentHooksConnector, for a decision-model reviewer', () => {
       input,
     );
     expect(below.deny_request).toBe(false);
-    expect(below.reason).toBe('P(withhold) = 0.49, by jev-1.13.0');
+    expect(below.reason).toBe(
+      'P(withhold) = 0.490, below the 0.5 threshold, by jev-1.13.0',
+    );
   });
 
   it("withholds at the reviewed agent's threshold when it has one", async () => {

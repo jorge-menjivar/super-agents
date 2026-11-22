@@ -85,6 +85,34 @@ function handleFailedOutputHook(
   return denialResponse(denial);
 }
 
+/**
+ * A response streaming straight to the client, past its output hooks: only a
+ * held stream is judged, and this one could not be held -- a Responses API
+ * stream. Its blocking output hooks are recorded as failed rather than left
+ * out, and one that fails closed withholds the stream before the client has
+ * read a byte of it. Null lets it through.
+ */
+export async function unjudgedStreamDenial(
+  c: AppContext,
+  saRequestData: SuperAgentsRequestData,
+  response: Response,
+): Promise<Response | null> {
+  const executeHooks = c.get('executeHooks');
+  const hookLogs = await executeHooks(
+    c,
+    HookType.OUTPUT_HOOK,
+    response.status,
+    true,
+    saRequestData,
+  );
+  const denial = hookLogs.find((hookLog) => hookLog.result.deny_request);
+  if (!denial) {
+    return null;
+  }
+  await response.body?.cancel();
+  return denialResponse(denial);
+}
+
 export async function outputHookHandler(
   c: AppContext,
   saRequestData: SuperAgentsRequestData,

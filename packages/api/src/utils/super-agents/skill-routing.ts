@@ -381,9 +381,11 @@ async function routeOnce(
   connector: UserDataStorageConnector,
   agent: Agent,
   requestIntent: RequestIntent | null,
+  review = false,
 ): Promise<RoutingPass> {
   const skills = await connector.getSkills(c, { agent_id: agent.id });
-  const autoCreate = agent.auto_create_skills;
+  // A review creates its reviewer's first skill, and never another.
+  const autoCreate = agent.auto_create_skills && !(review && skills.length > 0);
   const underCap =
     skills.filter((skill) => skill.auto_created).length <
     agent.max_auto_created_skills;
@@ -628,13 +630,29 @@ export async function routeRequestToSkill(
   connector: UserDataStorageConnector,
   agent: Agent,
   saRequestData: SuperAgentsRequestData,
+  options: {
+    /**
+     * A review the gateway sent (signed; see `review-signature.ts`). Every
+     * review asks its reviewer the same job about different material, so
+     * once the reviewer has a skill a review goes to the closest one rather
+     * than becoming a new skill -- which would start without the policy the
+     * reviewer's other skills were given.
+     */
+    review?: boolean;
+  } = {},
 ): Promise<SkillRoutingResult> {
   // Timed here rather than at each of the ways out below, so that every
   // decision carries how long it took to reach -- an embedding on the quick
   // path, the arbiter and a new skill on the slow one. The client waits for
   // all of it before the provider is asked, so the log records it.
   const startedAt = Date.now();
-  const result = await chooseSkill(c, connector, agent, saRequestData);
+  const result = await chooseSkill(
+    c,
+    connector,
+    agent,
+    saRequestData,
+    options.review ?? false,
+  );
   return {
     ...result,
     decision: { ...result.decision, duration_ms: Date.now() - startedAt },
@@ -646,9 +664,10 @@ async function chooseSkill(
   connector: UserDataStorageConnector,
   agent: Agent,
   saRequestData: SuperAgentsRequestData,
+  review: boolean,
 ): Promise<SkillRoutingResult> {
   const requestIntent = describeRequestIntent(saRequestData);
-  const first = await routeOnce(c, connector, agent, requestIntent);
+  const first = await routeOnce(c, connector, agent, requestIntent, review);
   if (first.kind === 'routed') {
     return first.result;
   }
@@ -743,7 +762,7 @@ async function chooseSkill(
     SKILL_CREATION_LEASE_MS + 2 * skillArbiterTimeoutMs(agent, settings);
 
   const underLease = async (): Promise<SkillRoutingResult> => {
-    const again = await routeOnce(c, connector, agent, requestIntent);
+    const again = await routeOnce(c, connector, agent, requestIntent, review);
     if (again.kind === 'routed') {
       return again.result;
     }

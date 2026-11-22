@@ -10,6 +10,7 @@ import {
 } from '@api/constants';
 import type { HooksConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
+import { signReview } from '@api/utils/super-agents/review-signature';
 import { warn } from '@shared/console-logging';
 import type { SuperAgentsRequestData } from '@shared/types/api/request/body';
 import { FunctionName } from '@shared/types/api/request/function-name';
@@ -48,9 +49,10 @@ import { z } from 'zod';
  * (for an output hook) replace the response with text of its own.
  *
  * A review is never itself reviewed: the request it sends carries
- * `reviewing_trace_id`, which is what the configuration injector checks
- * before adding an agent's reviewer, so two agents that review each other
- * cannot loop.
+ * `reviewing_trace_id`, signed by the gateway (`reviewing_signature`), which
+ * is what the configuration injector checks before adding an agent's
+ * reviewer, so two agents that review each other cannot loop -- and a client
+ * cannot send the trace id itself to skip its agent's review.
  *
  * A reviewer whose models are decision models (`config.api: 'system_one'`)
  * cannot write a verdict. It is asked through System One instead -- one
@@ -106,9 +108,39 @@ function describeRequest(requestData: SuperAgentsRequestData): unknown {
   }
 }
 
+/**
+ * The parts of the response a reviewer needs: what each choice said or would
+ * do, and why it stopped. Token log-probabilities, usage and the like are
+ * left out -- they say nothing about the answer, and `logprobs` alone can run
+ * to megabytes.
+ */
 function describeResponse(responseBody: SuperAgentsResponseBody): unknown {
   const body = responseBody as Record<string, unknown>;
-  return 'choices' in body ? { choices: body.choices } : body;
+  if (!Array.isArray(body.choices)) {
+    return body;
+  }
+  return {
+    choices: body.choices.map((choice: Record<string, unknown>) => {
+      const message = choice.message as Record<string, unknown> | undefined;
+      return {
+        index: choice.index,
+        ...(message
+          ? {
+              message: {
+                role: message.role,
+                content: message.content,
+                ...(message.tool_calls
+                  ? { tool_calls: message.tool_calls }
+                  : {}),
+                ...(message.refusal ? { refusal: message.refusal } : {}),
+              },
+            }
+          : {}),
+        ...('text' in choice ? { text: choice.text } : {}),
+        finish_reason: choice.finish_reason,
+      };
+    }),
+  };
 }
 
 /** What the reviewer is shown, and asked. */
@@ -267,11 +299,11 @@ export const WITHHOLD_QUESTION = 'withhold';
  */
 function reviewMaterial<T extends { request: unknown; response?: unknown }>(
   material: T,
-): LiftedImages<T> {
+): LiftedImages<T> & { complete: boolean } {
   const lifted = liftImages(material);
-  const bounded = withinReviewBudget(lifted.material);
+  const { material: bounded, complete } = withinReviewBudget(lifted.material);
   if (!lifted.assets) {
-    return { material: bounded };
+    return { material: bounded, complete };
   }
   const text = JSON.stringify(bounded);
   const assets = Object.fromEntries(
@@ -280,34 +312,47 @@ function reviewMaterial<T extends { request: unknown; response?: unknown }>(
     ),
   );
   return Object.keys(assets).length > 0
-    ? { material: bounded, assets }
-    : { material: bounded };
+    ? { material: bounded, assets, complete }
+    : { material: bounded, complete };
+}
+
+/** What a decision model is asked, and whether it is shown the response whole. */
+export interface DecisionReview {
+  body: SystemOneRequestBody;
+  complete: boolean;
 }
 
 export function decisionReviewRequest(
   hook: Hook,
   input: HookInput,
 ): SystemOneRequestBody {
+  return decisionReview(hook, input).body;
+}
+
+export function decisionReview(hook: Hook, input: HookInput): DecisionReview {
   const request = describeRequest(input.requestData);
   if (hook.type === HookType.INPUT_HOOK) {
-    const { material, assets } = reviewMaterial({ request });
+    const { material, assets, complete } = reviewMaterial({ request });
     return {
-      state: material,
-      ...(assets ? { assets } : {}),
-      questions: {
-        [WITHHOLD_QUESTION]: {
-          type: 'noul',
-          instructions:
-            'A client sent an AI agent this request. Should the agent be kept from answering it?',
-          criteria: {
-            true: 'The agent should not answer it.',
-            false: 'The agent may answer it.',
+      complete,
+      body: {
+        state: material,
+        ...(assets ? { assets } : {}),
+        questions: {
+          [WITHHOLD_QUESTION]: {
+            type: 'noul',
+            instructions:
+              'A client sent an AI agent this request. Should the agent be kept from answering it?',
+            criteria: {
+              true: 'The agent should not answer it.',
+              false: 'The agent may answer it.',
+            },
           },
         },
       },
     };
   }
-  const { material, assets } = reviewMaterial({
+  const { material, assets, complete } = reviewMaterial({
     request,
     response:
       input.responseBody === undefined
@@ -315,16 +360,19 @@ export function decisionReviewRequest(
         : describeResponse(input.responseBody),
   });
   return {
-    state: material,
-    ...(assets ? { assets } : {}),
-    questions: {
-      [WITHHOLD_QUESTION]: {
-        type: 'noul',
-        instructions:
-          'An AI agent is about to return this response to its client. Should the client be kept from receiving it?',
-        criteria: {
-          true: 'Withhold the response from the client.',
-          false: 'The client may receive the response.',
+    complete,
+    body: {
+      state: material,
+      ...(assets ? { assets } : {}),
+      questions: {
+        [WITHHOLD_QUESTION]: {
+          type: 'noul',
+          instructions:
+            'An AI agent is about to return this response to its client. Should the client be kept from receiving it?',
+          criteria: {
+            true: 'Withhold the response from the client.',
+            false: 'The client may receive the response.',
+          },
         },
       },
     },
@@ -353,13 +401,16 @@ export function resultOfDecision(
       error: `The reviewer "${config.agent_name}" did not answer whether to withhold`,
     };
   }
+  const threshold = config.withhold_threshold ?? DEFAULT_WITHHOLD_THRESHOLD;
+  const withhold = answer.noul >= threshold;
   return {
-    deny_request:
-      answer.noul >= (config.withhold_threshold ?? DEFAULT_WITHHOLD_THRESHOLD),
+    deny_request: withhold,
     request_body_override: undefined,
     response_body_override: undefined,
     skipped: false,
-    reason: `P(withhold) = ${answer.noul.toFixed(2)}, by ${parsed.data.model}`,
+    // The comparison is said in words: printed to two places alone, a 0.4951
+    // read as 0.50 beside a 0.5 threshold it did not reach.
+    reason: `P(withhold) = ${answer.noul.toFixed(3)}, ${withhold ? 'at or above' : 'below'} the ${threshold} threshold, by ${parsed.data.model}`,
   };
 }
 
@@ -371,6 +422,7 @@ async function reviewByDecision(
   config: HookAgentProviderConfig,
   reviewConfig: Record<string, unknown>,
 ): Promise<HookResult> {
+  const review = decisionReview(hook, input);
   const response = await fetch(`${reviewerBaseUrl(c, config)}/systemone`, {
     method: 'POST',
     headers: {
@@ -378,7 +430,7 @@ async function reviewByDecision(
       'Content-Type': 'application/json',
       'sa-config': JSON.stringify(reviewConfig),
     },
-    body: JSON.stringify(decisionReviewRequest(hook, input)),
+    body: JSON.stringify(review.body),
     signal: AbortSignal.timeout(config.timeout_ms ?? DEFAULT_REVIEW_TIMEOUT_MS),
   });
   // Thrown, as the chat client throws on a failed call: the hooks middleware
@@ -391,6 +443,16 @@ async function reviewByDecision(
   const result = resultOfDecision(config, await response.json());
   if (result.error) {
     warn(`[HOOKS] ${result.error} (hook "${hook.id}")`);
+    return result;
+  }
+  // Shown part of a response, a reviewer can withhold it, but it cannot
+  // clear what it was not shown: that is a review it could not give, which
+  // fails open or closed as the hook says.
+  if (!review.complete && !result.deny_request) {
+    return {
+      ...result,
+      error: `The reviewer "${config.agent_name}" was shown only part of the response, which was too long to review whole, and could not clear the rest`,
+    };
   }
   return result;
 }
@@ -406,12 +468,14 @@ export const agentHooksConnector: HooksConnector = {
     const config = HookAgentProviderConfig.parse(hook.config);
     const saConfig = c.get('sa_config');
     // The review shares the reviewed request's trace, so the two logs sit
-    // together, and names that request as the one it reviews.
+    // together, and names that request as the one it reviews -- signed, so
+    // the reviewer's gateway knows the claim is the gateway's own.
     const reviewConfig = {
       trace_id: saConfig.trace_id,
       span_name: 'review',
       ...(saConfig.span_id ? { parent_span_id: saConfig.span_id } : {}),
       reviewing_trace_id: saConfig.trace_id,
+      reviewing_signature: await signReview(c, saConfig.trace_id),
     };
 
     if (config.api === 'system_one') {

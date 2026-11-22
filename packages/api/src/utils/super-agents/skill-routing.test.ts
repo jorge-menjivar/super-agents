@@ -676,6 +676,41 @@ describe('routeRequestToSkill', () => {
       expect(['s1', 's2']).toContain(result.skill.id);
     });
 
+    // Every review asks its reviewer the same job about different material:
+    // a new skill would start without the policy the reviewer was given.
+    it('routes a review to the closest skill rather than creating one', async () => {
+      const translate = skill('s1', 'translate');
+      const sql = skill('s2', 'sql');
+      connector.getSkills.mockResolvedValue([translate, sql]);
+      vi.mocked(arbitrateSkillForRequest).mockResolvedValue({ kind: 'new' });
+
+      const result = await routeRequestToSkill(
+        c,
+        connector as unknown as UserDataStorageConnector,
+        growing,
+        chat('Draw a picture of a cat.'),
+        { review: true },
+      );
+
+      expect(createSkillForRequest).not.toHaveBeenCalled();
+      expect(arbitrateSkillForRequest).not.toHaveBeenCalled();
+      expect(['s1', 's2']).toContain(result.skill.id);
+    });
+
+    it("still creates a reviewer's first skill from a review", async () => {
+      connector.getSkills.mockResolvedValue([]);
+
+      const result = await routeRequestToSkill(
+        c,
+        connector as unknown as UserDataStorageConnector,
+        growing,
+        chat('Draw a picture of a cat.'),
+        { review: true },
+      );
+
+      expect(result.skill).toBe(created);
+    });
+
     it('takes no creation lease at the cap', async () => {
       const capped = { ...growing, max_auto_created_skills: 1 } as Agent;
       connector.getSkills.mockResolvedValue([

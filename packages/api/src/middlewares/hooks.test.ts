@@ -240,6 +240,113 @@ describe('executeHooks failing closed', () => {
   });
 });
 
+/**
+ * A hook asked to judge a request it cannot read fails rather than skips:
+ * skipping is what let a client get past its agent's reviewer by asking
+ * through another API, `review_fail_closed` or not.
+ */
+describe('executeHooks on a request it cannot judge', () => {
+  const connector = (): HooksConnector => ({
+    name: HookProvider.AGENT,
+    executeHook: vi.fn().mockResolvedValue(verdict(false)),
+  });
+  const asked = (functionName: FunctionName) =>
+    ({
+      functionName,
+      requestBody: { model: 'm', input: 'hi' },
+    }) as unknown as SuperAgentsRequestData;
+
+  it.each([[FunctionName.CREATE_MODEL_RESPONSE], [FunctionName.SYSTEM_ONE]])(
+    'records a %s request as unjudged, and lets it through when it fails open',
+    async (functionName) => {
+      const provider = connector();
+      const c = context([hook()], [provider]);
+
+      const [log] = await executeHooks(
+        c,
+        HookType.OUTPUT_HOOK,
+        200,
+        false,
+        asked(functionName),
+        responseBody,
+      );
+
+      expect(provider.executeHook).not.toHaveBeenCalled();
+      expect(log.result).toMatchObject({ skipped: false, deny_request: false });
+      expect(log.result.error).toMatch(/cannot read/);
+    },
+  );
+
+  it('withholds it when the hook fails closed', async () => {
+    const c = context([hook({ fail_closed: true })], [connector()]);
+
+    const [log] = await executeHooks(
+      c,
+      HookType.OUTPUT_HOOK,
+      200,
+      false,
+      asked(FunctionName.CREATE_MODEL_RESPONSE),
+      responseBody,
+    );
+
+    expect(log.result.deny_request).toBe(true);
+  });
+
+  it('records a stream that went past a blocking hook as unjudged', async () => {
+    const c = context([hook({ fail_closed: true })], [connector()]);
+
+    const [log] = await executeHooks(
+      c,
+      HookType.OUTPUT_HOOK,
+      200,
+      true,
+      asked(FunctionName.CREATE_MODEL_RESPONSE),
+    );
+
+    expect(log.result.deny_request).toBe(true);
+    expect(log.result.error).toBeDefined();
+  });
+
+  it('still skips what there is nothing to judge in', async () => {
+    const provider = connector();
+    const c = context(
+      [hook(), hook({ id: 'later', await: false })],
+      [provider],
+    );
+
+    // A response that never reached the client, and a hook that never held
+    // the stream it was not asked to wait for.
+    const [failed] = await executeHooks(
+      c,
+      HookType.OUTPUT_HOOK,
+      503,
+      false,
+      asked(FunctionName.CREATE_MODEL_RESPONSE),
+      responseBody,
+    );
+    const [, unawaited] = await executeHooks(
+      c,
+      HookType.OUTPUT_HOOK,
+      200,
+      true,
+      requestData,
+    );
+    const [embedded] = await executeHooks(
+      context([hook()], [provider]),
+      HookType.OUTPUT_HOOK,
+      200,
+      false,
+      asked(FunctionName.EMBED),
+      responseBody,
+    );
+
+    expect(failed.result.skipped).toBe(true);
+    expect(unawaited.result.skipped).toBe(true);
+    expect(embedded.result.skipped).toBe(true);
+    expect(provider.executeHook).not.toHaveBeenCalled();
+  });
+});
+
 describe('executeHooks logging', () => {
   it('keeps a log of every hook it ran on the context, under the request trace', async () => {
     const connector: HooksConnector = {
