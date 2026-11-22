@@ -44,13 +44,19 @@ function brierAgreement(
  * A choice's probabilities when the model sent none: its `confidence` on the
  * option it chose -- certainty when it gave none -- and the rest shared by
  * the other options.
+ *
+ * Never less than an even share on the option chosen. It was the model's
+ * choice, so it is at least as likely as any other, and a confidence below
+ * an even share would put more on each option it did not choose than on
+ * the one it did -- scoring a right choice below a wrong one.
  */
 function spreadOf(
   choice: string,
   answer: { confidence?: number },
   options: string[],
 ): Record<string, number> {
-  const sure = clamp(answer.confidence ?? 1);
+  const evenShare = options.length > 0 ? 1 / options.length : 0;
+  const sure = Math.max(clamp(answer.confidence ?? 1), evenShare);
   const others = options.filter((option) => option !== choice);
   return Object.fromEntries([
     [choice, sure],
@@ -70,9 +76,8 @@ function noulLabel(answer: string): boolean | null {
   return null;
 }
 
-/** The option the judge named, matched to the question's own label. */
-function choiceLabel(answer: string, options: string[]): string | null {
-  const said = answer.trim();
+/** The question's own label for `said`, matched exactly or in any case. */
+function optionNamed(said: string, options: string[]): string | null {
   return (
     options.find((option) => option === said) ??
     options.find((option) => option.toLowerCase() === said.toLowerCase()) ??
@@ -81,25 +86,63 @@ function choiceLabel(answer: string, options: string[]): string | null {
 }
 
 /**
- * One minus the ranked probability score of `probabilities` over `levels`
- * ordered levels, against the right one: the Brier score of the cumulative
- * distribution, which a scale needs where options do not -- a model leaning
- * one level off is nearly right, and scored so, where scoring each level as
- * an unrelated option counted it as wrong as leaning to the far end. A whole
- * level away scores `1 - 1/(levels - 1)`, the far end 0.
+ * The option the judge named, matched to the question's own label. A judge
+ * on a provider that does not hold it to its schema answers a choice between
+ * yes and no as a boolean, which reaches here as `true` or `false`: it names
+ * the question's yes or no, when the question has them.
  */
-function rankedAgreement(
+function choiceLabel(answer: string, options: string[]): string | null {
+  const said = answer.trim();
+  const named = optionNamed(said, options);
+  if (named !== null) {
+    return named;
+  }
+  switch (said.toLowerCase()) {
+    case 'true':
+      return optionNamed('yes', options);
+    case 'false':
+      return optionNamed('no', options);
+    default:
+      return null;
+  }
+}
+
+/**
+ * The probability on each of the scale's `levels`, lowest first, made to sum
+ * to one; or null when there is none on any of them. What a vendor sends
+ * need not sum to one -- keys that are a level's legend rather than its
+ * index, mass rounded away -- and the ranked score reads whatever is missing
+ * as sitting on the top level: it scored an empty spread as certain of the
+ * top, and right whenever the top was.
+ */
+function levelSpread(
   probabilities: Record<string, number>,
   levels: number,
-  right: number,
-): number {
+): number[] | null {
+  const spread = Array.from({ length: levels }, (_, level) =>
+    Math.max(0, probabilities[String(level)] ?? 0),
+  );
+  const total = spread.reduce((sum, p) => sum + p, 0);
+  return total > 0 ? spread.map((p) => p / total) : null;
+}
+
+/**
+ * One minus the ranked probability score of `spread`, a probability for
+ * each ordered level, against the right one: the Brier score of the
+ * cumulative distribution, which a scale needs where options do not -- a
+ * model leaning one level off is nearly right, and scored so, where scoring
+ * each level as an unrelated option counted it as wrong as leaning to the
+ * far end. A whole level away scores `1 - 1/(levels - 1)`, the far end 0.
+ */
+function rankedAgreement(spread: number[], right: number): number {
+  const levels = spread.length;
   if (levels === 1) {
     return 1;
   }
   let forecast = 0;
   let distance = 0;
   for (let level = 0; level < levels - 1; level++) {
-    forecast += probabilities[String(level)] ?? 0;
+    forecast += spread[level];
     const observed = level >= right ? 1 : 0;
     distance += (forecast - observed) ** 2;
   }
@@ -175,13 +218,17 @@ export function scoreAnswer(
       if (right === null) {
         return null;
       }
-      if (answer.probabilities) {
-        return rankedAgreement(answer.probabilities, levels, right);
+      const spread = answer.probabilities
+        ? levelSpread(answer.probabilities, levels)
+        : null;
+      if (spread) {
+        return rankedAgreement(spread, right);
       }
-      // Only the expected level: scored as the ranked probability score
-      // scores all of it on one level -- by how many levels it is off, on
-      // the scale's own length -- so the same answer scores the same with
-      // or without the spread.
+      // Only the expected level -- or a spread with nothing on the scale's
+      // levels: scored as the ranked probability score scores all of it on
+      // one level -- by how many levels it is off, on the scale's own
+      // length -- so the same answer scores the same with or without the
+      // spread.
       if (levels === 1) {
         return 1;
       }

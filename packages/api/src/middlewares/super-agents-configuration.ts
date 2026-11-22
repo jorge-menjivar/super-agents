@@ -621,6 +621,7 @@ export const saConfigurationInjectorMiddleware = createMiddleware(
             embedding = null;
           }
           c.set('embedding', embedding?.embedding ?? null);
+          c.set('embedding_model_id', embedding?.modelId ?? null);
         }
 
         const saTargetsOrResponses = await Promise.all(

@@ -618,4 +618,17 @@ describe('supabaseLogsStorageConnector - getLogs', () => {
 
     expect(sentUrl().searchParams.get('eval_run_count')).toBe('eq.0');
   });
+
+  it('lists the logs that have a score', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+    } as Response);
+
+    await supabaseLogsStorageConnector.getLogs(mockContext, {
+      judged: true,
+    });
+
+    expect(sentUrl().searchParams.get('avg_eval_score')).toBe('not.is.null');
+  });
 });

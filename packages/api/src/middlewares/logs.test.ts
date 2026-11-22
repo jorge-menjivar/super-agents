@@ -332,6 +332,36 @@ describe('logsMiddleware', () => {
     expect(log.metadata).toEqual({});
     expect(log.original_system_prompt).toBe('You are the caller.');
   });
+
+  // Two embedding models' vectors can be of one length, and nothing in the
+  // numbers says which made them: reclustering reads it here, so it never
+  // clusters one model's vectors with another's.
+  it('records which model made the embedding', async () => {
+    arrange = (c) => {
+      c.set('embedding', [0.1, 0.2]);
+      c.set('embedding_model_id', 'embedding-model-1');
+    };
+
+    await app.request('/v1/chat/completions', { method: 'POST' });
+
+    const log = await storedLog();
+    expect(log.embedding).toEqual([0.1, 0.2]);
+    expect(log.metadata).toMatchObject({
+      embedding_model_id: 'embedding-model-1',
+    });
+  });
+
+  it('records no embedding model for a request that was not embedded', async () => {
+    arrange = (c) => {
+      c.set('embedding', null);
+      c.set('embedding_model_id', null);
+    };
+
+    await app.request('/v1/chat/completions', { method: 'POST' });
+
+    const log = await storedLog();
+    expect(log.metadata).not.toHaveProperty('embedding_model_id');
+  });
 });
 
 describe('markRequestStarted', () => {

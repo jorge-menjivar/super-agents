@@ -415,6 +415,8 @@ interface ProcessLogsParams {
   firstTokenTime?: number;
   aiProviderLog: AIProviderRequestLog;
   embedding: number[] | null;
+  /** The model that made `embedding`. */
+  embeddingModelId?: string | null;
   originalSystemPrompt: string | null;
   hookLogs: HookLog[];
   logsStorageConnector: LogsStorageConnector;
@@ -440,6 +442,7 @@ async function processLogs({
   firstTokenTime,
   aiProviderLog,
   embedding,
+  embeddingModelId,
   originalSystemPrompt,
   hookLogs,
   logsStorageConnector,
@@ -490,6 +493,11 @@ async function processLogs({
               name: pulledArm.name,
             } satisfies ServedConfiguration,
           }
+        : {}),
+      // Which model made the embedding. Two models' vectors can be of one
+      // length, and reclustering clusters only the current model's.
+      ...(embedding && embeddingModelId
+        ? { embedding_model_id: embeddingModelId }
         : {}),
     },
     hook_logs: hookLogs,
@@ -1066,6 +1074,7 @@ export const logsMiddleware = (
         firstTokenTime: c.get('first_token_time'),
         aiProviderLog,
         embedding: c.get('embedding'),
+        embeddingModelId: c.get('embedding_model_id'),
         originalSystemPrompt,
         hookLogs,
         logsStorageConnector: c.get('logs_storage_connector'),

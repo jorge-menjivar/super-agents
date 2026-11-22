@@ -18,37 +18,63 @@ import type { ClusterResult } from '@shared/utils/math';
 import { isOptimizedFunction } from '@shared/utils/optimized-functions';
 
 /**
- * The logs' embeddings, of the newest one's length. A skill whose embedding
- * model changed has logs from both: they cannot be clustered together, and
- * refusing them all -- as this used to -- left the skill never reclustered,
- * matched against centroids of the old model for good. The newest model's
- * logs are the ones the skill will be matched by.
+ * The embedding model a log's embedding was made with, as the gateway
+ * records it in the log's metadata. A log written before it did names none.
  */
-function extractEmbeddings(logs: Log[]): number[][] {
-  // Logs are ordered newest first.
-  const embeddings = logs
-    .map((log) => log.embedding)
-    .filter((embedding): embedding is number[] => !!embedding?.length);
-
-  if (embeddings.length === 0) {
-    throw new Error(`[OPTIMIZER] No logs with embeddings found`);
-  }
-
-  const newest = embeddings[0].length;
-  return embeddings.filter((embedding) => embedding.length === newest);
+function embeddedWith(log: Log): string | undefined {
+  const modelId = log.metadata?.embedding_model_id;
+  return typeof modelId === 'string' ? modelId : undefined;
 }
 
-export function getClusters(skill: Skill, logs: Log[]): ClusterResult | null {
-  const numberOfClusters = skill.configuration_count;
+/**
+ * The logs' embeddings that can be clustered together, newest first: those
+ * of one model, the one the skill's requests are embedded with now.
+ *
+ * A skill whose embedding model changed has logs from both, and vectors of
+ * two models cannot be clustered together -- not even when they are of one
+ * length, which says only that both are lists of that many numbers. Refusing
+ * them all, as this once did, left the skill never reclustered and matched
+ * against the old model's centroids for good. A log that names its model is
+ * kept when that is the current one. A log that names none was written
+ * before the gateway recorded it, and is kept by the one thing it says about
+ * its model, the length of its embedding: the length the current model's
+ * logs have, or, until there are any, the newest log's. When the current
+ * model is not known, the newest log that names one stands in for it.
+ */
+export function clusterableEmbeddings(
+  logs: Log[],
+  modelId?: string,
+): number[][] {
+  // Logs are ordered newest first.
+  const embedded = logs.filter(
+    (log): log is Log & { embedding: number[] } => !!log.embedding?.length,
+  );
+  if (embedded.length === 0) {
+    return [];
+  }
 
+  const model = modelId ?? embedded.map(embeddedWith).find(Boolean);
+  const reference =
+    embedded.find((log) => model && embeddedWith(log) === model) ?? embedded[0];
+  const length = reference.embedding.length;
+
+  return embedded
+    .filter((log) => {
+      const recorded = embeddedWith(log);
+      return (
+        log.embedding.length === length &&
+        (recorded === undefined || recorded === model)
+      );
+    })
+    .map((log) => log.embedding);
+}
+
+export function getClusters(
+  skill: Skill,
+  embeddings: number[][],
+): ClusterResult | null {
   try {
-    const embeddings = extractEmbeddings(logs);
-    const embeddingsLogMap = new Map<number[], Log>();
-    embeddings.forEach((embedding, index) => {
-      embeddingsLogMap.set(embedding, logs[index]);
-    });
-    const result = kMeansClustering(embeddings, numberOfClusters);
-    return result;
+    return kMeansClustering(embeddings, skill.configuration_count);
   } catch (e) {
     error(`[OPTIMIZER] Error clustering logs for skill ${skill.id}:`, e);
     return null;
@@ -77,10 +103,39 @@ export async function autoClusterSkill(
     embedding_not_null: true,
   });
 
-  // Automatically cluster logs if there are enough logs
-  if (logs.length >= interval) {
+  // Only the logs that will be clustered count toward the interval, and
+  // there must be at least one for every cluster: k-means over fewer points
+  // than clusters returns a centroid per point. Counting every log, a skill
+  // just moved to another embedding model -- thirty logs of the old model,
+  // one of the new -- was reclustered into a single partition that then took
+  // every request, and the cursor moved past the logs it had left out. Until
+  // there are enough, nothing is reclustered and the cursor stays where it
+  // is.
+  const needed = Math.max(interval, skill.configuration_count);
+
+  // The model the skill's requests are embedded with now. Only its logs are
+  // clustered, and the new centroids are recorded as its, so a request is
+  // only ever compared with centroids of its own model. Not looked up for a
+  // skill that has too few logs to recluster either way.
+  const embeddingConfig =
+    logs.length >= needed
+      ? await resolveEmbeddingModelConfig(
+          c,
+          userDataStorageConnector,
+          await agentById(c, userDataStorageConnector, skill.agent_id),
+        )
+      : null;
+  const embeddings = clusterableEmbeddings(logs, embeddingConfig?.modelId);
+
+  if (logs.length >= needed && embeddings.length < needed) {
     info(
-      `[OPTIMIZER] Starting reclustering for skill ${skill.id} (${skill.name}) with ${logs.length} logs...`,
+      `[OPTIMIZER] Not reclustering skill ${skill.id} (${skill.name}) yet: ${embeddings.length} of its ${logs.length} new logs were embedded with its current embedding model, and it needs ${needed}.`,
+    );
+  }
+
+  if (embeddings.length >= needed) {
+    info(
+      `[OPTIMIZER] Starting reclustering for skill ${skill.id} (${skill.name}) with ${embeddings.length} logs...`,
     );
     const startTime = Date.now();
 
@@ -115,7 +170,7 @@ export async function autoClusterSkill(
           skill_id: skill.id,
         });
 
-      const clusterResult = getClusters(skill, logs);
+      const clusterResult = getClusters(skill, embeddings);
 
       if (!clusterResult) {
         error(`[OPTIMIZER] Failed to cluster logs for skill ${skill.id}`);
@@ -125,14 +180,7 @@ export async function autoClusterSkill(
       const newCentroids = clusterResult.centroids;
 
       // The model the new centroids were computed with: the one the skill's
-      // requests are embedded with now, when their length says so. Recorded
-      // on the clusters, so a request is only ever compared with centroids
-      // of its own model.
-      const embeddingConfig = await resolveEmbeddingModelConfig(
-        c,
-        userDataStorageConnector,
-        await agentById(c, userDataStorageConnector, skill.agent_id),
-      );
+      // requests are embedded with now, when their length says so.
       const computedWith =
         embeddingConfig &&
         embeddingConfig.dimensions === newCentroids[0]?.length
@@ -236,7 +284,7 @@ export async function autoClusterSkill(
             clusterStates.length > 0
               ? clusterStates.length
               : skill.configuration_count,
-          log_count: logs.length,
+          log_count: embeddings.length,
         },
       });
 

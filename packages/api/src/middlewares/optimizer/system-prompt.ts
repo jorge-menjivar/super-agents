@@ -13,7 +13,7 @@ import {
 } from '@api/utils/super-agents/decision-logs';
 import { extractMessagesFromRequestData } from '@api/utils/super-agents/requests';
 import { extractOutputFromResponseBody } from '@api/utils/super-agents/responses';
-import { error } from '@shared/console-logging';
+import { error, info } from '@shared/console-logging';
 import {
   type ChatCompletionRequestData,
   FunctionName,
@@ -304,11 +304,17 @@ export async function fetchReflectionExamples(
 
   const lastReflectionTime = lastReflectionEvents[0]?.created_at;
 
+  // Both reads ask for judged logs only. The newest logs of a busy cluster
+  // are the ones its judge has not reached yet, so reading the newest and
+  // dropping the unjudged could leave nothing -- every one of them unjudged
+  // -- however many judged logs lay just behind them.
+
   // Fetch best log from all time (no time filter)
   const allTimeLogs = await logsStorageConnector.getLogs(c, {
     skill_id: cluster.skill_id,
     cluster_id: cluster.id,
     embedding_not_null: true,
+    judged: true,
     limit: 50, // Get more logs to find the absolute best
   });
 
@@ -322,6 +328,7 @@ export async function fetchReflectionExamples(
     skill_id: cluster.skill_id,
     cluster_id: cluster.id,
     embedding_not_null: true,
+    judged: true,
     after: lastReflectionTime
       ? new Date(lastReflectionTime).getTime()
       : undefined, // Will be undefined if no reflection yet, which fetches all logs
@@ -660,6 +667,20 @@ async function autoGenerateSystemPromptsForCluster(
       logsStorageConnector,
       cluster,
     );
+
+    // The reflector is asked to settle the failures it is shown, against the
+    // best it is shown, and every arm but the best is rewritten with what it
+    // writes and loses its history. With no judged failure since the last
+    // reflection -- a judge slower than the traffic leaves every recent log
+    // unscored -- or no judged best, it has nothing to learn from, and the
+    // arms would be rewritten all the same. It waits for the judge instead.
+    if (worstExamples.length === 0 || bestExamples.length === 0) {
+      info(
+        `[REFLECTION] Skipping reflection for cluster ${cluster.id} of skill ${skill.id}: no judged ${worstExamples.length === 0 ? 'failures since the last reflection' : 'best example'} to learn from yet.`,
+      );
+      await releaseReflectionLock(c, userDataStorageConnector, cluster.id);
+      return;
+    }
 
     // SAFETY CHECK: Revalidate arms haven't changed during reflection
     const revalidatedArms =
