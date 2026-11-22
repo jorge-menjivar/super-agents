@@ -1,4 +1,8 @@
-import { handleGenerateArms } from '@api/optimization/skill-optimizations';
+import {
+  ARM_GENERATION_WAIT_MS,
+  handleGenerateArms,
+  withArmGenerationLock,
+} from '@api/optimization/skill-optimizations';
 import { regenerateEvaluationsWithExamples } from '@api/optimization/utils/evaluations';
 import { generateSeedSystemPromptWithContext } from '@api/optimization/utils/system-prompt';
 import type {
@@ -9,7 +13,7 @@ import type { AppContext } from '@api/types/hono';
 import type { Skill } from '@shared/types/data';
 import type { SkillOptimizationEvaluationCreateParams } from '@shared/types/data/skill-optimization-evaluation';
 import { EvaluationMethodName } from '@shared/types/evaluations';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Rebuilding a skill's arms -- which every change to its models does --
@@ -229,5 +233,84 @@ describe('handleGenerateArms, writing from real requests', () => {
     const call = vi.mocked(generateSeedSystemPromptWithContext).mock.calls[0];
     expect(call[5]).toEqual(schema);
     expect(call[6]).toEqual(['customer_tier']);
+  });
+});
+
+/**
+ * Generations for one skill wait their turn -- but not forever. One that
+ * never settled (on Workers, a request cancelled before its work was handed
+ * to `waitUntil`) held every later generation for the skill for as long as
+ * the isolate lived.
+ */
+describe('withArmGenerationLock', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('waits for the generation before it', async () => {
+    let release: () => void = () => undefined;
+    const running = withArmGenerationLock(
+      'skill-busy',
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const next = vi.fn(async () => 'generated');
+    const pending = withArmGenerationLock('skill-busy', next);
+
+    await vi.advanceTimersByTimeAsync(ARM_GENERATION_WAIT_MS / 2);
+    expect(next).not.toHaveBeenCalled();
+
+    release();
+    await running;
+    expect(await pending).toBe('generated');
+  });
+
+  it('stops waiting for a generation that never settles', async () => {
+    // Its executor never resolves it.
+    const never = new Promise<void>(() => undefined);
+    void withArmGenerationLock('skill-stuck', () => never);
+    const next = vi.fn(async () => 'generated');
+    const pending = withArmGenerationLock('skill-stuck', next);
+
+    await vi.advanceTimersByTimeAsync(ARM_GENERATION_WAIT_MS - 1);
+    expect(next).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toBe('generated');
+  });
+
+  // The wait is counted from when the generation ahead started, so the one
+  // queued behind it does not go ahead of a generation that only just began.
+  it('counts the wait from when the generation ahead began', async () => {
+    const never = new Promise<void>(() => undefined);
+    void withArmGenerationLock('skill-queued', () => never);
+    let release: () => void = () => undefined;
+    const second = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const secondRun = withArmGenerationLock('skill-queued', second);
+    await vi.advanceTimersByTimeAsync(ARM_GENERATION_WAIT_MS / 2);
+    const third = vi.fn(async () => 'generated');
+    const thirdRun = withArmGenerationLock('skill-queued', third);
+
+    // The second starts once the stuck one has had its time...
+    await vi.advanceTimersByTimeAsync(ARM_GENERATION_WAIT_MS / 2);
+    expect(second).toHaveBeenCalled();
+    // ...and the third waits on it, past its own time in the queue.
+    await vi.advanceTimersByTimeAsync(ARM_GENERATION_WAIT_MS / 2);
+    expect(third).not.toHaveBeenCalled();
+
+    release();
+    await secondRun;
+    expect(await thirdRun).toBe('generated');
   });
 });

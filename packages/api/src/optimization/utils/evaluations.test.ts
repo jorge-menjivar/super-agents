@@ -1,4 +1,9 @@
-import { generateEvaluationCreateParams } from '@api/optimization/utils/evaluations';
+import { DecisionCorrectnessEvaluationParameters } from '@api/connectors/evaluations/decision-correctness/types';
+import { ToolCorrectnessEvaluationParameters } from '@api/connectors/evaluations/tool-correctness/types';
+import {
+  applyRegeneratedEvaluations,
+  generateEvaluationCreateParams,
+} from '@api/optimization/utils/evaluations';
 import { createMockContext } from '@api/test-utils/mock-context';
 import type {
   EvaluationMethodConnector,
@@ -8,6 +13,10 @@ import { resolveRoleModel } from '@api/utils/evaluation-model-resolver';
 import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { AIProvider } from '@shared/types/constants';
 import type { Skill } from '@shared/types/data';
+import type {
+  SkillOptimizationEvaluation,
+  SkillOptimizationEvaluationCreateParams,
+} from '@shared/types/data/skill-optimization-evaluation';
 import { EvaluationMethodName } from '@shared/types/evaluations';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -260,5 +269,123 @@ describe('generateEvaluationCreateParams', () => {
     );
 
     expect(params.params).toEqual({ task: 'Review the diff', threshold: 0.7 });
+  });
+});
+
+/**
+ * Regeneration replaces what a model generated and keeps the rest of an
+ * evaluation's parameters, which are the user's -- but only the parameters
+ * its method still has.
+ */
+describe('applyRegeneratedEvaluations', () => {
+  const evaluation = (
+    method: EvaluationMethodName,
+    params: Record<string, unknown>,
+  ): SkillOptimizationEvaluation =>
+    ({
+      id: `eval-${method}`,
+      agent_id: 'agent-1',
+      skill_id: 'skill-1',
+      evaluation_method: method,
+      params,
+      weight: 3,
+    }) as SkillOptimizationEvaluation;
+
+  const regenerated = (
+    method: EvaluationMethodName,
+    params: Record<string, unknown>,
+  ): SkillOptimizationEvaluationCreateParams => ({
+    agent_id: 'agent-1',
+    skill_id: 'skill-1',
+    evaluation_method: method,
+    params,
+    weight: 1,
+  });
+
+  /** A method known only by its full parameter schema. */
+  const parametersOf = (schema: z.ZodType): EvaluationMethodConnector =>
+    ({ getParameterSchema: schema }) as unknown as EvaluationMethodConnector;
+
+  const storeFor = () =>
+    ({
+      updateSkillOptimizationEvaluation: vi.fn().mockResolvedValue(undefined),
+    }) as unknown as UserDataStorageConnector;
+
+  /** What the evaluation was updated with. */
+  const written = (store: UserDataStorageConnector) =>
+    vi.mocked(store.updateSkillOptimizationEvaluation).mock.calls[0][2] as {
+      params: Record<string, unknown>;
+    };
+
+  // Tool correctness's parameters are strict, and a row from before they
+  // dropped `task` still had one: kept by the merge, it failed every log the
+  // evaluation judged with "Unrecognized key".
+  it("drops a key the method's parameters no longer have", async () => {
+    const store = storeFor();
+
+    await applyRegeneratedEvaluations(
+      mockContext,
+      store,
+      [
+        evaluation(EvaluationMethodName.TOOL_CORRECTNESS, {
+          task: 'Review the diff',
+          threshold: 0.7,
+        }),
+      ],
+      [regenerated(EvaluationMethodName.TOOL_CORRECTNESS, {})],
+      {
+        tool_correctness: parametersOf(ToolCorrectnessEvaluationParameters),
+      },
+    );
+
+    const { params } = written(store);
+    expect(params).toEqual({ threshold: 0.7 });
+    expect(() =>
+      ToolCorrectnessEvaluationParameters.parse(params),
+    ).not.toThrow();
+  });
+
+  it("keeps the user's own settings, and leaves the weight alone", async () => {
+    const store = storeFor();
+
+    await applyRegeneratedEvaluations(
+      mockContext,
+      store,
+      [
+        evaluation(EvaluationMethodName.DECISION_CORRECTNESS, {
+          guidance: 'A reply that helps someone in is a yes.',
+          temperature: 0.3,
+          max_tokens: 8_000,
+        }),
+      ],
+      [regenerated(EvaluationMethodName.DECISION_CORRECTNESS, {})],
+      {
+        decision_correctness: parametersOf(
+          DecisionCorrectnessEvaluationParameters,
+        ),
+      },
+    );
+
+    expect(written(store)).toEqual({
+      params: {
+        guidance: 'A reply that helps someone in is a yes.',
+        temperature: 0.3,
+        max_tokens: 8_000,
+      },
+    });
+  });
+
+  it('keeps every key of a method it has no object schema for', async () => {
+    const store = storeFor();
+
+    await applyRegeneratedEvaluations(
+      mockContext,
+      store,
+      [evaluation(EvaluationMethodName.LATENCY, { anything: 1 })],
+      [regenerated(EvaluationMethodName.LATENCY, { max_ms: 5_000 })],
+      {},
+    );
+
+    expect(written(store).params).toEqual({ anything: 1, max_ms: 5_000 });
   });
 });

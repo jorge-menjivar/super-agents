@@ -270,6 +270,7 @@ export async function checkAndRegenerateEvaluationsEarly(
       userDataStorageConnector,
       existingEvaluations,
       newEvaluationParams,
+      evaluationConnectorsMap,
     );
 
     // The from-scratch case: record what was generated, the way creation

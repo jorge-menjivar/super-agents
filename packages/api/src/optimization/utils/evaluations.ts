@@ -314,12 +314,19 @@ export async function regenerateEvaluationsWithExamples(
  * -- decision correctness's `guidance`, a judge's token budget and effort,
  * its temperature -- and its weight are the user's, so they stay: written
  * over, the fifth request to a skill quietly undid what the user had set.
+ *
+ * What stays is only what the method still has a parameter for. A row can
+ * hold a key its method has since dropped -- an old `task` on tool
+ * correctness or turn relevancy -- and those methods' parameters are strict:
+ * kept, the key failed every log the evaluation judged with "Unrecognized
+ * key". Rewriting the row over was what used to clear it.
  */
 export async function applyRegeneratedEvaluations(
   c: AppContext,
   connector: UserDataStorageConnector,
   existing: SkillOptimizationEvaluation[],
   regenerated: SkillOptimizationEvaluationCreateParams[],
+  evaluationConnectors: Partial<Record<string, EvaluationMethodConnector>>,
 ): Promise<void> {
   for (const evaluation of existing) {
     const next = regenerated.find(
@@ -327,7 +334,29 @@ export async function applyRegeneratedEvaluations(
     );
     if (!next) continue;
     await connector.updateSkillOptimizationEvaluation(c, evaluation.id, {
-      params: { ...evaluation.params, ...next.params },
+      params: knownParameters(
+        { ...evaluation.params, ...next.params },
+        evaluationConnectors[evaluation.evaluation_method],
+      ),
     });
   }
+}
+
+/**
+ * `params` without the keys its method's parameters do not have. A method
+ * whose parameters are not a plain object schema is left to say for itself
+ * what it accepts.
+ */
+function knownParameters(
+  params: Record<string, unknown>,
+  evaluationConnector: EvaluationMethodConnector | undefined,
+): Record<string, unknown> {
+  const schema = evaluationConnector?.getParameterSchema;
+  if (!(schema instanceof z.ZodObject)) {
+    return params;
+  }
+  const known = new Set(Object.keys(schema.shape));
+  return Object.fromEntries(
+    Object.entries(params).filter(([key]) => known.has(key)),
+  );
 }

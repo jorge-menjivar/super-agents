@@ -207,11 +207,15 @@ function getSeederSystemPrompt() {
   return systemPrompt;
 }
 
-function getSeederFirstMessage(description: string) {
+function getSeederFirstMessage(
+  description: string,
+  allowedTemplateVariables?: string[],
+) {
   const firstMessage = `
 Given the following description of an AI agent, generate a system prompt for the AI agent so that it can produce high-quality responses:
 
 ${description}
+${getTemplateVariablesSection(allowedTemplateVariables)}
 `;
 
   return firstMessage;
@@ -242,7 +246,10 @@ function getPolicySeederSystemPrompt() {
   return 'You are an expert at writing the policies decision models answer under: the rules a model that answers questions with probabilities reads before each question.';
 }
 
-function getPolicySeederFirstMessage(description: string) {
+function getPolicySeederFirstMessage(
+  description: string,
+  allowedTemplateVariables?: string[],
+) {
   return `
 Given the following description of a skill, write the policy its decision model answers its questions under.
 
@@ -250,6 +257,7 @@ ${DECISION_POLICY_BRIEF}
 
 Skill description:
 ${description}
+${getTemplateVariablesSection(allowedTemplateVariables)}
 `;
 }
 
@@ -369,9 +377,18 @@ export async function generateSeedSystemPromptForSkill(
   const systemPrompt = decision
     ? getPolicySeederSystemPrompt()
     : getSeederSystemPrompt();
+  // The variables the skill's callers send, which the prompt must use: the
+  // seeder writing from real requests was told them, and this one, writing
+  // from the description alone, was not.
   const userMessage = decision
-    ? getPolicySeederFirstMessage(skill.description)
-    : getSeederFirstMessage(skill.description);
+    ? getPolicySeederFirstMessage(
+        skill.description,
+        skill.allowed_template_variables,
+      )
+    : getSeederFirstMessage(
+        skill.description,
+        skill.allowed_template_variables,
+      );
 
   return await callSystemPromptAPI(
     client,

@@ -14,6 +14,7 @@ import type {
   UserDataStorageConnector,
 } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
+import { warn } from '@shared/console-logging';
 import { isCompletedLog } from '@shared/types/data/log';
 import type { Skill } from '@shared/types/data/skill';
 import type {
@@ -45,22 +46,77 @@ async function seedSystemPrompt(
  * that overlapped each wrote the same arms. A repair racing the first full
  * generation after a model was attached gave a cluster every arm twice.
  * Within a process, generations for one skill now wait their turn.
+ *
+ * Each is kept as when it started and when it settled: the wait for it is
+ * counted from its start, not from when the next one asked, so a queue
+ * behind a stuck generation does not time out on one that only just began.
  */
-const armGenerations = new Map<string, Promise<unknown>>();
+const armGenerations = new Map<
+  string,
+  { started: Promise<void>; settled: Promise<void> }
+>();
+
+/**
+ * How long a generation may hold the skill before the next one goes ahead
+ * without it. One that never settles -- on Workers, a request cancelled
+ * before its work was handed to `waitUntil` -- would otherwise hold every
+ * later generation for the skill for as long as the isolate lives. A
+ * generation's model calls are the evaluations, then a prompt, each an
+ * attempt and a retry of at most two minutes at the default timeouts: eight
+ * minutes at the very worst. Ten -- the reflection lock's floor -- is past
+ * any generation still going to finish, so one that outlasts it is taken as
+ * stuck. A timeout raised far past its default can make a slow generation
+ * look stuck; the cost is the duplicate arms this lock exists to prevent,
+ * against a skill that could otherwise never be generated again.
+ */
+export const ARM_GENERATION_WAIT_MS = 10 * 60 * 1000;
+
+/** Settles when `previous` does, or after `ms`, whichever comes first. */
+function waitAtMost(
+  previous: Promise<unknown>,
+  ms: number,
+  onTimeout: () => void,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      onTimeout();
+      resolve();
+    }, ms);
+  });
+  return Promise.race([
+    previous.then(
+      () => undefined,
+      () => undefined,
+    ),
+    timedOut,
+  ]).finally(() => clearTimeout(timer));
+}
 
 export function withArmGenerationLock<T>(
   skillId: string,
   generate: () => Promise<T>,
 ): Promise<T> {
-  const before = armGenerations.get(skillId) ?? Promise.resolve();
-  const run = before.then(generate, generate);
+  const previous = armGenerations.get(skillId);
+  // Resolves when this generation may start, and never rejects.
+  const started = previous
+    ? previous.started.then(() =>
+        waitAtMost(previous.settled, ARM_GENERATION_WAIT_MS, () =>
+          warn(
+            `[ARM_GENERATION] The arm generation before this one for skill ${skillId} has not finished in ${ARM_GENERATION_WAIT_MS / 1000}s; generating without waiting for it any longer`,
+          ),
+        ),
+      )
+    : Promise.resolve();
+  const run = started.then(generate);
   const settled = run.then(
     () => undefined,
     () => undefined,
   );
-  armGenerations.set(skillId, settled);
+  const generation = { started, settled };
+  armGenerations.set(skillId, generation);
   void settled.then(() => {
-    if (armGenerations.get(skillId) === settled) {
+    if (armGenerations.get(skillId) === generation) {
       armGenerations.delete(skillId);
     }
   });
@@ -163,6 +219,7 @@ export async function generateArms(
           userStorageConnector,
           existingEvaluations,
           regeneratedEvaluationParams,
+          evaluationConnectorsMap,
         );
       }
     }

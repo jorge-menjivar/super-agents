@@ -132,6 +132,67 @@ describe('generateSeedSystemPromptWithContext', () => {
   });
 });
 
+// A skill with fewer than five logs has its prompt written from its
+// description alone, and that writer was never told the template variables
+// the skill's callers send -- so the prompt it wrote used none of them.
+describe('generateSeedSystemPromptForSkill', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockParse.mockResolvedValue({
+      choices: [{ message: { parsed: { system_prompt: 'A prompt' } } }],
+    });
+  });
+
+  it("tells the writer the skill's template variables", async () => {
+    await generateSeedSystemPromptForSkill(
+      c,
+      {
+        agent_id: 'agent-1',
+        description: 'Books tables.',
+        allowed_template_variables: ['restaurant_name'],
+      } as Skill,
+      connector,
+    );
+
+    expect(askedWith()).toContain('Books tables.');
+    expect(askedWith()).toContain('{{ restaurant_name }}');
+  });
+
+  it('tells a policy writer them too', async () => {
+    vi.mocked(agentById).mockResolvedValueOnce({
+      id: 'agent-1',
+      agent_type: 'decision',
+    } as Agent);
+
+    await generateSeedSystemPromptForSkill(
+      c,
+      {
+        agent_id: 'agent-1',
+        description: 'Withholds replies.',
+        allowed_template_variables: ['house_rules'],
+      } as Skill,
+      connector,
+    );
+
+    expect(askedWith()).toContain('write the policy its decision model');
+    expect(askedWith()).toContain('{{ house_rules }}');
+  });
+
+  it('says nothing about template variables when the skill has none', async () => {
+    await generateSeedSystemPromptForSkill(
+      c,
+      {
+        agent_id: 'agent-1',
+        description: 'Books tables.',
+        allowed_template_variables: [],
+      } as unknown as Skill,
+      connector,
+    );
+
+    expect(askedWith()).not.toContain('Template Variables');
+  });
+});
+
 /**
  * A decision skill's system prompt is a policy put ahead of each question a
  * decision model answers with probabilities. Written as a chat prompt, it is
