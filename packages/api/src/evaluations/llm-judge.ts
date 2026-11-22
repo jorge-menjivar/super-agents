@@ -33,6 +33,15 @@ const LLM_JUDGE_MAX_RETRIES = 3;
 const LLM_JUDGE_RETRY_DELAY_BASE = 1000; // 1 second base delay
 
 /**
+ * How many times an answer in a shape other than the one asked for is asked
+ * for again. Once: a judge that answered off its schema may answer on it the
+ * next time, but one that answers off it every time -- a model that ignores
+ * `response_format` -- would otherwise cost three calls before the same
+ * fallback.
+ */
+const LLM_JUDGE_MAX_OFF_SCHEMA_RETRIES = 1;
+
+/**
  * The judge answered nothing readable.
  *
  * A clean stop with an empty answer is transient: a self-hosted model can
@@ -65,9 +74,13 @@ export class JudgeEmptyCompletionError extends Error {
 }
 
 /**
- * Check if an error is retryable for LLM judge requests
+ * Check if an error is retryable for LLM judge requests, given how many
+ * answers off the schema have been retried already.
  */
-function isRetryableLLMJudgeError(error: unknown): boolean {
+function isRetryableLLMJudgeError(
+  error: unknown,
+  offSchemaRetries: number,
+): boolean {
   if (error instanceof JudgeEmptyCompletionError) {
     return error.retryable;
   }
@@ -75,7 +88,7 @@ function isRetryableLLMJudgeError(error: unknown): boolean {
   // the schema may answer on it the next time, and the retry bypasses the
   // cache, so the bad answer is not served again either.
   if (error instanceof z.ZodError) {
-    return true;
+    return offSchemaRetries < LLM_JUDGE_MAX_OFF_SCHEMA_RETRIES;
   }
   if (error instanceof Error) {
     const message = error.message.toLowerCase();
@@ -285,6 +298,7 @@ Provide a score between 0 and 1 with detailed reasoning for your evaluation.`;
 
     let lastError: unknown;
     let retryCount = 0;
+    let offSchemaRetries = 0;
     for (let i = 0; i < LLM_JUDGE_MAX_RETRIES; i++) {
       try {
         // Identical requests share a cache entry, and a retry is identical to
@@ -365,7 +379,13 @@ Provide a score between 0 and 1 with detailed reasoning for your evaluation.`;
         return { ok: true, value: read(parsed) };
       } catch (err) {
         lastError = err;
-        if (i < LLM_JUDGE_MAX_RETRIES - 1 && isRetryableLLMJudgeError(err)) {
+        if (
+          i < LLM_JUDGE_MAX_RETRIES - 1 &&
+          isRetryableLLMJudgeError(err, offSchemaRetries)
+        ) {
+          if (err instanceof z.ZodError) {
+            offSchemaRetries++;
+          }
           const delay = LLM_JUDGE_RETRY_DELAY_BASE * 2 ** i;
           warn(
             `[LLM_JUDGE] Retrying evaluation (${i + 1}/${LLM_JUDGE_MAX_RETRIES}) after ${delay}ms:`,
@@ -398,6 +418,15 @@ Provide a score between 0 and 1 with detailed reasoning for your evaluation.`;
         model: judgeConfig.model,
       });
 
+      // The judge answered, in JSON, but not in the shape it was asked for:
+      // its answer could not be read, which is no error of the API's.
+      if (lastError instanceof z.ZodError) {
+        return getFallbackResult(
+          'parse_error',
+          z.prettifyError(lastError),
+          retryInfo,
+        );
+      }
       if (
         lastError instanceof JudgeEmptyCompletionError &&
         !lastError.retryable

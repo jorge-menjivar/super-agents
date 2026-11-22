@@ -1202,5 +1202,52 @@ describe('LLM Judge', () => {
         expect(result.fallback.metadata?.fallback).toBe(true);
       }
     });
+
+    // A judge that answers off its schema every time -- one that ignores
+    // `response_format` -- cost three calls before the same fallback, which
+    // then blamed the API.
+    it('asks again only once for an answer that stays off the schema', async () => {
+      mockParse.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify({ answers: 'yes' }) } }],
+      });
+
+      const pending = llmJudge.answer(prompt, {
+        name: 'decision_judgment',
+        schema: Answers,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await pending;
+
+      expect(mockParse).toHaveBeenCalledTimes(2);
+      const configs = vi
+        .mocked(mockWithOptions)
+        .mock.calls.map((call) =>
+          JSON.parse(call[0].defaultHeaders['sa-config']),
+        );
+      expect(configs[1].force_refresh).toBe(true);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.fallback.metadata?.errorType).toBe('parse_error');
+        expect(result.fallback.reasoning).toBe(
+          'Evaluation failed - response parsing error (retried 1/3 times)',
+        );
+      }
+    });
+
+    it('scores an evaluation answered off the schema as a parse error', async () => {
+      mockParse.mockResolvedValue({
+        choices: [
+          { message: { content: JSON.stringify({ verdict: 'good' }) } },
+        ],
+      });
+
+      const pending = llmJudge.evaluate({ text: 'This is a test.' });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await pending;
+
+      expect(mockParse).toHaveBeenCalledTimes(2);
+      expect(result.score).toBe(0.5);
+      expect(result.metadata?.errorType).toBe('parse_error');
+    });
   });
 });

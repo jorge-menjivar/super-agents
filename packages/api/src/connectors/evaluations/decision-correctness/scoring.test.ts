@@ -69,6 +69,55 @@ describe('scoreAnswer', () => {
       expect(scoreAnswer(choice, answer, 'shipping')).toBeCloseTo(0.5235);
     });
 
+    // A confidence of 0.1 on the option chosen left 0.45 on each of the
+    // others, and a right choice scored 0.39 where a wrong one scored 0.74.
+    // It was the model's choice: at least as likely as any other option.
+    it('never scores a right choice below a wrong one', () => {
+      const answer: SystemOneAnswer = {
+        type: 'choice',
+        choice: 'refund',
+        confidence: 0.1,
+      };
+      const right = scoreAnswer(choice, answer, 'refund') ?? 0;
+      const wrong = scoreAnswer(choice, answer, 'shipping') ?? 1;
+
+      // Within rounding: an even share on all three scores the two alike.
+      expect(right).toBeGreaterThanOrEqual(wrong - 1e-9);
+      // 1 - ((2/3)^2 + 2 * (1/3)^2) / 2
+      expect(right).toBeCloseTo(2 / 3);
+    });
+
+    // A judge not held to its schema answers a yes-or-no choice as a
+    // boolean, which reached the scorer as "true" and matched no option.
+    it("reads a true or false judgment as the question's yes or no", () => {
+      const yesNo: SystemOneQuestion = {
+        type: 'choice',
+        criteria: { Yes: null, No: null },
+      };
+      const answer: SystemOneAnswer = {
+        type: 'choice',
+        choice: 'Yes',
+        probabilities: { Yes: 0.8, No: 0.2 },
+      };
+
+      // 1 - (0.2^2 + 0.2^2) / 2
+      expect(scoreAnswer(yesNo, answer, 'true')).toBeCloseTo(0.96);
+      // 1 - (0.8^2 + 0.8^2) / 2
+      expect(scoreAnswer(yesNo, answer, ' FALSE ')).toBeCloseTo(0.36);
+      // Without a yes or a no to name, it names nothing.
+      expect(scoreAnswer(choice, answer, 'true')).toBeNull();
+    });
+
+    it('matches an option named "true" as itself', () => {
+      const literal: SystemOneQuestion = {
+        type: 'choice',
+        criteria: { true: null, false: null, yes: null },
+      };
+      const answer: SystemOneAnswer = { type: 'choice', choice: 'true' };
+
+      expect(scoreAnswer(literal, answer, 'true')).toBe(1);
+    });
+
     it('scores an option named "unknown" like any other', () => {
       const unsure: SystemOneQuestion = {
         type: 'choice',
@@ -138,6 +187,38 @@ describe('scoreAnswer', () => {
           '3',
         ) ?? 0,
       );
+    });
+
+    // Missing mass was read as sitting on the top level, so a spread that
+    // put nothing on the scale's levels was scored as certain of the top --
+    // a perfect score whenever the top was right.
+    it('reads only the levels of a spread, made to sum to one', () => {
+      const answer: SystemOneAnswer = {
+        type: 'score',
+        score: 2.2,
+        probabilities: { '0': 0.1, '1': 0.1, '2': 0.1, '3': 0.2 },
+      };
+      // As 0.2, 0.2, 0.2, 0.4: cumulative 0.2, 0.4, 0.6 against 0, 0, 0:
+      // 1 - (0.2^2 + 0.4^2 + 0.6^2) / 3
+      expect(scoreAnswer(scale, answer, '3')).toBeCloseTo(1 - 0.56 / 3);
+    });
+
+    it('scores the expected level when the spread has nothing on the levels', () => {
+      const empty: SystemOneAnswer = {
+        type: 'score',
+        score: 0,
+        probabilities: {},
+      };
+      const legend: SystemOneAnswer = {
+        type: 'score',
+        score: 0,
+        probabilities: { 'Not at all': 1 },
+      };
+
+      // The expected level, 0, is the whole scale away from 3.
+      expect(scoreAnswer(scale, empty, '3')).toBe(0);
+      expect(scoreAnswer(scale, legend, '3')).toBe(0);
+      expect(scoreAnswer(scale, legend, '0')).toBe(1);
     });
 
     it('scores the expected level by its distance, without a spread', () => {
