@@ -53,10 +53,22 @@ vi.mock('@api/constants', async (importOriginal) => ({
   getInternalApiKey: () => 'the-token',
 }));
 
-const context = (saConfig: Record<string, unknown>): AppContext =>
+/**
+ * A request whose agent is reviewed by `guard` -- the reviewer the gateway
+ * adds, whose reviews it signs -- unless `reviewer` says otherwise.
+ */
+const context = (
+  saConfig: Record<string, unknown>,
+  reviewer: string | null = 'guard',
+): AppContext =>
   ({
     env: {},
-    get: (key: string) => (key === 'sa_config' ? saConfig : undefined),
+    get: (key: string) =>
+      key === 'sa_config'
+        ? saConfig
+        : key === 'reviewer_agent_name'
+          ? (reviewer ?? undefined)
+          : undefined,
   }) as unknown as AppContext;
 
 const hook: Hook = {
@@ -394,6 +406,33 @@ describe('replaceResponseContent with a tool call', () => {
  * A reviewer whose models are decision models: asked through System One for
  * the probability that the response should be withheld, which is its verdict.
  */
+// The gateway signs only the reviews it decided to send: a hook a client
+// wrote itself would otherwise get its target's reviewer skipped.
+describe('agentHooksConnector, for a hook the client wrote', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('asks its agent unsigned', async () => {
+    mockCreate.mockResolvedValue(
+      answer(JSON.stringify({ verdict: 'allow', reason: 'Fine.' })),
+    );
+
+    await agentHooksConnector.executeHook(
+      context({ trace_id: 'trace-1' }, null),
+      hook,
+      input,
+    );
+
+    const [headers] = mockWithOptions.mock.calls[0] as [
+      { defaultHeaders: Record<string, string> },
+    ];
+    const sent = JSON.parse(headers.defaultHeaders['sa-config']);
+    expect(sent.reviewing_trace_id).toBe('trace-1');
+    expect(sent).not.toHaveProperty('reviewing_signature');
+  });
+});
+
 describe('agentHooksConnector, for a decision-model reviewer', () => {
   const decisionHook: Hook = {
     ...hook,

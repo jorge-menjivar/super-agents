@@ -20,6 +20,7 @@ const agent = {
   review_fail_closed: false,
   review_expose_reason: false,
   options: AgentOptions.parse({}),
+  agent_type: 'text' as const,
 };
 const guard = { id: 'agent-2', name: 'guard', agent_type: 'text' };
 
@@ -136,6 +137,22 @@ describe('reviewerHookFor', () => {
       });
       expect(hook).not.toBeNull();
     });
+  });
+
+  // A decision agent answers with probabilities, which no reviewer reads: a
+  // reviewer it was given before the API refused one could only fail, and,
+  // failing closed, deny every request.
+  it('adds nothing for a decision agent', async () => {
+    const store = connector([guard]);
+    expect(
+      await reviewerHookFor(
+        c,
+        store,
+        { ...agent, agent_type: 'decision', review_fail_closed: true },
+        {},
+      ),
+    ).toBeNull();
+    expect(store.getAgents).not.toHaveBeenCalled();
   });
 
   it('adds nothing when the reviewer no longer exists', async () => {

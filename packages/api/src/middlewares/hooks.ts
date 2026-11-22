@@ -95,10 +95,17 @@ const judgedResponse = (
     ? { response_body: saResponseBody as Record<string, unknown> }
     : {};
 
-/** The requests a hook can read: a chat or text completion, and an embedding's input. */
+/**
+ * The requests a hook can read: a chat or text completion, streamed or not,
+ * and an embedding's input. A stream's request is the same body as any other
+ * -- an input hook reads it before anything streams -- and what streams back
+ * is judged when it is held, and is a hook that could not run when it is not.
+ */
 const READABLE_FUNCTIONS: ReadonlySet<FunctionName> = new Set([
   FunctionName.CHAT_COMPLETE,
+  FunctionName.STREAM_CHAT_COMPLETE,
   FunctionName.COMPLETE,
+  FunctionName.STREAM_COMPLETE,
   FunctionName.EMBED,
 ]);
 

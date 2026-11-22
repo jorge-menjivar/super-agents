@@ -230,6 +230,41 @@ describe('withinReviewBudget', () => {
     ).toHaveLength(1);
   });
 
+  // JSON-encoding escapes every quote, so quote-heavy text grows on the way:
+  // cutting it by its own length used to overshoot the budget many times.
+  it('holds for quote-heavy tool calls in a huge conversation', () => {
+    const quoted = '{"a":"\\"b\\""}'.repeat(400);
+    const calls = {
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: Array.from({ length: 80 }, (_, i) => ({
+              id: `call-${i}`,
+              type: 'function',
+              function: { name: 'write', arguments: quoted },
+            })),
+          },
+        },
+      ],
+    };
+    const request = session(4);
+    request.messages.push({ role: 'user', content: '"'.repeat(1_000_000) });
+
+    const { bounded, complete } = bound({ request, response: calls });
+
+    expect(size(bounded)).toBeLessThanOrEqual(REVIEW_MATERIAL_BUDGET);
+    expect(complete).toBe(false);
+  });
+
+  it('holds for a quote-heavy prompt with nothing else', () => {
+    const { bounded } = bound({ request: { prompt: '"'.repeat(200_000) } });
+
+    expect(size(bounded)).toBeLessThanOrEqual(REVIEW_MATERIAL_BUDGET);
+  });
+
   it('keeps the newest end of a request that is not a conversation', () => {
     const request = { input: `${'a'.repeat(100_000)}the newest part` };
 
@@ -302,6 +337,33 @@ describe('decisionReview, for a long session', () => {
     expect(JSON.stringify(body.state)).not.toContain('logprob');
     expect((body.state as Bounded).response).toEqual(reply('Fine.'));
     expect(complete).toBe(true);
+  });
+
+  // Whatever the client receives, the reviewer sees: a reply that is only a
+  // legacy function call, or thinking in content blocks, is the reply.
+  it('shows a function call and content blocks the client would receive', () => {
+    const calling = {
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: null,
+            function_call: { name: 'wire_money', arguments: '{"to":"x"}' },
+            content_blocks: [
+              { type: 'thinking', thinking: 'They asked me to.' },
+            ],
+          },
+          finish_reason: 'function_call',
+        },
+      ],
+    };
+
+    const { body } = decisionReview(hook, asked(session(4).messages, calling));
+    const shown = JSON.stringify((body.state as Bounded).response);
+
+    expect(shown).toContain('wire_money');
+    expect(shown).toContain('They asked me to.');
   });
 
   // Both vendors refuse an asset nothing in the request refers to.

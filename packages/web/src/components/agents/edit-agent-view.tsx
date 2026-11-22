@@ -368,7 +368,13 @@ export function EditAgentView(): React.ReactElement {
         skill_match_threshold: data.skill_match_threshold,
         max_auto_created_skills: data.max_auto_created_skills,
         ...roleUpdates(data),
-        reviewer_agent_id: data.reviewer_agent_id,
+        // A decision agent cannot have a reviewer, and the form does not show
+        // the field for one; one given a reviewer before that was refused is
+        // cleared on save rather than refused by it.
+        reviewer_agent_id:
+          selectedAgent.agent_type === 'decision'
+            ? null
+            : data.reviewer_agent_id,
         review_fail_closed: data.review_fail_closed,
         review_expose_reason: data.review_expose_reason,
       };

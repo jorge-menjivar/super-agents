@@ -307,6 +307,43 @@ describe('executeHooks on a request it cannot judge', () => {
     expect(log.result.error).toBeDefined();
   });
 
+  // A stream's request is a chat body like any other: an input hook reads
+  // it before anything streams, and a hook not waiting on the response has
+  // nothing to hold.
+  it('reads the request of a stream, and skips a hook not waiting on it', async () => {
+    const provider = connector();
+    const streamed = {
+      functionName: FunctionName.STREAM_CHAT_COMPLETE,
+      requestBody: { model: 'm', messages: [], stream: true },
+    } as unknown as SuperAgentsRequestData;
+
+    const [input] = await executeHooks(
+      context(
+        [hook({ type: HookType.INPUT_HOOK, fail_closed: true })],
+        [provider],
+      ),
+      HookType.INPUT_HOOK,
+      null,
+      true,
+      streamed,
+    );
+    const [unawaited] = await executeHooks(
+      context([hook({ await: false, fail_closed: true })], [provider]),
+      HookType.OUTPUT_HOOK,
+      200,
+      true,
+      streamed,
+    );
+
+    expect(provider.executeHook).toHaveBeenCalledTimes(1);
+    expect(input.result).toMatchObject({ deny_request: false });
+    expect(input.result.error).toBeUndefined();
+    expect(unawaited.result).toMatchObject({
+      skipped: true,
+      deny_request: false,
+    });
+  });
+
   it('still skips what there is nothing to judge in', async () => {
     const provider = connector();
     const c = context(

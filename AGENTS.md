@@ -665,15 +665,16 @@ hook log is the only record that the request went unreviewed. A hook with
 check that matters more than availability. On an agent,
 `review_fail_closed` sets it for the reviewer hook.
 
-**Hooks read chat and text completions** -- and, for an input hook, an
-embedding's input. A hook asked to judge anything else (a Responses API
+**Hooks read chat and text completions**, streamed or not -- a stream's
+request is the same body -- and, for an input hook, an embedding's input. A hook asked to judge anything else (a Responses API
 request, System One, an image) cannot, and neither can a blocking output
 hook whose stream could not be held; either is a *failed* hook, not a
 skipped one (`cannotRunReason` in `middlewares/hooks.ts`), so it fails open
 or closed like any other and the log says the request went unjudged. A skip
 used to be what let a client get past its agent's reviewer by asking
 through another API. A decision agent cannot have a reviewer at all: its
-answers are probabilities, and the agents API refuses one.
+answers are probabilities, and the agents API refuses one, the gateway
+ignores one it was given before that, and the agent form clears it on save.
 
 A hook that denies turns the answer into a 446 (`HookDenialResponseBody`):
 an `error` shaped like any other gateway error, whose `message` says which
@@ -736,12 +737,13 @@ decision model is published at -- by `withinReviewBudget`
 (`connectors/hooks/review-budget.ts`): an agent harness's request carries its
 whole session, which outgrows any model (Jev refuses one with
 `max_tokens_exceeded`). The response comes first, whole whenever it fits in
-three quarters of the budget, without the token log-probabilities that say
-nothing about it; then the start of the system prompt, the last thing the
+three quarters of the budget -- every choice whole, calls and thinking
+included, less only the token log-probabilities that say nothing about it; then the start of the system prompt, the last thing the
 user asked and the newest turns, each long one clipped; tools are named
 rather than described, and each run of turns left out is an
 `{omitted_messages: n}` entry where they were. The bound holds for any
-shape, cutting what still does not fit to its newest end. A response that
+shape, cutting what still does not fit to its newest end, measured as it
+is sent -- encoded -- and checked once more as a whole. A response that
 had to be cut can still be withheld, but a reviewer shown part of it cannot
 clear the rest: allowed, it is a review it could not give.
 
@@ -757,7 +759,10 @@ review each other from looping. It is signed (`reviewing_signature`, an HMAC
 under `AUTH_JWT_SECRET`; `utils/super-agents/review-signature.ts`), because
 the gateway and its clients share a bearer token: a client sending the trace
 id itself would otherwise switch its agent's reviewer off. Unsigned, it is
-ignored. A signed review is also routed without creating a skill once its
+ignored. Only a review sent to the requesting agent's own reviewer -- the
+hook the gateway added -- is signed; a hook the client wrote is sent
+unsigned, or it could point at any agent and skip that agent's reviewer
+under the gateway's signature. A signed review is also routed without creating a skill once its
 reviewer has one, since every review is the same job about different
 material, and a new skill would start without the reviewer's policy.
 
@@ -777,7 +782,12 @@ allow is streamed to the client at the end, all at once
 (`utils/held-stream.ts`). A denial reaches a streaming client as the same
 446 JSON error. Only chat and text completions are held; a streaming
 Responses API request cannot be, so its blocking output hooks fail -- a
-fail-closed one withholds the stream before the client reads it.
+fail-closed one withholds the stream before the client reads it. The
+pumps copying a stream to its client (`handlers/stream-handler.ts`) handle
+their own end -- a client that stops reading, a stream withheld -- and stop
+the provider's stream; an error they let out was an unhandled rejection,
+which ends a Node process. The Node entrypoint logs any rejection nothing
+handled rather than exiting.
 
 ## Skill Optimization System
 
@@ -946,7 +956,7 @@ since a single undivided bar says nothing.
     while ordinary requests carry on being served
   - `BEARER_TOKEN` - API authentication token
   - `ACCESS_PASSWORD` - Dashboard password (optional)
-  - `AUTH_JWT_SECRET` - JWT signing secret for the dashboard session cookie (required in production)
+  - `AUTH_JWT_SECRET` - JWT signing secret for the dashboard session cookie and the gateway's review signatures (required in production and on Workers, which set no `NODE_ENV`; locally, a Worker run with auth or reviewers needs it in `packages/api/.dev.vars`)
   - `AI_PROVIDER_API_KEY_ENCRYPTION_KEY` - Encryption key for stored AI provider API keys (required in production)
   - `LIBSQL_URL` - libSQL database, and the switch that selects the libSQL
     backend. `file:` for an embedded SQLite file, `libsql://` or `https://`

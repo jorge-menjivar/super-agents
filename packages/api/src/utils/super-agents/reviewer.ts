@@ -43,6 +43,7 @@ export async function reviewerHookFor(
         | 'review_fail_closed'
         | 'review_expose_reason'
         | 'options'
+        | 'agent_type'
       >
     | undefined,
   config: Pick<
@@ -51,6 +52,12 @@ export async function reviewerHookFor(
   >,
 ): Promise<Hook | null> {
   if (!agent?.reviewer_agent_id) {
+    return null;
+  }
+  // A decision agent answers with probabilities, which no reviewer reads; the
+  // API refuses it a reviewer, and one it was given before that cannot run.
+  // Added anyway, it would fail -- and, failing closed, deny every request.
+  if (agent.agent_type === 'decision') {
     return null;
   }
   // A review is never itself reviewed -- but only the gateway's own review,

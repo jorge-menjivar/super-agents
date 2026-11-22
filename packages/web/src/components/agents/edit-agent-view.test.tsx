@@ -638,6 +638,33 @@ describe('EditAgentView', () => {
         selectedAgent: { ...mockAgent, agent_type: 'decision' as const },
       });
 
+    // A decision agent cannot have a reviewer, and the form has no field for
+    // one: one given a reviewer before that was refused is cleared on save
+    // rather than refused by it.
+    it('clears a reviewer it was given before saving', async () => {
+      vi.mocked(useAgents).mockReturnValue({
+        ...vi.mocked(useAgents)(),
+        selectedAgent: {
+          ...mockAgent,
+          agent_type: 'decision' as const,
+          reviewer_agent_id: 'agent-9',
+        },
+      });
+      renderEditAgentView();
+
+      fireEvent.change(screen.getByLabelText('Maximum automatic skills'), {
+        target: { value: '3' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          'agent-1',
+          expect.objectContaining({ reviewer_agent_id: null }),
+        );
+      });
+    });
+
     it('says what serves it', () => {
       asDecisionAgent();
       renderEditAgentView();
