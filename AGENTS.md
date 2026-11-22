@@ -701,7 +701,10 @@ trace's logs by the reviewer's name and the hook's own span
 (`utils/reviews.ts`) -- which is also where the answer a log written
 before this kept nothing of can still be read, in what the reviewer was
 sent. Retrying on a 446 (`retry.on_status_codes`) asks the
-provider again. The `hook_results` block the handler merges into an allowed
+provider again. A response a blocking output hook let through without
+judging it -- failing open -- is not cached (`middlewares/cache.ts`): a
+cache hit runs no output hooks, so it would be replayed to every identical
+request as though it had been reviewed. The `hook_results` block the handler merges into an allowed
 response does not reach the client either: the body is re-parsed against
 its response schema on the way out, which strips it.
 

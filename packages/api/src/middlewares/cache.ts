@@ -6,13 +6,14 @@ import type {
   SuperAgentsRequestData,
 } from '@shared/types/api/request';
 import type { SuperAgentsResponseBody } from '@shared/types/api/response';
+import type { HookLog } from '@shared/types/data';
 import {
   CacheMode,
   type CacheSettings,
   CacheStatus,
   type GetFromCacheResult,
 } from '@shared/types/middleware/cache';
-import type { Hook } from '@shared/types/middleware/hooks';
+import { type Hook, HookType } from '@shared/types/middleware/hooks';
 import type { MiddlewareHandler } from 'hono';
 import type { Factory } from 'hono/factory';
 
@@ -156,6 +157,27 @@ const getHookResponseFromCache = async (
 };
 
 /**
+ * Whether the response reached the client past a blocking output hook that
+ * could not judge it -- a reviewer that was unreachable, too slow, or answered
+ * with no verdict -- and failed open. The hook log on the request's row is the
+ * only record of that, and a cache hit runs no output hooks and logs none, so
+ * a cached copy would be replayed to every identical request as though it had
+ * been reviewed. Left out of the cache, the next one is reviewed afresh.
+ *
+ * Input hooks do not count: they run before the cache is read, on a hit as on
+ * a miss. Nor does a hook that failed closed, which withheld what it could not
+ * judge rather than letting it through.
+ */
+const passedUnjudged = (hookLogs: readonly HookLog[] | undefined): boolean =>
+  (hookLogs ?? []).some(
+    ({ hook, result }) =>
+      hook.type === HookType.OUTPUT_HOOK &&
+      hook.await &&
+      result.error !== undefined &&
+      !result.deny_request,
+  );
+
+/**
  * Middleware to handle caching of requests.
  */
 export const cacheMiddleware = (
@@ -173,7 +195,15 @@ export const cacheMiddleware = (
 
     if (aiProviderLog) {
       if (aiProviderLog.status >= 400) {
-        // Do not cache failed requests
+        // Do not cache failed requests -- a response a hook withheld among
+        // them, which is answered with a 446.
+        return;
+      }
+
+      // What the hooks judged is cached as the client received it: allowed,
+      // or replaced with a hook's own text. What one of them could not judge
+      // is not.
+      if (passedUnjudged(c.get('hook_logs'))) {
         return;
       }
 

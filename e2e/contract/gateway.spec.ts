@@ -95,6 +95,47 @@ test.describe('gateway', () => {
     }
   });
 
+  test('forwards a JSON body the client sent without a content-type', async ({
+    request,
+    baseURL,
+  }) => {
+    /**
+     * What Python's `requests.post(url, data=json_string)` sends. The gateway
+     * reads the body as JSON regardless, and used to forward an empty POST
+     * once it had. Sent with `fetch` and raw bytes, because Playwright's
+     * request context fills in a content-type for any body it is given.
+     */
+    const agent = await withSkill(request, 'gwnoct');
+    const model = uniqueModelName('nocontenttype');
+
+    try {
+      const response = await fetch(`${baseURL}${CHAT_COMPLETIONS_PATH}`, {
+        method: 'POST',
+        headers: {
+          'sa-config': saConfig(agent.name, 'gateway_skill', { model }),
+        },
+        body: new TextEncoder().encode(
+          JSON.stringify(chatBody('no content-type here')),
+        ),
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        choices: { message: { content: string } }[];
+      };
+      expect(body.choices[0].message.content).toBe(
+        'echo: no content-type here',
+      );
+      const [forwarded] = await stubRequests(request, model);
+      expect(forwarded.messages).toEqual([
+        { role: 'user', content: 'no content-type here' },
+      ]);
+    } finally {
+      await stubReset(request, model);
+      await deleteAgent(request, agent.id);
+    }
+  });
+
   test('unwraps structured output the provider wrapped in a markdown fence', async ({
     request,
   }) => {
