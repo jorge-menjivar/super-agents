@@ -547,13 +547,18 @@ comes back stamped with its provider, and only the two vendors' errors differ.
   wrong worst. A scale question is scored with its ranked form, on the
   cumulative distribution, so a level off is nearly right and the far end
   wrong, and the same answer scores the same whether the vendor sent its
-  spread or only its expected level; a choice sent without a spread is taken
-  at its `confidence`. A question the judge marks `unknown` (one that turns
-  on an image it is not shown) is left out -- an option of that name is an
-  answer like any other -- and a log it cannot judge at all scores the
-  neutral 0.5. A judge answering off its schema is asked again, past the
-  cache. A thumbs up or down shows the judge the answers and the
-  verdict. The policy writers know what they are writing: for a decision
+  spread or only its expected level. A scale's spread is read on its own
+  levels only, made to sum to one, and one with nothing on them is scored
+  by its expected level. A choice sent without a spread is taken at its
+  `confidence`, but never below an even share on the option chosen, so a
+  right choice never scores below a wrong one; a judge answering `true` or
+  `false` to a choice between yes and no names that option. A question the
+  judge marks `unknown` (one that turns on an image it is not shown) is left
+  out -- an option of that name is an answer like any other -- and a log it
+  cannot judge at all scores the neutral 0.5. A judge answering off its
+  schema is asked again once, past the cache, and is a `parse_error`
+  fallback after that. A thumbs up or down shows the judge the answers and
+  the verdict. The policy writers know what they are writing: for a decision
   agent, seeding and reflection (`optimization/utils/system-prompt.ts`) ask
   for definitions and rules rather than a persona or an output format, and
   read each example as its state, questions and answers
@@ -802,7 +807,9 @@ System prompts evolve through two distinct phases:
    - Triggered once per skill when `evaluations_regenerated_at` is undefined
    - Regenerates evaluations with real examples from the first 5 requests,
      replacing only what a model generated: an evaluation's other parameters
-     and its weight are the user's, and stay
+     and its weight are the user's, and stay -- the parameters its method
+     still has, since a key the method's schema dropped would fail a strict
+     one on every log
    - An auto-created skill with *no* evaluations (creation's background
      generation can fail) gets them created here from scratch instead
    - Generates new system prompts for ALL arms
@@ -811,7 +818,11 @@ System prompts evolve through two distinct phases:
 2. **Reflection-based Regeneration (ongoing per cluster)**:
    - Triggered when all arms in a cluster meet the minimum request threshold
    - Uses contrastive examples (high-scoring vs low-scoring logs), of the
-     logs that have been judged: one not judged yet is no example of either
+     logs that have been judged (`judged` on `getLogs`): one not judged yet
+     is no example of either
+   - Skipped, its lock released, while there is no judged failure since the
+     last reflection or no judged best -- a judge slower than the traffic
+     would otherwise have the arms rewritten from nothing
    - Conservative algorithm: best arm never modified
 
 ### What repairs itself
@@ -830,12 +841,18 @@ it, without anyone asking:
   cluster that has arms while the repair runs, and waits for it only when no
   cluster has any. Concurrent requests share one repair, and a repair waits
   for any arm generation running for the skill (`withArmGenerationLock`),
-  since nothing keeps a cluster's arms unique.
+  since nothing keeps a cluster's arms unique -- for at most ten minutes
+  (`ARM_GENERATION_WAIT_MS`), so a generation that never settles cannot
+  hold the skill's for good.
 - **Centroids of another embedding model.** A request is embedded with its
   agent's embedding model, and only compared with clusters that model
   computed (`embedding_model_id`); with none, it is served from the first.
-  Reclustering clusters the newest model's logs and records the model, so
-  a skill whose model changed is matched by it again.
+  Each log records the model that embedded it (`metadata.embedding_model_id`),
+  and reclustering clusters only the current model's logs -- a log from
+  before that was recorded, by its length -- and records the model, so a
+  skill whose model changed is matched by it again. Only those logs count
+  toward `clustering_interval`, and there must be one for every cluster:
+  until there are, the skill is not reclustered and its cursor stays put.
 - **An auto-created skill without evaluations.** Early regeneration creates
   them from its first real requests, and adding default models to the agent
   does too (`adoptDefaultModels`).
@@ -843,7 +860,7 @@ it, without anyone asking:
 ### Internal Skills
 
 The system uses special auto-generated skills in the `super-agents` agent (defined in `SA_SKILLS` constant):
-- `system-prompt-seeding`: Initial prompt generation (a policy, for a decision agent)
+- `system-prompt-seeding`: Initial prompt generation (a policy, for a decision agent), told the skill's template variables like the writers below
 - `system-prompt-seeding-with-context`: Context-aware generation
 - `system-prompt-reflection`: Reflection-based improvements
 - `create-evaluations`: Evaluation method generation
