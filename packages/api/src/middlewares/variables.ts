@@ -6,6 +6,7 @@ import {
   InvalidRequestBodyError,
   isKnownRoute,
   produceSuperAgentsRequestData,
+  UnknownRouteError,
 } from '@shared/utils/sa-request-data';
 import { parseAgentSkillPath } from '@shared/utils/url';
 import type { Next } from 'hono';
@@ -105,6 +106,24 @@ export const commonVariablesMiddleware = createMiddleware(
           // here by the request's stream mode or by its schema.
           if (err instanceof InvalidRequestBodyError) {
             return c.json({ error: err.message }, 422);
+          }
+          // The method and path were matched above, so a route ruled out
+          // here was ruled out by its stream mode alone: `stream: true` to an
+          // endpoint with nothing to stream, such as System One, which
+          // answers in one pass. That is a 400 rather than a 404, because the
+          // URL is right and it is the body that asks the route for something
+          // it does not do; and rather than a 422, because the body was never
+          // checked against a schema, there being no route to take one from.
+          if (err instanceof UnknownRouteError) {
+            const streaming = body?.stream === true;
+            return c.json(
+              {
+                error: streaming
+                  ? `${method} ${pathname} does not stream: send the request without "stream": true`
+                  : `${method} ${pathname} only streams: send the request with "stream": true`,
+              },
+              400,
+            );
           }
           throw err;
         }

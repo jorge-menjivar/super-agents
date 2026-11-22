@@ -62,6 +62,11 @@ function describeValidationIssue(issue: unknown): string {
  * `{error: {type, message, issues}}`; Jev, a FastAPI service, answers
  * `{detail}`, where the detail is a message, an object, or -- on a 422 -- a
  * list of `{loc, msg}` validation issues.
+ *
+ * An error that is not JSON at all -- a self-hosted Drex saying "model not
+ * loaded", or the proxy in front of it -- reaches here as the text the
+ * response handler wraps in `{"html-message": text}`, and that text is the
+ * only account of what went wrong.
  */
 export function systemOneErrorResponseTransform(
   body: Record<string, unknown>,
@@ -71,7 +76,11 @@ export function systemOneErrorResponseTransform(
   let message: string | undefined;
   let type: string | undefined;
 
-  const { error, detail } = body as { error?: unknown; detail?: unknown };
+  const {
+    error,
+    detail,
+    'html-message': text,
+  } = body as { error?: unknown; detail?: unknown; 'html-message'?: unknown };
 
   if (typeof error === 'string') {
     message = error;
@@ -102,6 +111,8 @@ export function systemOneErrorResponseTransform(
     message = detail.map(describeValidationIssue).join('; ');
   } else if (detail !== undefined) {
     message = JSON.stringify(detail);
+  } else if (typeof text === 'string') {
+    message = text.trim();
   }
 
   return generateErrorResponse(

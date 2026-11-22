@@ -1,5 +1,6 @@
 import { naceConfig } from '@api/ai-providers/nace';
 import { typesafeConfig } from '@api/ai-providers/typesafe';
+import { handleTextResponse } from '@api/handlers/stream-handler';
 import { transformUsingProviderConfig } from '@api/services/transform-to-provider-request';
 import type {
   AIProviderConfig,
@@ -193,6 +194,36 @@ describe("a decision model's errors", () => {
     expect(result.error.message).toBe(
       'nace error: Request failed with status 503',
     );
+    expect(
+      (answer(naceConfig, { 'html-message': '  ' }, 503) as typeof result).error
+        .message,
+    ).toBe('nace error: Request failed with status 503');
+  });
+
+  // A self-hosted Drex, or the proxy in front of it, can answer in plain
+  // text; the text is the only thing that says what went wrong.
+  it('read an error that came as text', async () => {
+    const response = await handleTextResponse(
+      new Response('model not loaded\n', {
+        status: 503,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      }),
+      naceConfig.responseTransforms?.[
+        FunctionName.SYSTEM_ONE
+      ] as ResponseTransformFunction,
+      systemOneRequest,
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        message: 'nace error: model not loaded',
+        type: undefined,
+        param: undefined,
+        code: '503',
+      },
+      provider: AIProvider.NACE,
+    });
   });
 });
 

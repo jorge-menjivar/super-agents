@@ -224,6 +224,26 @@ describe('commonVariablesMiddleware', () => {
       const body = (await response.json()) as { error: string };
       expect(body.error).toContain('Invalid request body');
     });
+
+    // A decision model answers in one pass, so System One has no streaming
+    // form; the path is right and only the body asks for what it lacks.
+    it('should answer 400 when the body asks a route to stream that cannot', async () => {
+      const response = await app.request('/v1/agents/captain_code/systemone', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          state: 'Hello',
+          questions: { harmful: { type: 'noul', instructions: 'Harmful?' } },
+          stream: true,
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error:
+          'POST /v1/agents/captain_code/systemone does not stream: send the request without "stream": true',
+      });
+    });
   });
 
   describe('agent and skill in the header', () => {
