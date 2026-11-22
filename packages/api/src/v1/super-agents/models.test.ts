@@ -295,6 +295,42 @@ describe('Models API Status Codes', () => {
 
       expect(res.status).toBe(400);
     });
+
+    // Both databases refuse dimensions on anything but an embed model, so
+    // the change that ends one clears them for either backend to write.
+    it('should clear the dimensions of a model that stops embedding', async () => {
+      const id = '123e4567-e89b-12d3-a456-426614174000';
+      mockUserDataStorageConnector.updateModel.mockResolvedValue({
+        id,
+        model_type: 'text',
+        embedding_dimensions: null,
+      });
+
+      const res = await client[':id'].$patch({
+        param: { id },
+        json: { model_type: 'text' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockUserDataStorageConnector.updateModel).toHaveBeenCalledWith(
+        expect.anything(),
+        id,
+        { model_type: 'text', embedding_dimensions: null },
+      );
+    });
+
+    it('should return 400 naming the dimensions a new embed model needs', async () => {
+      const res = await client[':id'].$patch({
+        param: { id: '123e4567-e89b-12d3-a456-426614174000' },
+        json: { model_type: 'embed' },
+      });
+
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(await res.json())).toContain(
+        'embedding_dimensions is required when changing model_type to embed',
+      );
+      expect(mockUserDataStorageConnector.updateModel).not.toHaveBeenCalled();
+    });
   });
 
   describe('DELETE /:id', () => {

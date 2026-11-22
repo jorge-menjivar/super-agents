@@ -306,9 +306,22 @@ describe('Model Data Transforms and Validation', () => {
         );
       });
 
-      it('should accept model_type decision without embedding_dimensions', () => {
+      // Only an embed model has dimensions, and the databases check it, so a
+      // type change away from embed clears them without being asked to.
+      it('should clear embedding_dimensions when the type is not embed', () => {
         expect(ModelUpdateParams.parse({ model_type: 'decision' })).toEqual({
           model_type: 'decision',
+          embedding_dimensions: null,
+        });
+        expect(ModelUpdateParams.parse({ model_type: 'text' })).toEqual({
+          model_type: 'text',
+          embedding_dimensions: null,
+        });
+      });
+
+      it('should leave embedding_dimensions alone when the type is not changed', () => {
+        expect(ModelUpdateParams.parse({ model_name: 'renamed' })).toEqual({
+          model_name: 'renamed',
         });
       });
 

@@ -107,6 +107,27 @@ test.describe('agents API', () => {
     expect(body.error?.message).toContain('description');
   });
 
+  // The two backends used to part ways here: libSQL took null to mean "leave
+  // it", Postgres sent it to a NOT NULL column. Now neither is asked.
+  test('refuses to clear a description and keeps the one it has', async ({
+    request,
+  }) => {
+    const created = await createAgent(request, uniqueAgentName('keeps'));
+
+    try {
+      const cleared = await request.patch(`${AGENTS_PATH}/${created.id}`, {
+        data: { description: null },
+      });
+      expect(cleared.status()).toBe(400);
+
+      const fetched = await request.get(`${AGENTS_PATH}?id=${created.id}`);
+      const [agent] = (await fetched.json()) as { description: string }[];
+      expect(agent.description).toBe(SAMPLE_DESCRIPTION);
+    } finally {
+      await deleteAgent(request, created.id);
+    }
+  });
+
   test('rejects a name outside the permitted character class', async ({
     request,
   }) => {

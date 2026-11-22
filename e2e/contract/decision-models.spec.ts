@@ -380,4 +380,33 @@ test.describe('decision models', () => {
       await deleteAgent(request, agent.id);
     }
   });
+
+  // Only an embed model has dimensions, and both databases check it; the
+  // change that ends one clears them without the client having to know.
+  test('lets an embed model become a decision model, its dimensions cleared', async ({
+    request,
+  }) => {
+    const model = await createModel(request, 'retyped', {
+      model_type: 'embed',
+      dimensions: 8,
+    });
+
+    const retyped = await request.patch(`${MODELS_PATH}/${model}`, {
+      data: { model_type: 'decision' },
+    });
+    expect(retyped.status()).toBe(200);
+    expect(await retyped.json()).toMatchObject({
+      model_type: 'decision',
+      embedding_dimensions: null,
+    });
+
+    // And back needs the dimensions, which nothing can make up.
+    const back = await request.patch(`${MODELS_PATH}/${model}`, {
+      data: { model_type: 'embed' },
+    });
+    expect(back.status()).toBe(400);
+    expect(await back.text()).toContain(
+      'embedding_dimensions is required when changing model_type to embed',
+    );
+  });
 });

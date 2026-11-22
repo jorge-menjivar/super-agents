@@ -140,6 +140,17 @@ export const ModelUpdateParams = z
         'model_type must be specified as "embed" when setting embedding_dimensions',
       path: ['model_type'],
     },
+  )
+  // Only an embed model has dimensions, and both databases check it, so a
+  // model that stops being one loses them in the same write. Without this a
+  // client changing an embed model's type had to know to send
+  // `embedding_dimensions: null` as well, or be refused by that check with a
+  // 409 that named neither field. Done here because the route parses every
+  // update with this schema before either backend is asked.
+  .transform((data): typeof data =>
+    data.model_type !== undefined && data.model_type !== ModelType.EMBED
+      ? { ...data, embedding_dimensions: null }
+      : data,
   );
 
 export type ModelUpdateParams = z.infer<typeof ModelUpdateParams>;

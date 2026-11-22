@@ -252,8 +252,8 @@ export const libsqlUserDataStorageConnector: UserDataStorageConnector = {
     update: AgentUpdateParams,
   ): Promise<Agent> => {
     const client = getLibsqlClient(c);
-    const { description, metadata, options, ...rest } =
-      update as AgentUpdateParams & Record<string, unknown>;
+    const { metadata, options, ...rest } = update as AgentUpdateParams &
+      Record<string, unknown>;
 
     // The options patch is merged over what is stored, so a caller that
     // changes one role's timeout does not have to send the rest.
@@ -280,8 +280,6 @@ export const libsqlUserDataStorageConnector: UserDataStorageConnector = {
       { id },
       {
         ...asColumns(rest),
-        // Nullable in the params but NOT NULL in the table: null means "leave it".
-        description: description ?? undefined,
         metadata: metadata === undefined ? undefined : toJsonColumn(metadata),
         options: merged === undefined ? undefined : toJsonColumn(merged),
       },
