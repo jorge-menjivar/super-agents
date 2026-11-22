@@ -116,6 +116,14 @@ if (!quietBanner) {
   console.log(`Starting server on port ${port}...`);
 }
 
+// A rejection nothing handled is a bug, but not one worth the whole server:
+// Node's default is to end the process on one, and every request in flight
+// goes with it. The stream pumps used to raise them whenever a client stopped
+// reading. Logged, so the bug is still seen.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection; the server keeps running:', reason);
+});
+
 serve({
   /**
    * `@hono/node-server` passes `{ incoming, outgoing }` as the Hono env, so

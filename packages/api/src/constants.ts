@@ -1,5 +1,6 @@
 import type { AppContext } from '@api/types/hono';
 import type { ChatCompletionRequestBody } from '@shared/types/api/routes/chat-completions-api/request';
+import { getRuntimeKey } from 'hono/adapter';
 
 const DUMMY_JWT_SECRET = 'default-dev-jwt-secret';
 /**
@@ -122,9 +123,16 @@ export const getAccessPassword = (c: AppContext): string | undefined =>
 
 export const getAuthJwtSecret = (c: AppContext): string => {
   const secret = c.env.AUTH_JWT_SECRET;
-  if (!secret && c.env.NODE_ENV === 'production') {
+  // Required in production -- and on Workers, which are always a deployment:
+  // `NODE_ENV` is a Node convention wrangler does not set, so a Worker read as
+  // development here and signed sessions and reviews with the dummy secret,
+  // which anyone can read and so forge.
+  if (
+    !secret &&
+    (c.env.NODE_ENV === 'production' || getRuntimeKey() === 'workerd')
+  ) {
     throw new Error(
-      'AUTH_JWT_SECRET environment variable is required in production. Set it to a strong, random secret.',
+      'AUTH_JWT_SECRET environment variable is required in production and on Workers. Set it to a strong, random secret.',
     );
   }
 

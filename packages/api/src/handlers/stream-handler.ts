@@ -3,7 +3,7 @@ import {
   type SplitPatternType,
 } from '@api/utils/object';
 import { unwrapJsonResponseContent } from '@api/utils/structured-output';
-import { error, warn } from '@shared/console-logging';
+import { warn } from '@shared/console-logging';
 import type {
   JSONToStreamGeneratorTransformFunction,
   ResponseChunkStreamTransformFunction,
@@ -436,6 +436,32 @@ export function handleImageResponse(response: Response): Response {
   return new Response(response.body, response);
 }
 
+/**
+ * The pumps below copy a provider's stream to the client in the background,
+ * where nothing awaits them: an error they let out -- the one a write raises
+ * when the client has gone, or the one closing an errored stream raises --
+ * is an unhandled rejection, and Node ends the process on one. A client that
+ * stopped reading took the whole server down with it, and so did a hook
+ * withholding a stream it could not judge. So a pump handles its own end.
+ */
+function closeQuietly(writer: WritableStreamDefaultWriter): void {
+  writer.close().catch(() => undefined);
+}
+
+/**
+ * A pump that cannot go on: the client stopped reading, or the provider's
+ * stream failed. The provider is told to stop sending, rather than left
+ * streaming to nobody.
+ */
+function stopPumping(
+  what: string,
+  reader: ReadableStreamDefaultReader,
+  reason: unknown,
+): void {
+  warn(`[Stream Handler] Stopped copying the ${what}`, reason);
+  reader.cancel(reason).catch(() => undefined);
+}
+
 export function handleStreamingMode(
   response: Response,
   provider: AIProvider,
@@ -468,7 +494,7 @@ export function handleStreamingMode(
   let accumulatedChunks = '';
 
   if (provider === AIProvider.BEDROCK) {
-    (async () => {
+    void (async () => {
       try {
         for await (const chunk of readAWSStream(
           reader,
@@ -499,24 +525,16 @@ export function handleStreamingMode(
           await writer.write(encodedChunk);
         }
       } catch (streamError) {
-        error('[Stream Handler] Error processing Bedrock stream', streamError);
-        throw streamError;
+        stopPumping('Bedrock stream', reader, streamError);
       } finally {
-        try {
-          writer.close();
-        } catch (closeError) {
-          error(
-            '[Stream Handler] Error closing Bedrock stream writer',
-            closeError,
-          );
-        }
+        closeQuietly(writer);
         if (onStreamEnd) {
           onStreamEnd(accumulatedChunks);
         }
       }
     })();
   } else {
-    (async () => {
+    void (async () => {
       try {
         for await (const chunk of readStream(
           reader,
@@ -549,14 +567,9 @@ export function handleStreamingMode(
           await writer.write(encodedChunk);
         }
       } catch (streamError) {
-        error('[Stream Handler] Error processing stream', streamError);
-        throw streamError;
+        stopPumping('stream', reader, streamError);
       } finally {
-        try {
-          writer.close();
-        } catch (closeError) {
-          error('[Stream Handler] Error closing stream writer', closeError);
-        }
+        closeQuietly(writer);
         if (onStreamEnd) {
           onStreamEnd(accumulatedChunks);
         }
@@ -605,26 +618,36 @@ export async function handleJSONToStreamResponse(
     '[object GeneratorFunction]'
   ) {
     const generator = responseTransformerFunction(responseJSON, provider);
-    (async () => {
-      while (true) {
-        const chunk = generator.next();
-        if (chunk.done) {
-          break;
+    void (async () => {
+      try {
+        while (true) {
+          const chunk = generator.next();
+          if (chunk.done) {
+            break;
+          }
+          await writer.write(encoder.encode(chunk.value));
         }
-        await writer.write(encoder.encode(chunk.value));
+      } catch (streamError) {
+        warn('[Stream Handler] Stopped replaying a held stream', streamError);
+      } finally {
+        closeQuietly(writer);
       }
-      writer.close();
     })();
   } else {
     const streamChunkArray = responseTransformerFunction(
       responseJSON,
       provider,
     );
-    (async () => {
-      for (const chunk of streamChunkArray) {
-        await writer.write(encoder.encode(chunk));
+    void (async () => {
+      try {
+        for (const chunk of streamChunkArray) {
+          await writer.write(encoder.encode(chunk));
+        }
+      } catch (streamError) {
+        warn('[Stream Handler] Stopped replaying a held stream', streamError);
+      } finally {
+        closeQuietly(writer);
       }
-      writer.close();
     })();
   }
 

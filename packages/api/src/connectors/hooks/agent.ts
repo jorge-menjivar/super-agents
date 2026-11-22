@@ -109,10 +109,12 @@ function describeRequest(requestData: SuperAgentsRequestData): unknown {
 }
 
 /**
- * The parts of the response a reviewer needs: what each choice said or would
- * do, and why it stopped. Token log-probabilities, usage and the like are
- * left out -- they say nothing about the answer, and `logprobs` alone can run
- * to megabytes.
+ * The response as a reviewer sees it: every choice whole -- what it said,
+ * every call it would make (`tool_calls`, a legacy `function_call`), any
+ * thinking it carries (`content_blocks`) -- less the token log-probabilities,
+ * which say nothing about the answer and alone can run to megabytes. Only
+ * what is known to be noise is left out: a reviewer that is not shown part of
+ * what the client receives is one that can be got past through that part.
  */
 function describeResponse(responseBody: SuperAgentsResponseBody): unknown {
   const body = responseBody as Record<string, unknown>;
@@ -120,26 +122,11 @@ function describeResponse(responseBody: SuperAgentsResponseBody): unknown {
     return body;
   }
   return {
-    choices: body.choices.map((choice: Record<string, unknown>) => {
-      const message = choice.message as Record<string, unknown> | undefined;
-      return {
-        index: choice.index,
-        ...(message
-          ? {
-              message: {
-                role: message.role,
-                content: message.content,
-                ...(message.tool_calls
-                  ? { tool_calls: message.tool_calls }
-                  : {}),
-                ...(message.refusal ? { refusal: message.refusal } : {}),
-              },
-            }
-          : {}),
-        ...('text' in choice ? { text: choice.text } : {}),
-        finish_reason: choice.finish_reason,
-      };
-    }),
+    choices: body.choices.map((choice: Record<string, unknown>) =>
+      Object.fromEntries(
+        Object.entries(choice).filter(([key]) => key !== 'logprobs'),
+      ),
+    ),
   };
 }
 
@@ -468,14 +455,22 @@ export const agentHooksConnector: HooksConnector = {
     const config = HookAgentProviderConfig.parse(hook.config);
     const saConfig = c.get('sa_config');
     // The review shares the reviewed request's trace, so the two logs sit
-    // together, and names that request as the one it reviews -- signed, so
-    // the reviewer's gateway knows the claim is the gateway's own.
+    // together, and names that request as the one it reviews. A review sent
+    // to the agent's own reviewer -- the hook the gateway added -- is signed,
+    // so the reviewer's gateway knows the claim is the gateway's own and
+    // reviews it no further. A hook the client wrote itself is asked
+    // unsigned: the gateway vouches only for reviews it decided to send, or
+    // a client could point a hook at any agent and skip that agent's own
+    // reviewer with the gateway's signature.
+    const ownReviewer = c.get('reviewer_agent_name') === config.agent_name;
     const reviewConfig = {
       trace_id: saConfig.trace_id,
       span_name: 'review',
       ...(saConfig.span_id ? { parent_span_id: saConfig.span_id } : {}),
       reviewing_trace_id: saConfig.trace_id,
-      reviewing_signature: await signReview(c, saConfig.trace_id),
+      ...(ownReviewer
+        ? { reviewing_signature: await signReview(c, saConfig.trace_id) }
+        : {}),
     };
 
     if (config.api === 'system_one') {

@@ -33,7 +33,6 @@ export const authenticatedMiddleware = (
       return;
     }
 
-    const jwtSecret = getAuthJwtSecret(c);
     const bearerToken = getBearerToken(c);
     const accessPassword = getAccessPassword(c);
 
@@ -46,9 +45,11 @@ export const authenticatedMiddleware = (
     // Check JWT cookie first (set by login flow)
     const accessTokenCookie = getCookie(c, AUTH_COOKIE_NAME);
     if (accessTokenCookie) {
+      // Read only here, where a session is checked: on a Worker the secret
+      // is required, and a deployment without auth needs none.
       await jwt({
         cookie: AUTH_COOKIE_NAME,
-        secret: jwtSecret,
+        secret: getAuthJwtSecret(c),
         alg: AUTH_JWT_ALG,
       })(c, next);
       return;

@@ -61,15 +61,35 @@ function clipStrings(value: unknown, max: number): unknown {
   return value;
 }
 
-/** A value cut to its newest end, as text, when nothing finer will do. */
+const omitted = (count: number) => `[${count} earlier characters omitted] `;
+
+/**
+ * A value cut to its newest end, as text, when nothing finer will do -- the
+ * longest end whose excerpt, encoded, fits in `max` characters. Measured as
+ * sent: JSON-encoding the text escapes every quote in it, so quote-heavy
+ * text (tool-call arguments, itself JSON) grows on the way, and cutting by
+ * the text's own length overshot the budget by as much again.
+ */
 function excerpt(value: unknown, max: number): { excerpt: string } {
-  const text = JSON.stringify(value ?? null);
-  return {
-    excerpt:
-      text.length <= max
-        ? text
-        : `[${text.length - max} earlier characters omitted] ${text.slice(-max)}`,
-  };
+  const text =
+    typeof value === 'string' ? value : JSON.stringify(value ?? null);
+  const fits = (candidate: string) => size({ excerpt: candidate }) <= max;
+  if (fits(text)) {
+    return { excerpt: text };
+  }
+  const tail = (length: number) =>
+    `${omitted(text.length - length)}${text.slice(text.length - length)}`;
+  let kept = 0;
+  let longest = text.length;
+  while (kept < longest) {
+    const length = Math.ceil((kept + longest) / 2);
+    if (fits(tail(length))) {
+      kept = length;
+    } else {
+      longest = length - 1;
+    }
+  }
+  return { excerpt: tail(kept) };
 }
 
 /** What a message says, as text: its parts in order, an image by reference. */
@@ -226,7 +246,7 @@ function boundRequest(request: unknown, budget: number): unknown {
     : request;
   // Not a conversation to walk, or one whose pinned turns alone are past the
   // budget: its newest end, as text.
-  return size(bounded) <= budget ? bounded : excerpt(request, budget - 100);
+  return size(bounded) <= budget ? bounded : excerpt(request, budget);
 }
 
 /**
@@ -247,7 +267,7 @@ function boundResponse(
       return { response: clipped, complete: false };
     }
   }
-  return { response: excerpt(response, budget - 100), complete: false };
+  return { response: excerpt(response, budget), complete: false };
 }
 
 export interface ReviewMaterial<T> {
@@ -271,25 +291,58 @@ export function withinReviewBudget<
   if (size(material) <= budget) {
     return { material, complete: true };
   }
+  // What the rest of the material -- its keys, any other fields -- takes.
+  const frame = size({ ...material, request: null, response: null });
   if (!('response' in material)) {
     return {
-      material: {
-        ...material,
-        request: boundRequest(material.request, budget - 100),
-      },
+      material: within(
+        {
+          ...material,
+          request: boundRequest(material.request, budget - frame),
+        },
+        budget,
+      ),
       complete: true,
     };
   }
   const { response, complete } = boundResponse(
     material.response,
-    budget - Math.floor(budget / 4),
+    budget - Math.floor(budget / 4) - frame,
   );
   return {
-    material: {
-      ...material,
-      request: boundRequest(material.request, budget - size(response) - 100),
-      response,
-    },
+    material: within(
+      {
+        ...material,
+        request: boundRequest(
+          material.request,
+          Math.max(budget - size(response) - frame, Math.floor(budget / 8)),
+        ),
+        response,
+      },
+      budget,
+    ),
     complete,
   };
+}
+
+/**
+ * The material, certain to be within the budget: the request cut to its
+ * newest end in whatever is left when the parts were bounded each on their
+ * own and their sum is still over. Bounding each part is what keeps the
+ * structure a model reads; this is the guarantee that the vendor never
+ * refuses the review for its size, failing it open.
+ */
+function within<T extends { request: unknown; response?: unknown }>(
+  material: T,
+  budget: number,
+): T {
+  const over = size(material) - budget;
+  if (over <= 0) {
+    return material;
+  }
+  const request = excerpt(
+    material.request,
+    Math.max(0, size(material.request) - over),
+  );
+  return { ...material, request };
 }

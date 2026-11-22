@@ -58,6 +58,13 @@ export interface AppEnv {
     sa_config_pre_processed: SuperAgentsConfigPreProcessed;
     sa_request_data: SuperAgentsRequestData;
     embedding: number[] | null;
+    /**
+     * The name of the agent the request's own agent is reviewed by, set by
+     * the gateway when it adds that reviewer. Only a review sent to it is
+     * signed: a hook a client wrote itself is asked unsigned, so it cannot
+     * use the gateway's signature to skip its target's own reviewer.
+     */
+    reviewer_agent_name?: string;
     agent: Agent;
     skill: Skill;
     pulled_arm?: SkillOptimizationArm;

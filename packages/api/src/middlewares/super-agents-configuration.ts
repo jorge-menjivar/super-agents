@@ -33,6 +33,7 @@ import type {
   SkillOptimizationCluster,
 } from '@shared/types/data';
 import type { SkillOptimizationClusterCreateParams } from '@shared/types/data/skill-optimization-cluster';
+import { HookAgentProviderConfig } from '@shared/types/middleware/hooks';
 import { isOptimizedFunction } from '@shared/utils/optimized-functions';
 import type { Next } from 'hono';
 import { getRuntimeKey } from 'hono/adapter';
@@ -653,6 +654,12 @@ export const saConfigurationInjectorMiddleware = createMiddleware(
           c.get('agent'),
           saConfigPreProcessed,
         );
+        if (reviewerHook) {
+          c.set(
+            'reviewer_agent_name',
+            HookAgentProviderConfig.parse(reviewerHook.config).agent_name,
+          );
+        }
 
         const saConfig: SuperAgentsConfig = {
           ...saConfigPreProcessed,
