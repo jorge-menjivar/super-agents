@@ -196,7 +196,10 @@ renormalised when a half is missing, seeding a centroid from the skill's
 description the first time it meets one. A system prompt too long to embed
 whole is compacted first by the `compact-intent` internal skill
 (`utils/super-agents/intent-compaction.ts`, cached per distinct prompt,
-truncation as the fallback). Its model and per-attempt timeout are the
+truncation as the fallback). Its answer is capped at 2,000 tokens, thinking
+included, and asked for as "a few paragraphs" rather than a character count,
+which a thinking model will sit and count out -- one held a request for a
+hundred seconds doing so. Its model and per-attempt timeout are the
 system's (`intent_compaction_model_id`, the reflection model when unset, and
 `options.intent_compaction.timeout_ms`), which an agent overrides with its own
 `intent_compaction_model_id`, `intent_compaction_timeout_ms` and

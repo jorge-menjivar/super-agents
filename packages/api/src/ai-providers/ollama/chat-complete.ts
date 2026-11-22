@@ -12,6 +12,7 @@ import {
   type ChatCompletionContentType,
   ChatCompletionMessageRole,
 } from '@shared/types/api/routes/shared/messages';
+import { ReasoningEffort } from '@shared/types/api/routes/shared/thinking';
 import { AIProvider } from '@shared/types/constants';
 import type {
   OllamaChatCompleteChoice,
@@ -93,8 +94,24 @@ export const ollamaChatCompleteConfig: AIProviderFunctionConfig = {
   // a request's whole completion budget on reasoning it never shows.
   reasoning_effort: {
     param: 'reasoning_effort',
+    transform: (params: ChatCompletionRequestBody) => ollamaEffort(params),
   },
 };
+
+/**
+ * Ollama knows `none`, `low`, `medium` and `high`. It takes `minimal`
+ * without complaint and thinks at full length: glm-5.3-flash spent about
+ * fifteen times the tokens on it that it spends on `low`, the opposite of
+ * what was asked. So `minimal` is sent as `low`, the nearest level Ollama
+ * has.
+ */
+export function ollamaEffort(
+  params: ChatCompletionRequestBody,
+): ChatCompletionRequestBody['reasoning_effort'] {
+  return params.reasoning_effort === ReasoningEffort.MINIMAL
+    ? ReasoningEffort.LOW
+    : params.reasoning_effort;
+}
 
 /**
  * Ollama returns a thinking model's reasoning in a field of its own --

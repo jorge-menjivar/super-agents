@@ -11,10 +11,23 @@ import type { Agent } from '@shared/types/data/agent';
 import { SYSTEM_PROMPT_BUDGET } from '@shared/utils/request-intent';
 import OpenAI from 'openai';
 
-/** A little under the budget, so the instruction has room to be overshot. */
-const COMPACT_TARGET_CHARS = 3500;
+/**
+ * The length is asked for loosely and enforced here, by the cut to the
+ * embedding budget, rather than stated as a count: a thinking model told "at
+ * most N characters" counts its summary out letter by letter to check, and
+ * one did so for a hundred seconds while the request it was routing waited.
+ */
+const COMPACTOR_SYSTEM_PROMPT = `You compact system prompts for an AI gateway that routes requests by what they ask for. Rewrite the prompt as a short summary, a few paragraphs long, that preserves what identifies the job: the role, the domain, the main instructions, and any distinctive names or terms. Drop boilerplate, formatting rules and examples. Its length does not need checking: anything past the limit is cut. Reply with the summary only.`;
 
-const COMPACTOR_SYSTEM_PROMPT = `You compact system prompts for an AI gateway that routes requests by what they ask for. Rewrite the prompt as a summary of at most ${COMPACT_TARGET_CHARS} characters that preserves what identifies the job: the role, the domain, the main instructions, and any distinctive names or terms. Drop boilerplate, formatting rules and examples. Reply with the summary only.`;
+/**
+ * What the model may write, thinking included, so that no model can hold up
+ * the request being routed for longer than this takes -- a few seconds, where
+ * an uncapped one has run for minutes. A summary is about a thousand tokens
+ * at the embedding budget, so this leaves room for some thinking; a model
+ * that thinks past it leaves the summary cut short, which is still the head
+ * of a summary, or leaves none, and routing falls back to the prompt's head.
+ */
+const COMPACT_MAX_TOKENS = 2000;
 
 /**
  * Keyed by the prompt itself -- the Map hashes it -- and holding the promise
@@ -81,15 +94,23 @@ async function compactOnce(
       // Deterministic, so the summary -- and with it the identity embedding
       // -- stays put across restarts instead of drifting per process.
       temperature: 0,
+      // Not `max_tokens`, which OpenAI's reasoning models refuse; every
+      // provider takes this one.
+      max_completion_tokens: COMPACT_MAX_TOKENS,
       messages: [
         { role: 'system', content: COMPACTOR_SYSTEM_PROMPT },
         { role: 'user', content: prompt },
       ],
     });
 
-  const summary = response.choices[0]?.message?.content?.trim();
+  const choice = response.choices[0];
+  const summary = choice?.message?.content?.trim();
   if (!summary) {
-    throw new Error('The model answered with no summary');
+    throw new Error(
+      choice?.finish_reason === 'length'
+        ? `The model spent its ${COMPACT_MAX_TOKENS}-token budget thinking and wrote no summary; lower intent compaction's reasoning effort`
+        : 'The model answered with no summary',
+    );
   }
   return summary.slice(0, SYSTEM_PROMPT_BUDGET);
 }
