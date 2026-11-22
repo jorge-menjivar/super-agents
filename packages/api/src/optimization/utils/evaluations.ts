@@ -308,6 +308,12 @@ export async function regenerateEvaluationsWithExamples(
  * delete and recreate them: that orphans every score the skill's logs have
  * and blanks them in the dashboard. A method that was not regenerated keeps
  * what it had.
+ *
+ * Only what a model generated is replaced. A method with nothing for a model
+ * to fill in regenerates as `{}`, and the rest of an evaluation's parameters
+ * -- decision correctness's `guidance`, a judge's token budget and effort,
+ * its temperature -- and its weight are the user's, so they stay: written
+ * over, the fifth request to a skill quietly undid what the user had set.
  */
 export async function applyRegeneratedEvaluations(
   c: AppContext,
@@ -321,8 +327,7 @@ export async function applyRegeneratedEvaluations(
     );
     if (!next) continue;
     await connector.updateSkillOptimizationEvaluation(c, evaluation.id, {
-      params: next.params,
-      weight: next.weight,
+      params: { ...evaluation.params, ...next.params },
     });
   }
 }

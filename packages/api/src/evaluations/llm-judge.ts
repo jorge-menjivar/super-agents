@@ -71,6 +71,12 @@ function isRetryableLLMJudgeError(error: unknown): boolean {
   if (error instanceof JudgeEmptyCompletionError) {
     return error.retryable;
   }
+  // JSON in a shape other than the one asked for: a judge that answered off
+  // the schema may answer on it the next time, and the retry bypasses the
+  // cache, so the bad answer is not served again either.
+  if (error instanceof z.ZodError) {
+    return true;
+  }
   if (error instanceof Error) {
     const message = error.message.toLowerCase();
     return (

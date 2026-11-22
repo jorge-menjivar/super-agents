@@ -1,4 +1,7 @@
-import { handleGenerateArms } from '@api/optimization/skill-optimizations';
+import {
+  generateArms,
+  withArmGenerationLock,
+} from '@api/optimization/skill-optimizations';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
 import { warn } from '@shared/console-logging';
@@ -35,9 +38,12 @@ export function repairClusterArms(
     return running;
   }
 
-  const repair = (async () => {
-    // Another process, or a repair that finished just before this one was
-    // asked for, may have given the cluster its arms already.
+  // Under the skill's arm-generation lock, so a full generation running --
+  // the first after a model was attached -- finishes first, and the look
+  // below sees what it wrote.
+  const repair = withArmGenerationLock(skill.id, async () => {
+    // Another process, or a generation that finished just before this one
+    // was asked for, may have given the cluster its arms already.
     const arms = await connector.getSkillOptimizationArms(c, {
       cluster_id: clusterId,
     });
@@ -47,18 +53,13 @@ export function repairClusterArms(
     warn(
       `[ARM_REPAIR] Cluster ${clusterId} of skill ${skill.name} has no arms; generating them`,
     );
-    const response = await handleGenerateArms(
-      c,
-      connector,
-      skill.id,
-      clusterId,
-    );
+    const response = await generateArms(c, connector, skill.id, clusterId);
     if (response.status !== 200) {
       throw new Error(
         `Could not generate arms for cluster ${clusterId} of skill ${skill.name}: ${response.status} ${await response.text()}`,
       );
     }
-  })().finally(() => {
+  }).finally(() => {
     repairs.delete(clusterId);
   });
 

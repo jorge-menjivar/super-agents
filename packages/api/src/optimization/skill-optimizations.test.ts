@@ -1,5 +1,6 @@
 import { handleGenerateArms } from '@api/optimization/skill-optimizations';
 import { regenerateEvaluationsWithExamples } from '@api/optimization/utils/evaluations';
+import { generateSeedSystemPromptWithContext } from '@api/optimization/utils/system-prompt';
 import type {
   LogsStorageConnector,
   UserDataStorageConnector,
@@ -142,15 +143,13 @@ describe('handleGenerateArms', () => {
     expect(userData.updateSkillOptimizationEvaluation).toHaveBeenCalledWith(
       c,
       'eval-latency',
-      { params: { max_ms: 5_000 }, weight: 1 },
+      { params: { max_ms: 5_000 } },
     );
     expect(userData.updateSkillOptimizationEvaluation).toHaveBeenCalledWith(
       c,
       'eval-task',
-      {
-        params: { criteria: 'answers the question about the candle' },
-        weight: 2,
-      },
+      // The regenerated criteria replace the old; the weight is the user's.
+      { params: { criteria: 'answers the question about the candle' } },
     );
     // Deleting would orphan every score recorded against these evaluations
     expect(
@@ -169,5 +168,66 @@ describe('handleGenerateArms', () => {
     expect(
       userData.deleteSkillOptimizationEvaluationsForSkill,
     ).not.toHaveBeenCalled();
+  });
+});
+
+// A prompt written from a skill's own requests has to keep what they rely
+// on: the template variables its callers send, and the output schema they
+// ask for. This path dropped both.
+describe('handleGenerateArms, writing from real requests', () => {
+  it('tells the writer the template variables and the response format', async () => {
+    const schema = { type: 'json_schema', json_schema: { name: 'answer' } };
+    const completed = (i: number) => ({
+      id: `log-${i}`,
+      skill_id: 'skill-1',
+      end_time: 2,
+      duration: 1,
+      status: 200,
+      ai_provider: 'openai',
+      model: 'gpt-4o',
+      cache_status: 'MISS',
+      ai_provider_request_log: {
+        request_body: i === 2 ? { response_format: schema } : {},
+      },
+    });
+    const userData = {
+      getSkills: vi
+        .fn()
+        .mockResolvedValue([
+          { ...skill, allowed_template_variables: ['customer_tier'] },
+        ]),
+      getAgents: vi
+        .fn()
+        .mockResolvedValue([{ id: 'agent-1', description: 'A support agent' }]),
+      getSkillOptimizationEvaluations: vi.fn().mockResolvedValue([]),
+      getSkillOptimizationArms: vi.fn().mockResolvedValue([]),
+      getSkillOptimizationClusters: vi
+        .fn()
+        .mockResolvedValue([{ id: 'cluster-1' }]),
+      updateSkillOptimizationCluster: vi.fn().mockResolvedValue(undefined),
+      getSkillModels: vi.fn().mockResolvedValue([{ id: 'model-1' }]),
+      createSkillOptimizationArms: vi.fn().mockResolvedValue([]),
+      deleteSkillOptimizationArmStats: vi.fn().mockResolvedValue(undefined),
+    } as unknown as UserDataStorageConnector;
+    const c = {
+      get: (key: string) =>
+        ({
+          logs_storage_connector: {
+            getLogs: vi
+              .fn()
+              .mockResolvedValue(
+                Array.from({ length: 5 }, (_, i) => completed(i)),
+              ),
+          },
+          evaluation_connectors_map: {},
+        })[key],
+      json: vi.fn((body: unknown, status?: number) => ({ body, status })),
+    } as unknown as AppContext;
+
+    await handleGenerateArms(c, userData, skill.id);
+
+    const call = vi.mocked(generateSeedSystemPromptWithContext).mock.calls[0];
+    expect(call[5]).toEqual(schema);
+    expect(call[6]).toEqual(['customer_tier']);
   });
 });

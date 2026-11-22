@@ -3,6 +3,10 @@ import type {
   UserDataStorageConnector,
 } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
+import {
+  agentById,
+  resolveEmbeddingModelConfig,
+} from '@api/utils/evaluation-model-resolver';
 import { calculateDistance, kMeansClustering } from '@api/utils/math';
 import { emitSSEEvent } from '@api/utils/sse-event-manager';
 import { error, info, success } from '@shared/console-logging';
@@ -13,26 +17,25 @@ import type { SkillOptimizationClusterCreateParams } from '@shared/types/data/sk
 import type { ClusterResult } from '@shared/utils/math';
 import { isOptimizedFunction } from '@shared/utils/optimized-functions';
 
+/**
+ * The logs' embeddings, of the newest one's length. A skill whose embedding
+ * model changed has logs from both: they cannot be clustered together, and
+ * refusing them all -- as this used to -- left the skill never reclustered,
+ * matched against centroids of the old model for good. The newest model's
+ * logs are the ones the skill will be matched by.
+ */
 function extractEmbeddings(logs: Log[]): number[][] {
-  // Filter logs to only include those with embeddings
-  const logsWithEmbeddings = logs.filter(
-    (log) => log.embedding !== null && log.embedding.length > 0,
-  );
+  // Logs are ordered newest first.
+  const embeddings = logs
+    .map((log) => log.embedding)
+    .filter((embedding): embedding is number[] => !!embedding?.length);
 
-  if (logsWithEmbeddings.length === 0) {
+  if (embeddings.length === 0) {
     throw new Error(`[OPTIMIZER] No logs with embeddings found`);
   }
 
-  // Extract embeddings
-  const embeddings = logsWithEmbeddings.map((log) => log.embedding as number[]);
-
-  // Validate that all embeddings have the same dimension
-  const firstDimension = embeddings[0].length;
-  if (!embeddings.every((embedding) => embedding.length === firstDimension)) {
-    throw new Error(`[OPTIMIZER] Inconsistent embedding dimensions`);
-  }
-
-  return embeddings;
+  const newest = embeddings[0].length;
+  return embeddings.filter((embedding) => embedding.length === newest);
 }
 
 export function getClusters(skill: Skill, logs: Log[]): ClusterResult | null {
@@ -121,6 +124,21 @@ export async function autoClusterSkill(
 
       const newCentroids = clusterResult.centroids;
 
+      // The model the new centroids were computed with: the one the skill's
+      // requests are embedded with now, when their length says so. Recorded
+      // on the clusters, so a request is only ever compared with centroids
+      // of its own model.
+      const embeddingConfig = await resolveEmbeddingModelConfig(
+        c,
+        userDataStorageConnector,
+        await agentById(c, userDataStorageConnector, skill.agent_id),
+      );
+      const computedWith =
+        embeddingConfig &&
+        embeddingConfig.dimensions === newCentroids[0]?.length
+          ? { embedding_model_id: embeddingConfig.modelId }
+          : {};
+
       // Match old cluster centers to new cluster centers based on proximity
       // Each old cluster gets matched to the closest new cluster
       const used = new Set<number>();
@@ -137,6 +155,7 @@ export async function autoClusterSkill(
             total_steps: 0,
             observability_total_requests: 0,
             centroid,
+            ...computedWith,
           }));
         await userDataStorageConnector.createSkillOptimizationClusters(
           c,
@@ -157,10 +176,12 @@ export async function autoClusterSkill(
           for (let i = 0; i < newCentroids.length; i++) {
             if (used.has(i)) continue;
 
-            const distance = calculateDistance(
-              clusterState.centroid,
-              newCentroids[i],
-            );
+            // A centroid of another model cannot be compared with the new
+            // ones: it takes whichever is left.
+            const distance =
+              clusterState.centroid.length === newCentroids[i].length
+                ? calculateDistance(clusterState.centroid, newCentroids[i])
+                : 0;
 
             if (distance < minDistance) {
               minDistance = distance;
@@ -185,6 +206,7 @@ export async function autoClusterSkill(
               match.clusterStateId,
               {
                 centroid: match.newCenter,
+                ...computedWith,
               },
             ),
           ),

@@ -544,9 +544,15 @@ comes back stamped with its provider, and only the two vendors' errors differ.
   policy, and blind to the model's answers -- and each answer is scored
   against it with the Brier score, a proper scoring rule, so a policy that
   makes the model rightly sure scores best and one that makes it confidently
-  wrong worst. A question the judge marks `unknown` (one that turns on an
-  image it is not shown) is left out, and a log it cannot judge at all scores
-  the neutral 0.5. A thumbs up or down shows the judge the answers and the
+  wrong worst. A scale question is scored with its ranked form, on the
+  cumulative distribution, so a level off is nearly right and the far end
+  wrong, and the same answer scores the same whether the vendor sent its
+  spread or only its expected level; a choice sent without a spread is taken
+  at its `confidence`. A question the judge marks `unknown` (one that turns
+  on an image it is not shown) is left out -- an option of that name is an
+  answer like any other -- and a log it cannot judge at all scores the
+  neutral 0.5. A judge answering off its schema is asked again, past the
+  cache. A thumbs up or down shows the judge the answers and the
   verdict. The policy writers know what they are writing: for a decision
   agent, seeding and reflection (`optimization/utils/system-prompt.ts`) ask
   for definitions and rules rather than a persona or an output format, and
@@ -781,7 +787,9 @@ System prompts evolve through two distinct phases:
 
 1. **Early Regeneration (after 5 skill requests)**:
    - Triggered once per skill when `evaluations_regenerated_at` is undefined
-   - Regenerates evaluations with real examples from the first 5 requests
+   - Regenerates evaluations with real examples from the first 5 requests,
+     replacing only what a model generated: an evaluation's other parameters
+     and its weight are the user's, and stay
    - An auto-created skill with *no* evaluations (creation's background
      generation can fail) gets them created here from scratch instead
    - Generates new system prompts for ALL arms
@@ -789,7 +797,8 @@ System prompts evolve through two distinct phases:
 
 2. **Reflection-based Regeneration (ongoing per cluster)**:
    - Triggered when all arms in a cluster meet the minimum request threshold
-   - Uses contrastive examples (high-scoring vs low-scoring logs)
+   - Uses contrastive examples (high-scoring vs low-scoring logs), of the
+     logs that have been judged: one not judged yet is no example of either
    - Conservative algorithm: best arm never modified
 
 ### What repairs itself
@@ -806,7 +815,14 @@ it, without anyone asking:
   arms from the skill's seed and leaves the other clusters, and what they
   have learned, alone. The request that found it is served by the nearest
   cluster that has arms while the repair runs, and waits for it only when no
-  cluster has any. Concurrent requests share one repair.
+  cluster has any. Concurrent requests share one repair, and a repair waits
+  for any arm generation running for the skill (`withArmGenerationLock`),
+  since nothing keeps a cluster's arms unique.
+- **Centroids of another embedding model.** A request is embedded with its
+  agent's embedding model, and only compared with clusters that model
+  computed (`embedding_model_id`); with none, it is served from the first.
+  Reclustering clusters the newest model's logs and records the model, so
+  a skill whose model changed is matched by it again.
 - **An auto-created skill without evaluations.** Early regeneration creates
   them from its first real requests, and adding default models to the agent
   does too (`adoptDefaultModels`).

@@ -1162,6 +1162,32 @@ describe('LLM Judge', () => {
       expect(configs[1].force_refresh).toBe(true);
     });
 
+    it('retries an answer off the schema, bypassing the cache', async () => {
+      mockParse
+        .mockResolvedValueOnce({
+          choices: [
+            { message: { content: JSON.stringify({ answers: 'yes' }) } },
+          ],
+        })
+        .mockResolvedValueOnce({
+          choices: [{ message: { content: JSON.stringify({ answers: [] }) } }],
+        });
+
+      const pending = llmJudge.answer(prompt, {
+        name: 'decision_judgment',
+        schema: Answers,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(await pending).toEqual({ ok: true, value: { answers: [] } });
+      const configs = vi
+        .mocked(mockWithOptions)
+        .mock.calls.map((call) =>
+          JSON.parse(call[0].defaultHeaders['sa-config']),
+        );
+      expect(configs[1].force_refresh).toBe(true);
+    });
+
     it("is the fallback result when the judge can't be asked", async () => {
       mockParse.mockRejectedValue(new Error('Bad request'));
 

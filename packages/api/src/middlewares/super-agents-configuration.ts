@@ -3,7 +3,10 @@ import { repairClusterArms } from '@api/optimization/arm-repair';
 import { handleGenerateArms } from '@api/optimization/skill-optimizations';
 import type { UserDataStorageConnector } from '@api/types/connector';
 import type { AppContext } from '@api/types/hono';
-import { generateEmbeddingForRequest } from '@api/utils/embeddings';
+import {
+  generateEmbeddingForRequest,
+  type TextEmbedding,
+} from '@api/utils/embeddings';
 import {
   agentById,
   resolveEmbeddingModelConfig,
@@ -15,7 +18,7 @@ import {
 } from '@api/utils/math';
 import { reviewerHookFor } from '@api/utils/super-agents/reviewer';
 import { renderTemplate } from '@api/utils/templates';
-import { error } from '@shared/console-logging';
+import { error, warn } from '@shared/console-logging';
 import {
   OptimizationType,
   type SuperAgentsConfig,
@@ -173,6 +176,46 @@ export function getOptimalCluster(
 }
 
 /**
+ * Whether a cluster's centroid can be compared with a request's embedding:
+ * computed by the same model -- or by one the cluster did not record -- and
+ * of the same length. A centroid from another model is not comparable even
+ * at the same length, and one of another length used to throw, failing every
+ * optimized request with a 500 once an agent named its own embedding model.
+ */
+function comparable(
+  embedding: TextEmbedding,
+  cluster: SkillOptimizationCluster,
+): boolean {
+  return (
+    (!cluster.embedding_model_id ||
+      cluster.embedding_model_id === embedding.modelId) &&
+    cluster.centroid.length === embedding.embedding.length
+  );
+}
+
+/**
+ * The cluster a request belongs to, among those it can be compared with; the
+ * first cluster when it can be compared with none, as for a request whose
+ * embedding failed. Reclustering recomputes the centroids with the model the
+ * requests are embedded with, and they are comparable again.
+ */
+function nearestCluster(
+  embedding: TextEmbedding,
+  clusters: SkillOptimizationCluster[],
+): SkillOptimizationCluster {
+  const candidates = clusters.filter((cluster) =>
+    comparable(embedding, cluster),
+  );
+  if (candidates.length === 0) {
+    warn(
+      `[OPTIMIZER] No cluster's centroid was computed with embedding model ${embedding.modelId}; serving from the first until the skill is reclustered`,
+    );
+    return clusters[0];
+  }
+  return getOptimalCluster(embedding.embedding, candidates);
+}
+
+/**
  * The arms to serve a request matched to a cluster that has none, in a skill
  * that has models, while `repairClusterArms` gives that cluster its arms.
  *
@@ -188,7 +231,7 @@ async function armsWhileRepairing(
   skill: { id: string; name: string },
   cluster: SkillOptimizationCluster,
   clusters: SkillOptimizationCluster[],
-  embedding: number[] | null,
+  embedding: TextEmbedding | null,
 ): Promise<SkillOptimizationArm[]> {
   const repaired = repairClusterArms(c, connector, skill, cluster.id).then(
     () => true,
@@ -198,13 +241,15 @@ async function armsWhileRepairing(
     },
   );
 
+  // Nearest first, of those the request can be compared with; the rest
+  // after them, in order.
   const others = clusters.filter((other) => other.id !== cluster.id);
   if (embedding) {
-    others.sort(
-      (a, b) =>
-        cosineSimilarity(embedding, b.centroid) -
-        cosineSimilarity(embedding, a.centroid),
-    );
+    const similarity = (other: SkillOptimizationCluster) =>
+      comparable(embedding, other)
+        ? cosineSimilarity(embedding.embedding, other.centroid)
+        : Number.NEGATIVE_INFINITY;
+    others.sort((a, b) => similarity(b) - similarity(a));
   }
   for (const other of others) {
     const arms = await connector.getSkillOptimizationArms(c, {
@@ -260,7 +305,7 @@ async function validateTargetConfiguration(
   c: AppContext,
   userDataStorageConnector: UserDataStorageConnector,
   saTargetPreProcessed: SuperAgentsTargetPreProcessed,
-  embedding: number[] | null,
+  embedding: TextEmbedding | null,
   systemPromptVariables?: Record<string, unknown>,
 ): Promise<SuperAgentsTarget | Response> {
   let saTargetConfiguration: TargetConfigurationParams;
@@ -344,7 +389,7 @@ async function validateTargetConfiguration(
       }
 
       const optimalCluster = embedding
-        ? getOptimalCluster(embedding, clusters)
+        ? nearestCluster(embedding, clusters)
         : clusters[0];
 
       let arms = await userDataStorageConnector.getSkillOptimizationArms(c, {
@@ -562,18 +607,19 @@ export const saConfigurationInjectorMiddleware = createMiddleware(
 
         // Generate embeddings for specific endpoints
         // The embedding will be saved with the log after the request is completed
-        let embedding = null;
+        let embedding: TextEmbedding | null = null;
         if (saRequestData && isOptimizedFunction(saRequestData.functionName)) {
           try {
             embedding = await generateEmbeddingForRequest(
               c,
               saRequestData,
               c.get('user_data_storage_connector'),
+              c.get('agent') ?? null,
             );
           } catch {
             embedding = null;
           }
-          c.set('embedding', embedding);
+          c.set('embedding', embedding?.embedding ?? null);
         }
 
         const saTargetsOrResponses = await Promise.all(

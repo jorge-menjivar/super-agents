@@ -56,6 +56,32 @@ describe('scoreAnswer', () => {
       expect(scoreAnswer(choice, answer, 'shipping')).toBeCloseTo(0.43);
     });
 
+    // Without the spread, its confidence is how sure it was; the rest is
+    // taken as shared by the other options.
+    it('scores the confidence of a choice that gave no spread', () => {
+      const answer: SystemOneAnswer = {
+        type: 'choice',
+        choice: 'refund',
+        confidence: 0.55,
+      };
+      // refund 0.55, shipping and other 0.225 each, against shipping:
+      // 1 - (0.55^2 + 0.775^2 + 0.225^2) / 2
+      expect(scoreAnswer(choice, answer, 'shipping')).toBeCloseTo(0.5235);
+    });
+
+    it('scores an option named "unknown" like any other', () => {
+      const unsure: SystemOneQuestion = {
+        type: 'choice',
+        criteria: { yes: null, no: null, unknown: null },
+      };
+      const answer: SystemOneAnswer = {
+        type: 'choice',
+        choice: 'unknown',
+        probabilities: { yes: 0.05, no: 0.05, unknown: 0.9 },
+      };
+      expect(scoreAnswer(unsure, answer, 'unknown')).toBeCloseTo(0.9925);
+    });
+
     it('scores where the model leaned when it gave no spread', () => {
       const answer: SystemOneAnswer = { type: 'choice', choice: 'refund' };
       expect(scoreAnswer(choice, answer, 'refund')).toBe(1);
@@ -76,8 +102,42 @@ describe('scoreAnswer', () => {
         score: 2.4,
         probabilities: { '0': 0.05, '1': 0.1, '2': 0.25, '3': 0.6 },
       };
-      // 1 - (0.05^2 + 0.1^2 + 0.25^2 + 0.4^2) / 2
-      expect(scoreAnswer(scale, answer, '3')).toBeCloseTo(0.88375);
+      // Cumulative 0.05, 0.15, 0.4 against 0, 0, 0:
+      // 1 - (0.05^2 + 0.15^2 + 0.4^2) / 3
+      expect(scoreAnswer(scale, answer, '3')).toBeCloseTo(0.938333);
+    });
+
+    // A scale is ordered: one level off is nearly right, the far end wrong.
+    it('scores a near miss above a far one', () => {
+      const five: SystemOneQuestion = {
+        type: 'score',
+        criteria: ['0', '1', '2', '3', '4'],
+      };
+      const sureOf = (level: number): SystemOneAnswer => ({
+        type: 'score',
+        score: level,
+        probabilities: { [String(level)]: 1 },
+      });
+
+      expect(scoreAnswer(five, sureOf(3), '3')).toBe(1);
+      expect(scoreAnswer(five, sureOf(2), '3')).toBeCloseTo(0.75);
+      expect(scoreAnswer(five, sureOf(0), '3')).toBeCloseTo(0.25);
+    });
+
+    // The same answer scores the same whether the vendor sent the spread or
+    // only the expected level -- Jev and Drex do not always send both.
+    it('scores an answer alike with or without its spread', () => {
+      const five: SystemOneQuestion = {
+        type: 'score',
+        criteria: ['0', '1', '2', '3', '4'],
+      };
+      expect(scoreAnswer(five, { type: 'score', score: 2 }, '3')).toBeCloseTo(
+        scoreAnswer(
+          five,
+          { type: 'score', score: 2, probabilities: { '2': 1 } },
+          '3',
+        ) ?? 0,
+      );
     });
 
     it('scores the expected level by its distance, without a spread', () => {
@@ -85,7 +145,7 @@ describe('scoreAnswer', () => {
       expect(scoreAnswer(scale, answer, '2')).toBe(1);
       // A whole scale away is as wrong as it gets.
       expect(scoreAnswer(scale, { type: 'score', score: 0 }, '3')).toBe(0);
-      expect(scoreAnswer(scale, answer, '3')).toBeCloseTo(1 - (1 / 3) ** 2);
+      expect(scoreAnswer(scale, answer, '3')).toBeCloseTo(1 - 1 / 3);
     });
 
     it('refuses a level the scale does not have', () => {

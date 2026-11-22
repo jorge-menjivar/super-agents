@@ -124,7 +124,10 @@ describe('generateEmbeddingForRequest', () => {
       connector,
     );
 
-    expect(embedding).toEqual([0.1, 0.2]);
+    expect(embedding).toEqual({
+      embedding: [0.1, 0.2],
+      modelId: 'embed-model',
+    });
     const body = JSON.parse(
       (fetchMock.mock.calls[0][1] as RequestInit).body as string,
     );
@@ -133,6 +136,34 @@ describe('generateEmbeddingForRequest', () => {
     );
     expect(JSON.stringify(body.input)).not.toContain('Withhold it?');
 
+    vi.unstubAllGlobals();
+  });
+
+  // The agent's own embedding model is the one its skills' clusters were
+  // computed with; the system's would not compare with them.
+  it("embeds with the agent's own embedding model", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [{ embedding: [0.3] }] }),
+      }),
+    );
+    const agent = { id: 'agent-1', embedding_model_id: 'own-model' };
+    const c = createMockContext();
+
+    await generateEmbeddingForRequest(
+      c,
+      systemOne('Try the window.'),
+      connector,
+      agent as never,
+    );
+
+    expect(resolveEmbeddingModelConfig).toHaveBeenCalledWith(
+      c,
+      connector,
+      agent,
+    );
     vi.unstubAllGlobals();
   });
 
