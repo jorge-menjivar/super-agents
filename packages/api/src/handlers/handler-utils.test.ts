@@ -18,6 +18,10 @@ vi.mock('@api/handlers/response-handler', () => ({
   responseHandler: vi.fn(),
 }));
 
+vi.mock('@api/handlers/retry-handler', () => ({
+  retryRequest: vi.fn(),
+}));
+
 vi.mock('@api/utils/super-agents/response', () => ({
   createResponse: vi.fn(),
 }));
@@ -38,6 +42,7 @@ import { providerConfigs } from '@api/ai-providers';
 import { openAIModelCapabilities } from '@api/ai-providers/openai/model-capabilities';
 // Import after mocks are set up
 import { tryPost } from '@api/handlers/handler-utils';
+import { retryRequest } from '@api/handlers/retry-handler';
 import transformToProviderRequest from '@api/services/transform-to-provider-request';
 import type { AppContext } from '@api/types/hono';
 import { HttpMethod } from '@api/types/http';
@@ -653,6 +658,95 @@ describe('tryPost Error Handling', () => {
         role: ChatCompletionMessageRole.SYSTEM,
         content: 'From the caller',
       });
+    });
+  });
+
+  describe('the body sent to the provider', () => {
+    /**
+     * The gateway reads a request body as JSON whatever its Content-Type
+     * says, and a client such as Python's `requests.post(url, data=...)`
+     * sends none. Such a request used to pass validation and then reach the
+     * provider as an empty POST, which it refused for want of every field.
+     */
+    afterEach(() => {
+      vi.mocked(transformToProviderRequest).mockReset();
+    });
+
+    /** The request init the provider would be sent, captured at the retry handler. */
+    const sentToProvider = async (): Promise<RequestInit> => {
+      (providerConfigs as Record<string, AIProviderConfig | undefined>)[
+        AIProvider.OPENAI
+      ] = {
+        api: {
+          getBaseURL: vi.fn().mockResolvedValue('https://api.openai.com'),
+          getEndpoint: vi.fn().mockReturnValue('/v1/chat/completions'),
+          headers: vi.fn().mockResolvedValue({}),
+        },
+      } as unknown as AIProviderConfig;
+      vi.mocked(inputHookHandler).mockResolvedValue({
+        errorResponse: undefined,
+        transformedSuperAgentsBody: undefined,
+      });
+      vi.mocked(transformToProviderRequest).mockImplementation(
+        (_provider, _saTarget, saRequestData) =>
+          saRequestData.requestBody as Record<string, unknown>,
+      );
+      vi.mocked(constructRequest).mockImplementation((saRequestData) => ({
+        method: saRequestData.method,
+        headers: { 'content-type': 'application/json' },
+      }));
+      vi.mocked(getCachedResponse).mockResolvedValue(undefined);
+      vi.mocked(retryRequest).mockRejectedValue(new Error('stop here'));
+
+      await tryPost(
+        mockContext,
+        mockSuperAgentsConfig,
+        mockSuperAgentsTarget,
+        mockSuperAgentsRequestData,
+        0,
+      );
+
+      expect(retryRequest).toHaveBeenCalledOnce();
+      return vi.mocked(retryRequest).mock.calls[0][1];
+    };
+
+    it('is the JSON the client sent, when it came without a Content-Type', async () => {
+      mockSuperAgentsRequestData.requestHeaders = {
+        authorization: 'Bearer test-key',
+      };
+
+      const sent = await sentToProvider();
+
+      expect(JSON.parse(sent.body as string)).toEqual(
+        expect.objectContaining({
+          messages: [
+            { role: ChatCompletionMessageRole.USER, content: 'Hello' },
+          ],
+        }),
+      );
+    });
+
+    it('is the JSON the client sent, when it came as JSON', async () => {
+      const sent = await sentToProvider();
+
+      expect(JSON.parse(sent.body as string)).toEqual(
+        expect.objectContaining({
+          messages: [
+            { role: ChatCompletionMessageRole.USER, content: 'Hello' },
+          ],
+        }),
+      );
+    });
+
+    it('is still left off a GET that came without a Content-Type', async () => {
+      mockSuperAgentsRequestData.method = HttpMethod.GET;
+      mockSuperAgentsRequestData.requestHeaders = {
+        authorization: 'Bearer test-key',
+      };
+
+      const sent = await sentToProvider();
+
+      expect(sent.body).toBeUndefined();
     });
   });
 

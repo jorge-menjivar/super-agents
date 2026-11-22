@@ -676,7 +676,18 @@ export async function tryPost(
       requestContentType?.startsWith(ContentTypeName.GENERIC_AUDIO_PATTERN)
     ) {
       fetchConfig.body = aiProviderRequestBody as ArrayBuffer;
-    } else if (requestContentType) {
+    } else if (
+      requestContentType ||
+      !(
+        aiProviderRequestBody instanceof FormData ||
+        aiProviderRequestBody instanceof ArrayBuffer
+      )
+    ) {
+      // A body that came without a Content-Type was still read as JSON --
+      // the gateway parses it whatever the header says, and a client such as
+      // Python's `requests.post(url, data=...)` sends none -- so it goes on
+      // as JSON, under the `application/json` that `constructRequest` gives
+      // it. Sending nothing left the provider an empty POST to refuse.
       fetchConfig.body = JSON.stringify(aiProviderRequestBody);
     }
 

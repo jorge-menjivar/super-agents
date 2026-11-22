@@ -106,6 +106,26 @@ describe('constructRequest', () => {
         'application/json',
       );
     });
+
+    // The gateway reads such a body as JSON anyway, and sends it on as JSON,
+    // so the provider has to be told that is what it is.
+    it('labels as JSON a body the client sent without a content-type', () => {
+      const saRequestData = produceSuperAgentsRequestData(
+        HttpMethod.POST,
+        'https://api.openai.com/v1/chat/completions',
+        {},
+        {
+          model: 'gpt-3.5-turbo',
+          messages: [{ role: 'user', content: 'Hello' }],
+        },
+      );
+
+      const result = constructRequest(saRequestData, {}, {}, {});
+
+      expect((result.headers as Record<string, string>)['content-type']).toBe(
+        'application/json',
+      );
+    });
   });
 
   describe('Header merging', () => {
