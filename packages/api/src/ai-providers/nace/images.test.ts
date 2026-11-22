@@ -86,6 +86,43 @@ describe('withImageOrdinals', () => {
   it('leaves everything alone without images', () => {
     expect(withImageOrdinals(body.state, undefined)).toBe(body.state);
   });
+
+  // Every reference is renamed in one pass over the text as written, so no
+  // reference is ever found inside the name another one was given.
+  describe('never renames a name it has just written', () => {
+    const image = {
+      type: 'image' as const,
+      format: 'png' as const,
+      data_base64: 'iVBOR',
+    };
+
+    it('when a reference is part of a name', () => {
+      expect(
+        withImageOrdinals('compare 0 with 1', { '0': image, '1': image }),
+      ).toBe('compare Image 1 with Image 2');
+    });
+
+    it('when a reference is itself a name', () => {
+      expect(
+        withImageOrdinals('Image 2 before Image 1', {
+          'Image 2': image,
+          'Image 1': image,
+        }),
+      ).toBe('Image 1 before Image 2');
+    });
+
+    it('when a name contains a longer reference', () => {
+      expect(withImageOrdinals('2 then 10', { '2': image, '10': image })).toBe(
+        'Image 1 then Image 2',
+      );
+    });
+
+    it('when a reference reads as a pattern', () => {
+      expect(withImageOrdinals('see a.b, not axb', { 'a.b': image })).toBe(
+        'see Image 1, not axb',
+      );
+    });
+  });
 });
 
 describe('a System One request with images, on its way out', () => {
