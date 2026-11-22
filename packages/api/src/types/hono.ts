@@ -59,6 +59,12 @@ export interface AppEnv {
     sa_request_data: SuperAgentsRequestData;
     embedding: number[] | null;
     /**
+     * The model that made `embedding`, recorded with it on the log: vectors
+     * of two models of one length cannot be told apart by looking, and
+     * reclustering must not mix them.
+     */
+    embedding_model_id?: string | null;
+    /**
      * The name of the agent the request's own agent is reviewed by, set by
      * the gateway when it adds that reviewer. Only a review sent to it is
      * signed: a hook a client wrote itself is asked unsigned, so it cannot
