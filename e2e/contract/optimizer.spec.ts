@@ -1560,6 +1560,42 @@ test.describe('response review', () => {
     );
   });
 
+  test('reviews a repeated request afresh when the review could not judge the first', async ({
+    request,
+  }) => {
+    // The first review answers with no verdict, and fails open; every one
+    // after it allows.
+    await stubReply(request, reviewerModel, ['I would rather not say.', allow]);
+    const cached = { cache: { mode: 'simple' as const } };
+    const reviewsBefore = (await stubRequests(request, reviewerModel)).length;
+
+    const first = await ask(request, 'cache the unjudged', false, cached);
+    expect(first.status()).toBe(200);
+
+    const second = await ask(request, 'cache the unjudged', false, cached);
+
+    expect(second.status()).toBe(200);
+    // An answer no review judged was not cached for the next request to be
+    // served unreviewed: the provider was asked again, and the reviewer
+    // judged what it said this time.
+    expect(
+      requestsFor(
+        await stubRequests(request, stub.textModel),
+        'cache the unjudged',
+      ),
+    ).toHaveLength(2);
+    expect((await stubRequests(request, reviewerModel)).length).toBe(
+      reviewsBefore + 2,
+    );
+    await expect
+      .poll(async () =>
+        (
+          await logMentioning(request, reviewedSkillId, 'cache the unjudged')
+        )?.hook_logs?.map((entry) => entry.result.reason),
+      )
+      .toEqual(['Nothing to object to.']);
+  });
+
   test("keeps the reviewer's time out of the provider's own timing", async ({
     request,
   }) => {
