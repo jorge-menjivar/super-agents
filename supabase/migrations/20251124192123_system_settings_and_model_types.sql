@@ -152,7 +152,11 @@ CREATE TRIGGER system_settings_model_type_validation
   FOR EACH ROW
   EXECUTE FUNCTION validate_system_settings_model_types();
 
--- Also prevent changing a model's type if it's referenced in system_settings
+-- Also prevent changing a model's type while anything holds it in a place that
+-- takes only that type: a system setting, an agent's own role models, an
+-- evaluation, a centroid, or an agent or skill it serves. libSQL's trigger of
+-- the same name makes the same checks, in the same order and words, so a
+-- refused change reads the same on both backends.
 CREATE OR REPLACE FUNCTION prevent_model_type_change_if_referenced()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -185,6 +189,23 @@ BEGIN
        OR intent_compaction_model_id = NEW.id
   ) THEN
     RAISE EXCEPTION 'Cannot change model_type for a model that an agent asks for itself';
+  END IF;
+
+  -- An evaluation is run with a text model, which it names
+  IF EXISTS (
+    SELECT 1 FROM public.skill_optimization_evaluations
+    WHERE model_id = NEW.id
+  ) THEN
+    RAISE EXCEPTION 'Cannot change model_type for a model that evaluations are run with';
+  END IF;
+
+  -- Cluster centroids, like routing ones below, only mean something under the
+  -- model that computed them
+  IF EXISTS (
+    SELECT 1 FROM public.skill_optimization_clusters
+    WHERE embedding_model_id = NEW.id
+  ) THEN
+    RAISE EXCEPTION 'Cannot change model_type for a model that cluster centroids were computed with';
   END IF;
 
   -- Skill routing centroids only mean something under the model that computed them

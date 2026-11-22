@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { libsqlMigrations } from '@api/connectors/libsql/schema';
 import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -425,6 +426,59 @@ describe('upgrade-dev-db: decision models', () => {
 });
 
 /**
+ * Models, and everything the guard on a model's type reads, as little of it
+ * as it reads: what holds a model in a place that takes only its type.
+ */
+const GUARDED_MODELS_SETUP = [
+  'CREATE TABLE ai_providers (id TEXT PRIMARY KEY)',
+  `CREATE TABLE models (
+     id TEXT PRIMARY KEY,
+     ai_provider_id TEXT NOT NULL,
+     model_name TEXT NOT NULL,
+     model_type TEXT NOT NULL DEFAULT 'text' CHECK (model_type IN ('text', 'embed', 'decision')),
+     embedding_dimensions INTEGER,
+     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+     FOREIGN KEY (ai_provider_id) REFERENCES ai_providers(id) ON DELETE CASCADE,
+     UNIQUE (ai_provider_id, model_name),
+     CONSTRAINT embedding_dimensions_only_for_embed CHECK (
+       (model_type = 'embed') = (embedding_dimensions IS NOT NULL)
+     )
+   )`,
+  `CREATE TABLE agent_models (
+     agent_id TEXT NOT NULL, model_id TEXT NOT NULL,
+     PRIMARY KEY (agent_id, model_id),
+     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+     FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
+   )`,
+  `CREATE TABLE skill_models (
+     skill_id TEXT NOT NULL, model_id TEXT NOT NULL,
+     PRIMARY KEY (skill_id, model_id),
+     FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+     FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
+   )`,
+  'ALTER TABLE agents ADD COLUMN system_prompt_reflection_model_id TEXT',
+  'ALTER TABLE agents ADD COLUMN evaluation_generation_model_id TEXT',
+  'ALTER TABLE agents ADD COLUMN judge_model_id TEXT',
+  'ALTER TABLE agents ADD COLUMN skill_arbiter_model_id TEXT',
+  'ALTER TABLE agents ADD COLUMN intent_compaction_model_id TEXT',
+  'ALTER TABLE agents ADD COLUMN embedding_model_id TEXT',
+  'ALTER TABLE skill_optimization_evaluations ADD COLUMN model_id TEXT',
+  'ALTER TABLE skill_optimization_clusters ADD COLUMN embedding_model_id TEXT',
+  `CREATE TABLE system_settings (
+     id TEXT PRIMARY KEY,
+     system_prompt_reflection_model_id TEXT, evaluation_generation_model_id TEXT,
+     judge_model_id TEXT, skill_arbiter_model_id TEXT,
+     intent_compaction_model_id TEXT, embedding_model_id TEXT
+   )`,
+  'CREATE TABLE skill_routing (skill_id TEXT, embedding_model_id TEXT)',
+  "INSERT INTO ai_providers (id) VALUES ('p1')",
+  "INSERT INTO models (id, ai_provider_id, model_name) VALUES ('gpt', 'p1', 'gpt-5')",
+  `INSERT INTO models (id, ai_provider_id, model_name, model_type)
+   VALUES ('jev', 'p1', 'jev-latest', 'decision')`,
+];
+
+/**
  * What serves an agent. `agents.agent_type` is added, the triggers that keep
  * an agent's models of its type are created, and the guard on a model's own
  * type -- which cannot be altered -- is replaced with one that also counts
@@ -455,44 +509,7 @@ describe('upgrade-dev-db: agent types', () => {
 
   /** Agents, skills and their models as they were before agent types. */
   const AGENT_TYPE_SETUP = [
-    'CREATE TABLE ai_providers (id TEXT PRIMARY KEY)',
-    `CREATE TABLE models (
-       id TEXT PRIMARY KEY,
-       ai_provider_id TEXT NOT NULL,
-       model_name TEXT NOT NULL,
-       model_type TEXT NOT NULL DEFAULT 'text' CHECK (model_type IN ('text', 'embed', 'decision')),
-       embedding_dimensions INTEGER,
-       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-       FOREIGN KEY (ai_provider_id) REFERENCES ai_providers(id) ON DELETE CASCADE,
-       UNIQUE (ai_provider_id, model_name),
-       CONSTRAINT embedding_dimensions_only_for_embed CHECK (
-         (model_type = 'embed') = (embedding_dimensions IS NOT NULL)
-       )
-     )`,
-    `CREATE TABLE agent_models (
-       agent_id TEXT NOT NULL, model_id TEXT NOT NULL,
-       PRIMARY KEY (agent_id, model_id),
-       FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
-       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
-     )`,
-    `CREATE TABLE skill_models (
-       skill_id TEXT NOT NULL, model_id TEXT NOT NULL,
-       PRIMARY KEY (skill_id, model_id),
-       FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
-       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
-     )`,
-    // What the guard on a model's type reads, as little of it as it reads.
-    'ALTER TABLE agents ADD COLUMN skill_arbiter_model_id TEXT',
-    'ALTER TABLE skill_optimization_evaluations ADD COLUMN model_id TEXT',
-    'ALTER TABLE skill_optimization_clusters ADD COLUMN embedding_model_id TEXT',
-    `CREATE TABLE system_settings (
-       id TEXT PRIMARY KEY,
-       system_prompt_reflection_model_id TEXT, evaluation_generation_model_id TEXT,
-       judge_model_id TEXT, skill_arbiter_model_id TEXT,
-       intent_compaction_model_id TEXT, embedding_model_id TEXT
-     )`,
-    'CREATE TABLE skill_routing (skill_id TEXT, embedding_model_id TEXT)',
+    ...GUARDED_MODELS_SETUP,
     // The guard as it was, before it knew about serving models.
     `CREATE TRIGGER models_prevent_type_change_if_referenced
      BEFORE UPDATE OF model_type ON models
@@ -503,10 +520,6 @@ describe('upgrade-dev-db: agent types', () => {
          SELECT 1 FROM agents WHERE skill_arbiter_model_id = NEW.id
        ) THEN RAISE(ABORT, 'cannot change model_type while the model is referenced') END;
      END`,
-    "INSERT INTO ai_providers (id) VALUES ('p1')",
-    "INSERT INTO models (id, ai_provider_id, model_name) VALUES ('gpt', 'p1', 'gpt-5')",
-    `INSERT INTO models (id, ai_provider_id, model_name, model_type)
-     VALUES ('jev', 'p1', 'jev-latest', 'decision')`,
     "INSERT INTO skill_models (skill_id, model_id) VALUES ('s1', 'gpt')",
   ];
 
@@ -573,8 +586,128 @@ describe('upgrade-dev-db: agent types', () => {
 
     await expect(
       query("UPDATE models SET model_type = 'decision' WHERE id = 'gpt'"),
-    ).rejects.toThrow('cannot change model_type');
+    ).rejects.toThrow(
+      'Cannot change model_type for a model that serves an agent or a skill',
+    );
   }, 60_000);
+
+  it('is a no-op the second time', async () => {
+    await upgrade();
+    const { stdout } = await upgrade();
+
+    expect(stdout).toContain('Already up to date');
+  }, 120_000);
+});
+
+/**
+ * The guard on a model's type, which once counted only one of an agent's own
+ * models -- the arbiter -- and so let an agent's judge become a decision
+ * model, which writes nothing to judge with. Postgres counted all six. A
+ * trigger cannot be altered, so the guard is replaced whenever its text is
+ * not the one a new database is created with.
+ */
+describe('upgrade-dev-db: the guard on a model type', () => {
+  let dir: string;
+  let dbPath: string;
+
+  const client = () => createClient({ url: `file:${dbPath}` });
+
+  const query = async (sql: string) => {
+    const c = client();
+    try {
+      await c.execute('PRAGMA foreign_keys = ON');
+      return await c.execute(sql);
+    } finally {
+      c.close();
+    }
+  };
+
+  const upgrade = () =>
+    run(
+      'pnpm',
+      ['exec', 'tsx', 'scripts/upgrade-dev-db.mjs', dbPath, '--no-backup'],
+      { cwd: apiRoot },
+    );
+
+  const guardSql = async () => {
+    const { rows } = await query(
+      "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'models_prevent_type_change_if_referenced'",
+    );
+    return String(rows[0].sql);
+  };
+
+  /** The guard as it was before it counted all of an agent's own models. */
+  const PREVIOUS_GUARD = `CREATE TRIGGER models_prevent_type_change_if_referenced
+     BEFORE UPDATE OF model_type ON models
+     FOR EACH ROW
+     WHEN NEW.model_type IS NOT OLD.model_type
+     BEGIN
+       SELECT CASE WHEN EXISTS (
+         SELECT 1 FROM agents WHERE skill_arbiter_model_id = NEW.id
+       ) OR EXISTS (
+         SELECT 1 FROM agent_models WHERE model_id = NEW.id
+       ) OR EXISTS (
+         SELECT 1 FROM skill_models WHERE model_id = NEW.id
+       ) THEN RAISE(ABORT, 'cannot change model_type while the model is referenced') END;
+     END`;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'sa-upgrade-model-guard-'));
+    dbPath = join(dir, 'dev.db');
+
+    const c = client();
+    await c.execute('PRAGMA foreign_keys = ON');
+    for (const sql of [
+      ...SETUP,
+      ...SEED,
+      ...GUARDED_MODELS_SETUP,
+      PREVIOUS_GUARD,
+      "UPDATE agents SET judge_model_id = 'gpt' WHERE id = 'a1'",
+    ]) {
+      await c.execute(sql);
+    }
+    c.close();
+  }, 30_000);
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('keeps the type of the model an agent judges with', async () => {
+    // Before, nothing stopped it.
+    await query("UPDATE models SET model_type = 'decision' WHERE id = 'gpt'");
+    await query("UPDATE models SET model_type = 'text' WHERE id = 'gpt'");
+
+    await upgrade();
+
+    await expect(
+      query("UPDATE models SET model_type = 'decision' WHERE id = 'gpt'"),
+    ).rejects.toThrow(
+      'Cannot change model_type for a model that an agent asks for itself',
+    );
+  }, 60_000);
+
+  it('leaves the guard a new database is created with', async () => {
+    await upgrade();
+
+    const created = libsqlMigrations
+      .flatMap((migration) => migration.statements)
+      .find((sql) => sql.includes('models_prevent_type_change_if_referenced'));
+    expect(await guardSql()).toBe(created?.replace('IF NOT EXISTS ', ''));
+  }, 60_000);
+
+  // Upgraded in every other way, the guard alone is reason enough to run.
+  it('replaces the guard when it is all that is out of date', async () => {
+    await upgrade();
+    await query('DROP TRIGGER models_prevent_type_change_if_referenced');
+    await query(PREVIOUS_GUARD);
+
+    const { stdout } = await upgrade();
+
+    expect(stdout).not.toContain('Already up to date');
+    expect(stdout).toContain('Replaced the guard on a model type');
+    expect(await guardSql()).not.toBe(PREVIOUS_GUARD);
+  }, 120_000);
 
   it('is a no-op the second time', async () => {
     await upgrade();
