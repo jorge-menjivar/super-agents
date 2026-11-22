@@ -15,8 +15,13 @@ import type {
   OllamaStreamChunk,
 } from '@api/ai-providers/ollama/types';
 import { ollamaErrorResponseTransform } from '@api/ai-providers/ollama/utils';
-import type { SuperAgentsRequestData } from '@shared/types/api/request';
+import { transformUsingProviderConfig } from '@api/services/transform-to-provider-request';
+import type {
+  SuperAgentsRequestBody,
+  SuperAgentsRequestData,
+} from '@shared/types/api/request';
 import { FunctionName } from '@shared/types/api/request';
+import type { SuperAgentsTarget } from '@shared/types/api/request/headers';
 import type { ErrorResponseBody } from '@shared/types/api/response/body';
 import type { ChatCompletionResponseBody } from '@shared/types/api/routes/chat-completions-api';
 import { ChatCompletionFinishReason } from '@shared/types/api/routes/chat-completions-api';
@@ -221,9 +226,35 @@ describe('Ollama Provider Tests', () => {
       expect(config.stream).toBeDefined();
     });
 
-    it('forwards reasoning_effort, the switch that turns thinking off', () => {
-      expect(ollamaChatCompleteConfig.reasoning_effort).toEqual({
-        param: 'reasoning_effort',
+    describe('reasoning_effort, the switch that turns thinking off', () => {
+      const sent = (body: Record<string, unknown>) =>
+        transformUsingProviderConfig(
+          ollamaChatCompleteConfig,
+          {
+            model: 'glm-5.3-flash:cloud',
+            messages: [{ role: 'user', content: 'hi' }],
+            ...body,
+          } as unknown as SuperAgentsRequestBody,
+          {} as SuperAgentsTarget,
+        );
+
+      it.each(['none', 'low', 'medium', 'high'])(
+        'forwards %s as it is',
+        (effort) => {
+          expect(sent({ reasoning_effort: effort })).toMatchObject({
+            reasoning_effort: effort,
+          });
+        },
+      );
+
+      it('sends minimal as low, since Ollama thinks at full length on a level it does not know', () => {
+        expect(sent({ reasoning_effort: 'minimal' })).toMatchObject({
+          reasoning_effort: 'low',
+        });
+      });
+
+      it('sends nothing when the request names no effort', () => {
+        expect(sent({})).not.toHaveProperty('reasoning_effort');
       });
     });
 

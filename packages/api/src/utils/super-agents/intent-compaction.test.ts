@@ -87,6 +87,77 @@ describe('compactSystemPrompt', () => {
     );
   });
 
+  it('caps what the model may write, so no model holds up routing for long', async () => {
+    await compactSystemPrompt(
+      createMockContext(),
+      connector,
+      agent,
+      longPrompt,
+    );
+
+    const body = mockCreate.mock.calls[0][0];
+    expect(body.max_completion_tokens).toBe(2000);
+    // OpenAI's reasoning models refuse `max_tokens`.
+    expect(body).not.toHaveProperty('max_tokens');
+  });
+
+  it('asks for a short summary without naming a count to check it against', async () => {
+    await compactSystemPrompt(
+      createMockContext(),
+      connector,
+      agent,
+      longPrompt,
+    );
+
+    // A thinking model told "at most N characters" counts its summary out
+    // letter by letter; the cut to the budget enforces the length instead.
+    const instruction = mockCreate.mock.calls[0][0].messages[0].content;
+    expect(instruction).toContain('short summary');
+    expect(instruction).not.toMatch(/\d/);
+  });
+
+  it('falls back to the head of the prompt, saying why, when thinking spent the whole budget', async () => {
+    const warning = vi
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { content: '' }, finish_reason: 'length' }],
+    });
+
+    const fallback = await compactSystemPrompt(
+      createMockContext(),
+      connector,
+      agent,
+      longPrompt,
+    );
+
+    expect(fallback).toBe(longPrompt.slice(0, SYSTEM_PROMPT_BUDGET));
+    expect(JSON.stringify(warning.mock.calls)).toContain(
+      "lower intent compaction's reasoning effort",
+    );
+    warning.mockRestore();
+  });
+
+  it('keeps a summary the cap cut short', async () => {
+    mockCreate.mockResolvedValue({
+      choices: [
+        {
+          message: { content: 'A coding CLI that edits files and' },
+          finish_reason: 'length',
+        },
+      ],
+    });
+
+    const summary = await compactSystemPrompt(
+      createMockContext(),
+      connector,
+      agent,
+      longPrompt,
+    );
+
+    expect(summary).toBe('A coding CLI that edits files and');
+  });
+
   it('sends the reasoning effort the resolver settled on', async () => {
     vi.mocked(resolveRoleModel).mockResolvedValue({
       model: 'reflect-model',
