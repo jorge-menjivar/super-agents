@@ -1,13 +1,16 @@
 import {
   acquireReflectionLock,
+  autoGenerateSystemPromptsForSkill,
   fetchReflectionExamples,
   performReflection,
 } from '@api/middlewares/optimizer/system-prompt';
+import { generateReflectiveSystemPromptForSkill } from '@api/optimization/utils/system-prompt';
 import { createMockContext } from '@api/test-utils/mock-context';
 import type {
   LogsStorageConnector,
   UserDataStorageConnector,
 } from '@api/types/connector';
+import { FunctionName } from '@shared/types/api/request';
 import type {
   Skill,
   SkillOptimizationArm,
@@ -15,6 +18,14 @@ import type {
 } from '@shared/types/data';
 import { SkillEventType } from '@shared/types/data/skill-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The prompt writer is a model call; what reflection does around it is what
+// is tested here.
+vi.mock('@api/optimization/utils/system-prompt', () => ({
+  generateReflectiveSystemPromptForSkill: vi
+    .fn()
+    .mockResolvedValue('a freshly written prompt'),
+}));
 
 /**
  * Reflection: the step that rewrites a cluster's arms once enough requests have
@@ -561,5 +572,178 @@ describe('fetchReflectionExamples', () => {
     expect([...bestExamples, ...worstExamples].join()).not.toContain(
       'not judged yet',
     );
+  });
+
+  // The newest logs of a busy cluster are the ones its judge has not
+  // reached: reading the newest and dropping the unjudged could leave none.
+  it('asks the store for judged logs only', async () => {
+    const userData = {
+      getSkillEvents: vi.fn().mockResolvedValue([]),
+      getSkillOptimizationEvaluationRuns: vi.fn().mockResolvedValue([]),
+    } as unknown as UserDataStorageConnector;
+    const logsStore = {
+      getLogs: vi.fn().mockResolvedValue([]),
+    } as unknown as LogsStorageConnector;
+
+    await fetchReflectionExamples(createMockContext(), userData, logsStore, {
+      id: 'cluster-1',
+      skill_id: 'skill-1',
+    } as SkillOptimizationCluster);
+
+    expect(logsStore.getLogs).toHaveBeenCalledTimes(2);
+    for (const [, query] of vi.mocked(logsStore.getLogs).mock.calls) {
+      expect(query).toMatchObject({ judged: true });
+    }
+  });
+});
+
+/**
+ * A reflection cycle end to end, short of the model call: once every arm has
+ * served enough requests, the cluster's arms are rewritten from its best and
+ * worst judged logs -- and only when there are judged logs to learn from.
+ */
+describe('autoGenerateSystemPromptsForSkill', () => {
+  const best = arm('best', 'the winning prompt', 0.2);
+  const worst = arm('worst', 'a losing prompt', 0.9);
+
+  const reflectingSkill = {
+    ...skill,
+    description: 'Answers questions.',
+    allowed_template_variables: [],
+    reflection_min_requests_per_arm: 5,
+  } as unknown as Skill;
+
+  /** A completed chat log that answered `content`, scored `score`. */
+  const chatLog = (id: string, score: number | null) => ({
+    id,
+    status: 200,
+    end_time: 2,
+    function_name: 'chat_complete',
+    avg_eval_score: score,
+    ai_provider_request_log: {
+      method: 'POST',
+      request_url: 'https://api.openai.com/v1/chat/completions',
+      request_body: {
+        model: 'm',
+        messages: [{ role: 'user', content: `asked ${id}` }],
+      },
+      response_body: {
+        id,
+        object: 'chat.completion',
+        created: 1,
+        model: 'm',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: `answered ${id}` },
+            finish_reason: 'stop',
+          },
+        ],
+      },
+    },
+  });
+
+  const setup = (logs: unknown[]) => {
+    // The lock is written to the cluster and read back, so the store keeps it.
+    let lock: string | null = null;
+    const userData = {
+      getSkillOptimizationClusters: vi.fn(async () => [
+        cluster({ reflection_lock_acquired_at: lock }),
+      ]),
+      updateSkillOptimizationCluster: vi.fn(
+        (_c: unknown, _id: string, update: Record<string, unknown>) => {
+          if ('reflection_lock_acquired_at' in update) {
+            lock = update.reflection_lock_acquired_at as string | null;
+          }
+          return Promise.resolve();
+        },
+      ),
+      getAgents: vi
+        .fn()
+        .mockResolvedValue([{ id: skill.agent_id, description: 'Helps.' }]),
+      getSkillOptimizationArms: vi.fn().mockResolvedValue([best, worst]),
+      getSkillOptimizationEvaluations: vi
+        .fn()
+        .mockResolvedValue([{ id: 'eval-1', weight: 1 }]),
+      getSkillOptimizationArmStats: vi.fn().mockResolvedValue([
+        { arm_id: 'best', evaluation_id: 'eval-1', mean: 0.9, n: 10 },
+        { arm_id: 'worst', evaluation_id: 'eval-1', mean: 0.2, n: 10 },
+      ]),
+      getSkillEvents: vi.fn().mockResolvedValue([]),
+      getSkillOptimizationEvaluationRuns: vi.fn().mockResolvedValue([]),
+      updateSkillOptimizationArm: vi.fn().mockResolvedValue(undefined),
+      deleteSkillOptimizationArmStats: vi.fn().mockResolvedValue(undefined),
+      createSkillEvent: vi.fn().mockResolvedValue(undefined),
+    } as unknown as UserDataStorageConnector;
+    const logsStore = {
+      getLogs: vi.fn().mockResolvedValue(logs),
+    } as unknown as LogsStorageConnector;
+    return { userData, logsStore, lockHeld: () => lock !== null };
+  };
+
+  const reflect = (
+    userData: UserDataStorageConnector,
+    logsStore: LogsStorageConnector,
+  ) =>
+    autoGenerateSystemPromptsForSkill(
+      mockContext,
+      FunctionName.CHAT_COMPLETE,
+      userData,
+      logsStore,
+      reflectingSkill,
+    );
+
+  beforeEach(() => {
+    vi.mocked(generateReflectiveSystemPromptForSkill).mockClear();
+    vi.mocked(generateReflectiveSystemPromptForSkill).mockResolvedValue(
+      'a freshly written prompt',
+    );
+  });
+
+  it('rewrites the arms from the judged logs', async () => {
+    const { userData, logsStore, lockHeld } = setup([
+      chatLog('good', 0.9),
+      chatLog('bad', 0.1),
+    ]);
+
+    await reflect(userData, logsStore);
+
+    expect(generateReflectiveSystemPromptForSkill).toHaveBeenCalledTimes(1);
+    expect(updatedArmIds(userData)).toEqual(['worst']);
+    expect(lockHeld()).toBe(false);
+  });
+
+  // A judge slower than the traffic leaves every recent log unscored. The
+  // reflector was still asked to settle "the failures" -- none -- and the
+  // arms were rewritten, and their history cleared, with whatever it wrote.
+  it('waits for the judge when no log has been judged', async () => {
+    const { userData, logsStore, lockHeld } = setup([
+      chatLog('fresh', null),
+      chatLog('fresher', null),
+    ]);
+
+    await reflect(userData, logsStore);
+
+    expect(generateReflectiveSystemPromptForSkill).not.toHaveBeenCalled();
+    expect(userData.updateSkillOptimizationArm).not.toHaveBeenCalled();
+    expect(userData.deleteSkillOptimizationArmStats).not.toHaveBeenCalled();
+    expect(userData.createSkillEvent).not.toHaveBeenCalled();
+    // And lets the next request try again.
+    expect(lockHeld()).toBe(false);
+  });
+
+  it('waits when nothing since the last reflection has been judged', async () => {
+    const { userData, logsStore, lockHeld } = setup([]);
+    vi.mocked(logsStore.getLogs)
+      // The best of all time...
+      .mockResolvedValueOnce([chatLog('good', 0.9)] as never)
+      // ...and nothing judged since the last reflection.
+      .mockResolvedValueOnce([] as never);
+
+    await reflect(userData, logsStore);
+
+    expect(generateReflectiveSystemPromptForSkill).not.toHaveBeenCalled();
+    expect(userData.updateSkillOptimizationArm).not.toHaveBeenCalled();
+    expect(lockHeld()).toBe(false);
   });
 });

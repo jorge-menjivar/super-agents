@@ -283,6 +283,11 @@ export const LogsQueryParams = z.object({
   embedding_not_null: z.coerce.boolean().optional(),
   /** Only logs with no evaluation run yet. */
   unjudged: z.coerce.boolean().optional(),
+  /**
+   * Only logs that have a score: judged, by a run that scored something.
+   * Not the opposite of `unjudged`, since a run can score nothing.
+   */
+  judged: z.coerce.boolean().optional(),
   /** By `start_time`; newest first unless asked for `asc`. */
   order: z.enum(['asc', 'desc']).optional(),
   limit: z.string().default('50').transform(Number).optional(),

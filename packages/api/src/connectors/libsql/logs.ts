@@ -62,6 +62,9 @@ const logsQuery = (
   if (queryParams.unjudged) {
     conditions.push('eval_run_count = 0');
   }
+  if (queryParams.judged) {
+    conditions.push('avg_eval_score IS NOT NULL');
+  }
   if (queryParams.after !== undefined) {
     conditions.push('start_time >= ?');
     args.push(queryParams.after);

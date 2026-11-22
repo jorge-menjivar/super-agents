@@ -1605,6 +1605,9 @@ const logsPostgRESTQuery = (
   if (queryParams.unjudged) {
     postgRESTQuery.eval_run_count = 'eq.0';
   }
+  if (queryParams.judged) {
+    postgRESTQuery.avg_eval_score = 'not.is.null';
+  }
   if (queryParams.embedding_not_null) {
     // The summary view leaves the embedding out, and answers for whether
     // there is one with a column of its own.

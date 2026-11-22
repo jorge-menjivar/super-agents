@@ -1130,6 +1130,57 @@ describe('logs', () => {
     expect(backlog.map((l) => l.id)).toEqual([skipped.id]);
   });
 
+  it('lists the logs that have a score', async () => {
+    const { c } = await freshDatabase();
+    const agent = await seedAgent(c);
+    const skill = await seedSkill(c, agent.id);
+    const [evaluation] = await store.createSkillOptimizationEvaluations(c, [
+      {
+        agent_id: agent.id,
+        skill_id: skill.id,
+        evaluation_method: 'latency',
+        weight: 1,
+        params: {},
+      } as Parameters<
+        typeof store.createSkillOptimizationEvaluations
+      >[1][number],
+    ]);
+
+    const scored = await logs.createLog(c, logParams(agent.id, skill.id, 1000));
+    // Judged, by a run that scored nothing: no example of anything either.
+    const unscored = await logs.createLog(
+      c,
+      logParams(agent.id, skill.id, 2000),
+    );
+    await logs.createLog(c, logParams(agent.id, skill.id, 3000));
+    await store.createSkillOptimizationEvaluationRun(c, {
+      agent_id: agent.id,
+      skill_id: skill.id,
+      cluster_id: null,
+      log_id: scored.id,
+      results: [
+        {
+          evaluation_id: evaluation.id,
+          method: evaluation.evaluation_method,
+          score: 0.8,
+          extra_data: {},
+          display_info: [],
+        },
+      ],
+    });
+    await store.createSkillOptimizationEvaluationRun(c, {
+      agent_id: agent.id,
+      skill_id: skill.id,
+      cluster_id: null,
+      log_id: unscored.id,
+      results: [],
+    });
+
+    const judged = await logs.getLogs(c, { skill_id: skill.id, judged: true });
+    expect(judged.map((l) => l.id)).toEqual([scored.id]);
+    expect(judged[0].avg_eval_score).toBeCloseTo(0.8);
+  });
+
   it('filters on embeddings being present', async () => {
     const { c } = await freshDatabase();
     const agent = await seedAgent(c);
