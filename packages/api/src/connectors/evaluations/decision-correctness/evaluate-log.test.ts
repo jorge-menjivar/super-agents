@@ -249,6 +249,35 @@ describe('decision correctness - evaluateLog', () => {
     expect(prompt).not.toContain('/9j/secret');
   });
 
+  // A judge on a provider that does not hold it to the schema answers a yes
+  // as `true`: read as the text it is, not a failed judgment.
+  it('reads an answer the judge gave as a boolean or a number', async () => {
+    mockCreate.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              answers: [
+                { question_id: 'withhold', answer: true, reasoning: 'Yes.' },
+                { question_id: 'topic', answer: 'entry', reasoning: 'In.' },
+              ],
+            }),
+          },
+          finish_reason: 'stop',
+        },
+      ],
+    });
+
+    const result = await evaluateLog(
+      c,
+      evaluation(),
+      decisionLog(ANSWERS),
+      storage,
+    );
+
+    expect(result.score).toBeCloseTo((0.99 + 0.96) / 2);
+  });
+
   it('scores only the questions the judge could settle', async () => {
     judgeSays([
       { question_id: 'withhold', answer: 'unknown' },

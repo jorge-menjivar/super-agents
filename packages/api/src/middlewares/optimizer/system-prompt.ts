@@ -26,7 +26,7 @@ import type {
   Skill,
   SkillOptimizationCluster,
 } from '@shared/types/data';
-import type { CompletedLog } from '@shared/types/data/log';
+import type { CompletedLog, Log } from '@shared/types/data/log';
 import { isCompletedLog } from '@shared/types/data/log';
 import { SkillEventType } from '@shared/types/data/skill-event';
 import { isOptimizedFunction } from '@shared/utils/optimized-functions';
@@ -270,7 +270,23 @@ async function calculateClusterArmStats(
  * - Best: Single best log from all time
  * - Worst: Worst logs since last reflection only
  */
-async function fetchReflectionExamples(
+/**
+ * The logs that have been judged, with their scores. A log not judged yet --
+ * the newest, whose evaluation runs behind the request that reflection runs
+ * after -- has no score, and is no example of anything: counted as a zero,
+ * it was shown to the prompt writer as a failure however well it went.
+ */
+function judged(logs: Log[]): { log: CompletedLog; score: number }[] {
+  return logs
+    .filter(isCompletedLog)
+    .filter(
+      (log) => log.avg_eval_score !== null && log.avg_eval_score !== undefined,
+    )
+    .map((log) => ({ log, score: log.avg_eval_score as number }));
+}
+
+/** Exported for tests. */
+export async function fetchReflectionExamples(
   c: AppContext,
   userDataStorageConnector: UserDataStorageConnector,
   logsStorageConnector: LogsStorageConnector,
@@ -297,13 +313,7 @@ async function fetchReflectionExamples(
   });
 
   // Sort by score and take the single best log from all time
-  const bestLog = allTimeLogs
-    .filter(isCompletedLog)
-    .map((log) => ({
-      log,
-      score: log.avg_eval_score ?? 0,
-    }))
-    .sort((a, b) => b.score - a.score)[0]?.log;
+  const bestLog = judged(allTimeLogs).sort((a, b) => b.score - a.score)[0]?.log;
 
   const bestExamples = bestLog ? generateExampleConversations([bestLog]) : [];
 
@@ -319,12 +329,7 @@ async function fetchReflectionExamples(
   });
 
   // Sort by score and take bottom 5 worst logs
-  const worstLogs = recentLogs
-    .filter(isCompletedLog)
-    .map((log) => ({
-      log,
-      score: log.avg_eval_score ?? 0,
-    }))
+  const worstLogs = judged(recentLogs)
     .sort((a, b) => b.score - a.score)
     .slice(-5)
     .map((l) => l.log);

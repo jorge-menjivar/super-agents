@@ -40,6 +40,24 @@ function brierAgreement(
   return clamp(1 - distance / 2);
 }
 
+/**
+ * A choice's probabilities when the model sent none: its `confidence` on the
+ * option it chose -- certainty when it gave none -- and the rest shared by
+ * the other options.
+ */
+function spreadOf(
+  choice: string,
+  answer: { confidence?: number },
+  options: string[],
+): Record<string, number> {
+  const sure = clamp(answer.confidence ?? 1);
+  const others = options.filter((option) => option !== choice);
+  return Object.fromEntries([
+    [choice, sure],
+    ...others.map((option) => [option, (1 - sure) / others.length]),
+  ]);
+}
+
 /** The judge's answer to a yes-or-no question, as `true` or `false`. */
 function noulLabel(answer: string): boolean | null {
   const said = answer.trim().toLowerCase();
@@ -60,6 +78,32 @@ function choiceLabel(answer: string, options: string[]): string | null {
     options.find((option) => option.toLowerCase() === said.toLowerCase()) ??
     null
   );
+}
+
+/**
+ * One minus the ranked probability score of `probabilities` over `levels`
+ * ordered levels, against the right one: the Brier score of the cumulative
+ * distribution, which a scale needs where options do not -- a model leaning
+ * one level off is nearly right, and scored so, where scoring each level as
+ * an unrelated option counted it as wrong as leaning to the far end. A whole
+ * level away scores `1 - 1/(levels - 1)`, the far end 0.
+ */
+function rankedAgreement(
+  probabilities: Record<string, number>,
+  levels: number,
+  right: number,
+): number {
+  if (levels === 1) {
+    return 1;
+  }
+  let forecast = 0;
+  let distance = 0;
+  for (let level = 0; level < levels - 1; level++) {
+    forecast += probabilities[String(level)] ?? 0;
+    const observed = level >= right ? 1 : 0;
+    distance += (forecast - observed) ** 2;
+  }
+  return clamp(1 - distance / (levels - 1));
 }
 
 /** The level the judge named, when it is one the scale has. */
@@ -83,10 +127,15 @@ export function scoreAnswer(
   answer: SystemOneAnswer,
   judged: string,
 ): number | null {
-  if (
-    answer.type !== question.type ||
-    judged.trim().toLowerCase() === UNKNOWN_ANSWER
-  ) {
+  if (answer.type !== question.type) {
+    return null;
+  }
+  // An option named "unknown" is an answer like any other; anywhere else,
+  // it is the judge saying it cannot settle the question.
+  const canSettle =
+    question.type === 'choice' &&
+    choiceLabel(judged, Object.keys(question.criteria)) !== null;
+  if (!canSettle && judged.trim().toLowerCase() === UNKNOWN_ANSWER) {
     return null;
   }
   switch (answer.type) {
@@ -111,8 +160,10 @@ export function scoreAnswer(
       if (right === null) {
         return null;
       }
-      // Without the spread, all the model said is where it leaned.
-      const probabilities = answer.probabilities ?? { [answer.choice]: 1 };
+      // Without the spread, the model said where it leaned and how sure it
+      // was: the rest is taken as shared by the other options alike.
+      const probabilities =
+        answer.probabilities ?? spreadOf(answer.choice, answer, options);
       return brierAgreement(probabilities, options, right);
     }
     case 'score': {
@@ -125,17 +176,16 @@ export function scoreAnswer(
         return null;
       }
       if (answer.probabilities) {
-        const outcomes = Array.from({ length: levels }, (_, level) =>
-          String(level),
-        );
-        return brierAgreement(answer.probabilities, outcomes, String(right));
+        return rankedAgreement(answer.probabilities, levels, right);
       }
-      // Only the expected level: scored by how far it is from the right
-      // one, on the scale's own length.
+      // Only the expected level: scored as the ranked probability score
+      // scores all of it on one level -- by how many levels it is off, on
+      // the scale's own length -- so the same answer scores the same with
+      // or without the spread.
       if (levels === 1) {
         return 1;
       }
-      return clamp(1 - ((answer.score - right) / (levels - 1)) ** 2);
+      return clamp(1 - Math.abs(answer.score - right) / (levels - 1));
     }
   }
 }

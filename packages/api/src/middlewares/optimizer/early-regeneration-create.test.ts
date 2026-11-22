@@ -239,7 +239,16 @@ describe('checkAndRegenerateEvaluationsEarly, past the guards', () => {
 
   it('rewrites existing evaluations in place, creating none', async () => {
     const skill = skillOf();
-    const existing = [{ id: 'evaluation-1', evaluation_method: 'latency' }];
+    // What the user set on it -- here, a judge's budget -- is not the
+    // generator's to undo: only what a model generated is replaced.
+    const existing = [
+      {
+        id: 'evaluation-1',
+        evaluation_method: 'latency',
+        params: { max_tokens: 4_000 },
+        weight: 3,
+      },
+    ];
     const { userData, logsStore } = connectors(skill, existing);
 
     await run(userData, logsStore, skill);
@@ -250,7 +259,7 @@ describe('checkAndRegenerateEvaluationsEarly, past the guards', () => {
     expect(userData.updateSkillOptimizationEvaluation).toHaveBeenCalledWith(
       mockContext,
       'evaluation-1',
-      { params: {}, weight: 1 },
+      { params: { max_tokens: 4_000 } },
     );
     expect(userData.createSkillOptimizationEvaluations).not.toHaveBeenCalled();
     expect(judgeLogsWithoutRuns).not.toHaveBeenCalled();

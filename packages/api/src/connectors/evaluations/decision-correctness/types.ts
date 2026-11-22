@@ -24,12 +24,17 @@ export type DecisionCorrectnessEvaluationParameters = z.infer<
   typeof DecisionCorrectnessEvaluationParameters
 >;
 
-/** What the judge answers: each question, as it would answer it. */
+/**
+ * What the judge answers: each question, as it would answer it. The answer
+ * is text, but a judge on a provider that does not hold it to the schema
+ * answers a level as `2` and a yes as `true` -- read as the text they are,
+ * rather than failing the whole judgment over it.
+ */
 export const DecisionJudgment = z.object({
   answers: z.array(
     z.object({
       question_id: z.string(),
-      answer: z.string(),
+      answer: z.union([z.string(), z.number(), z.boolean()]),
       reasoning: z.string(),
     }),
   ),

@@ -38,11 +38,55 @@ async function seedSystemPrompt(
   );
 }
 
-export async function handleGenerateArms(
+/**
+ * Arm generation for a skill, one at a time. Generation reads the arms a
+ * skill has, may ask a model for a prompt, then writes arms for what it found
+ * missing -- and nothing keeps a cluster's arms unique, so two generations
+ * that overlapped each wrote the same arms. A repair racing the first full
+ * generation after a model was attached gave a cluster every arm twice.
+ * Within a process, generations for one skill now wait their turn.
+ */
+const armGenerations = new Map<string, Promise<unknown>>();
+
+export function withArmGenerationLock<T>(
+  skillId: string,
+  generate: () => Promise<T>,
+): Promise<T> {
+  const before = armGenerations.get(skillId) ?? Promise.resolve();
+  const run = before.then(generate, generate);
+  const settled = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  armGenerations.set(skillId, settled);
+  void settled.then(() => {
+    if (armGenerations.get(skillId) === settled) {
+      armGenerations.delete(skillId);
+    }
+  });
+  return run;
+}
+
+export function handleGenerateArms(
   c: AppContext,
   userStorageConnector: UserDataStorageConnector,
   skillId: string,
   clusterId?: string, // Optional: if provided, only regenerate arms for this cluster
+) {
+  return withArmGenerationLock(skillId, () =>
+    generateArms(c, userStorageConnector, skillId, clusterId),
+  );
+}
+
+/**
+ * `handleGenerateArms` for a caller that already holds the skill's lock --
+ * `withArmGenerationLock` -- and must look at the arms under it first.
+ */
+export async function generateArms(
+  c: AppContext,
+  userStorageConnector: UserDataStorageConnector,
+  skillId: string,
+  clusterId?: string,
 ) {
   const skills = await userStorageConnector.getSkills(c, {
     id: skillId,
@@ -196,14 +240,22 @@ export async function handleGenerateArms(
 
     if (agents.length > 0 && examples.length > 0) {
       const agent = agents[0];
+      // As early regeneration does: the output schema the requests asked
+      // for, and the template variables the skill's callers send -- without
+      // them, the prompt written here quietly dropped both.
+      const responseFormat = exampleLogs
+        .map((log) => log.ai_provider_request_log.request_body)
+        .find(
+          (body) => 'response_format' in body && body.response_format,
+        )?.response_format;
       systemPrompt = await generateSeedSystemPromptWithContext(
         c,
         agent.description,
         skill.description,
         examples,
         userStorageConnector,
-        undefined,
-        undefined,
+        responseFormat,
+        skill.allowed_template_variables,
         skill.seed_system_prompt,
         agent,
       );

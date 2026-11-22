@@ -417,12 +417,17 @@ function clusteringMessages(
   }
 }
 
-/** The embedding of a request's conversation, minus its system messages. */
+/**
+ * The embedding of a request's conversation, minus its system messages, by
+ * the agent's embedding model where it names one -- the model its skills'
+ * clusters were computed with -- and the system's otherwise.
+ */
 export async function generateEmbeddingForRequest(
   c: AppContext,
   saRequestData: SuperAgentsRequestData,
   connector: UserDataStorageConnector,
-): Promise<number[]> {
+  agent: Agent | null = null,
+): Promise<TextEmbedding> {
   const messages = clusteringMessages(saRequestData);
   const inputText = formatMessagesForEmbedding(messages);
 
@@ -430,5 +435,5 @@ export async function generateEmbeddingForRequest(
     throw new RequestEmbeddingError('No valid text content found in messages');
   }
 
-  return (await embedText(c, connector, inputText)).embedding;
+  return await embedText(c, connector, inputText, agent);
 }

@@ -1,5 +1,5 @@
 import { saConfigurationInjectorMiddleware } from '@api/middlewares/super-agents-configuration';
-import { handleGenerateArms } from '@api/optimization/skill-optimizations';
+import { generateArms } from '@api/optimization/skill-optimizations';
 import type { AppContext } from '@api/types/hono';
 import { generateEmbeddingForRequest } from '@api/utils/embeddings';
 import { resolveEmbeddingModelConfig } from '@api/utils/evaluation-model-resolver';
@@ -19,8 +19,14 @@ vi.mock('@api/utils/evaluation-model-resolver', () => ({
   agentById: vi.fn().mockResolvedValue(null),
   resolveEmbeddingModelConfig: vi.fn(),
 }));
-vi.mock('@api/optimization/skill-optimizations', () => ({
+// The real lock, so a repair waits on a generation as it would; the
+// generation itself is mocked.
+vi.mock('@api/optimization/skill-optimizations', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@api/optimization/skill-optimizations')
+  >()),
   handleGenerateArms: vi.fn(),
+  generateArms: vi.fn(),
 }));
 
 const skill = {
@@ -71,7 +77,10 @@ const setValue = (c: AppContext, key: string): unknown =>
 describe('saConfigurationInjectorMiddleware', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(generateEmbeddingForRequest).mockResolvedValue([1, 0]);
+    vi.mocked(generateEmbeddingForRequest).mockResolvedValue({
+      embedding: [1, 0],
+      modelId: 'embed-model',
+    });
   });
 
   it('fills the routed skill name into the resolved config', async () => {
@@ -354,8 +363,11 @@ describe('saConfigurationInjectorMiddleware, a cluster left without arms', () =>
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(generateEmbeddingForRequest).mockResolvedValue([1, 0]);
-    vi.mocked(handleGenerateArms).mockResolvedValue(
+    vi.mocked(generateEmbeddingForRequest).mockResolvedValue({
+      embedding: [1, 0],
+      modelId: 'embed-model',
+    });
+    vi.mocked(generateArms).mockResolvedValue(
       new Response(JSON.stringify({ updatedArms: [] }), {
         status: 200,
       }) as never,
@@ -389,13 +401,59 @@ describe('saConfigurationInjectorMiddleware, a cluster left without arms', () =>
     expect(next).toHaveBeenCalled();
     expect((setValue(c, 'pulled_arm') as { id: string }).id).toBe('arm-near');
     await vi.waitFor(() =>
-      expect(handleGenerateArms).toHaveBeenCalledWith(
+      expect(generateArms).toHaveBeenCalledWith(
         c,
         expect.anything(),
         'skill-1',
         'empty',
       ),
     );
+  });
+
+  // A centroid another model computed -- of another length, here -- cannot
+  // be compared with the request; comparing it used to throw, failing every
+  // optimized request once an agent named its own embedding model.
+  it('compares the request only with clusters its model computed', async () => {
+    const armsOf: Record<string, unknown[]> = {
+      other: [arm('arm-other', 'other')],
+      mine: [arm('arm-mine', 'mine')],
+    };
+    const c = context(
+      preProcessed,
+      servingConnector(
+        [
+          { id: 'other', centroid: [1, 0, 0], embedding_model_id: 'old' },
+          { id: 'mine', centroid: [1, 0], embedding_model_id: 'embed-model' },
+        ] as never,
+        vi.fn(
+          async (_c, query: { cluster_id: string }) => armsOf[query.cluster_id],
+        ),
+      ),
+    );
+    const next = vi.fn();
+
+    await saConfigurationInjectorMiddleware(c, next);
+
+    expect(next).toHaveBeenCalled();
+    expect((setValue(c, 'pulled_arm') as { id: string }).id).toBe('arm-mine');
+  });
+
+  it('serves from the first cluster when none was computed by its model', async () => {
+    const c = context(
+      preProcessed,
+      servingConnector(
+        [
+          { id: 'only', centroid: [1, 0, 0], embedding_model_id: 'old' },
+        ] as never,
+        vi.fn().mockResolvedValue([arm('arm-only', 'only')]),
+      ),
+    );
+    const next = vi.fn();
+
+    await saConfigurationInjectorMiddleware(c, next);
+
+    expect(next).toHaveBeenCalled();
+    expect((setValue(c, 'pulled_arm') as { id: string }).id).toBe('arm-only');
   });
 
   it('waits for the repair when no cluster can serve the request', async () => {
@@ -415,7 +473,7 @@ describe('saConfigurationInjectorMiddleware, a cluster left without arms', () =>
 
     await saConfigurationInjectorMiddleware(c, next);
 
-    expect(handleGenerateArms).toHaveBeenCalledWith(
+    expect(generateArms).toHaveBeenCalledWith(
       c,
       expect.anything(),
       'skill-1',
@@ -426,7 +484,7 @@ describe('saConfigurationInjectorMiddleware, a cluster left without arms', () =>
   });
 
   it('answers 422 when the repair could not make any', async () => {
-    vi.mocked(handleGenerateArms).mockResolvedValue(
+    vi.mocked(generateArms).mockResolvedValue(
       new Response(JSON.stringify({ error: 'boom' }), { status: 500 }) as never,
     );
     const c = context(

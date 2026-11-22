@@ -178,11 +178,11 @@ export async function evaluateLog(
       const answer = response.answers[id];
       return {
         question_id: id,
-        answer: reference?.answer ?? '',
+        answer: reference ? String(reference.answer) : '',
         reasoning: reference?.reasoning ?? 'The judge did not answer it.',
         score:
           reference && answer
-            ? scoreAnswer(question, answer, reference.answer)
+            ? scoreAnswer(question, answer, String(reference.answer))
             : null,
       };
     },

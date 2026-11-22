@@ -1,9 +1,13 @@
 import {
   acquireReflectionLock,
+  fetchReflectionExamples,
   performReflection,
 } from '@api/middlewares/optimizer/system-prompt';
 import { createMockContext } from '@api/test-utils/mock-context';
-import type { UserDataStorageConnector } from '@api/types/connector';
+import type {
+  LogsStorageConnector,
+  UserDataStorageConnector,
+} from '@api/types/connector';
 import type {
   Skill,
   SkillOptimizationArm,
@@ -491,5 +495,71 @@ describe('acquireReflectionLock', () => {
     expect(
       await acquireReflectionLock(mockContext, c, skill, clusterId),
     ).toBeNull();
+  });
+});
+
+/**
+ * The examples reflection learns from: the best log of the cluster, and its
+ * worst recent ones. A log not judged yet has no score, and is no example of
+ * anything -- the newest log is usually one, its evaluation still running
+ * when reflection does.
+ */
+describe('fetchReflectionExamples', () => {
+  /** A completed chat log that answered `content`, scored `score`. */
+  const chatLog = (id: string, content: string, score: number | null) => ({
+    id,
+    status: 200,
+    end_time: 2,
+    function_name: 'chat_complete',
+    avg_eval_score: score,
+    ai_provider_request_log: {
+      method: 'POST',
+      request_url: 'https://api.openai.com/v1/chat/completions',
+      request_body: {
+        model: 'm',
+        messages: [{ role: 'user', content: `asked ${id}` }],
+      },
+      response_body: {
+        id,
+        object: 'chat.completion',
+        created: 1,
+        model: 'm',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content },
+            finish_reason: 'stop',
+          },
+        ],
+      },
+    },
+  });
+
+  it('leaves out logs that have not been judged', async () => {
+    const logs = [
+      chatLog('fresh', 'a fine answer, not judged yet', null),
+      chatLog('good', 'a good answer', 0.9),
+      chatLog('bad', 'a bad answer', 0.1),
+    ];
+    const userData = {
+      getSkillEvents: vi.fn().mockResolvedValue([]),
+      getSkillOptimizationEvaluationRuns: vi.fn().mockResolvedValue([]),
+    } as unknown as UserDataStorageConnector;
+    const logsStore = {
+      getLogs: vi.fn().mockResolvedValue(logs),
+    } as unknown as LogsStorageConnector;
+
+    const { bestExamples, worstExamples } = await fetchReflectionExamples(
+      createMockContext(),
+      userData,
+      logsStore,
+      { id: 'cluster-1', skill_id: 'skill-1' } as SkillOptimizationCluster,
+    );
+
+    expect(bestExamples.join()).toContain('a good answer');
+    expect(worstExamples.join()).toContain('a bad answer');
+    expect([...bestExamples, ...worstExamples].join()).not.toContain(
+      'not judged yet',
+    );
   });
 });
